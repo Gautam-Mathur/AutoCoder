@@ -186,6 +186,135 @@ function detectImplicitDependencies(files: GeneratedFile[], packageDeps: Set<str
   return issues;
 }
 
+function validateViteCompatibility(files: GeneratedFile[]): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const packageDeps = extractPackageJsonDeps(files);
+
+  const cssFile = files.find(f => f.path.endsWith('index.css') || f.path.endsWith('globals.css') || f.path.endsWith('app.css') || f.path.endsWith('styles.css'));
+  if (cssFile) {
+    const isTailwindV4 = packageDeps.has('tailwindcss') && (() => {
+      const pkgFile = files.find(f => f.path === 'package.json');
+      if (!pkgFile) return false;
+      try {
+        const pkg = JSON.parse(pkgFile.content);
+        const ver = pkg.dependencies?.tailwindcss || pkg.devDependencies?.tailwindcss || '';
+        return ver.startsWith('4') || ver.startsWith('^4') || ver.startsWith('~4');
+      } catch { return false; }
+    })();
+
+    if (isTailwindV4) {
+      if (/@tailwind\s+(base|components|utilities)/.test(cssFile.content)) {
+        issues.push({
+          type: 'syntax_hint',
+          severity: 'error',
+          file: cssFile.path,
+          message: 'Tailwind v4 does not use @tailwind directives. Use @import "tailwindcss" instead.',
+          suggestion: 'Replace @tailwind base/components/utilities with @import "tailwindcss"',
+        });
+      }
+      if (/@apply\s+/.test(cssFile.content) && !cssFile.content.includes('@import "tailwindcss"') && !cssFile.content.includes("@import 'tailwindcss'")) {
+        issues.push({
+          type: 'syntax_hint',
+          severity: 'error',
+          file: cssFile.path,
+          message: 'Tailwind v4 requires @import "tailwindcss" before @apply directives work.',
+          suggestion: 'Add @import "tailwindcss" at the top of the CSS file',
+        });
+      }
+    }
+  }
+
+  const viteConfigFile = files.find(f => f.path === 'vite.config.ts' || f.path === 'vite.config.js');
+  if (viteConfigFile) {
+    if (!viteConfigFile.content.includes('@vitejs/plugin-react')) {
+      const hasJsx = files.some(f => f.path.endsWith('.tsx') || f.path.endsWith('.jsx'));
+      if (hasJsx) {
+        issues.push({
+          type: 'missing_dependency',
+          severity: 'error',
+          file: viteConfigFile.path,
+          message: 'Vite config does not include @vitejs/plugin-react but project has JSX/TSX files',
+          importPath: '@vitejs/plugin-react',
+          suggestion: 'Add @vitejs/plugin-react to vite.config and package.json',
+        });
+      }
+    }
+  } else {
+    const hasVite = packageDeps.has('vite');
+    if (hasVite) {
+      issues.push({
+        type: 'syntax_hint',
+        severity: 'error',
+        file: 'vite.config.ts',
+        message: 'Vite is in package.json but no vite.config.ts file exists',
+        suggestion: 'Create a vite.config.ts with React plugin configuration',
+      });
+    }
+  }
+
+  const appFile = files.find(f =>
+    f.path === 'src/App.tsx' || f.path === 'src/App.jsx' || f.path === 'src/app.tsx' || f.path === 'src/app.jsx'
+  );
+  if (appFile) {
+    const appExports = extractExports(appFile.content);
+    if (!appExports.includes('default') && !appExports.some(e => e === 'App' || e === 'app')) {
+      issues.push({
+        type: 'missing_export',
+        severity: 'error',
+        file: appFile.path,
+        message: 'App component file has no default export — Vite will fail to render',
+        suggestion: 'Add "export default App" or "export default function App()"',
+      });
+    }
+  }
+
+  const indexHtml = files.find(f => f.path === 'index.html');
+  if (indexHtml) {
+    if (!indexHtml.content.includes('<div id="root"') && !indexHtml.content.includes("<div id='root'") && !indexHtml.content.includes('id="root"')) {
+      issues.push({
+        type: 'syntax_hint',
+        severity: 'warning',
+        file: 'index.html',
+        message: 'index.html missing <div id="root"> — React will have nowhere to mount',
+        suggestion: 'Add <div id="root"></div> before the script tag',
+      });
+    }
+    if (!indexHtml.content.includes('<script') || !indexHtml.content.includes('src="/src/main')) {
+      if (!indexHtml.content.includes('src="/src/index')) {
+        issues.push({
+          type: 'syntax_hint',
+          severity: 'warning',
+          file: 'index.html',
+          message: 'index.html may be missing the entry script tag',
+          suggestion: 'Add <script type="module" src="/src/main.tsx"></script>',
+        });
+      }
+    }
+  }
+
+  for (const file of files) {
+    if (!file.path.endsWith('.tsx') && !file.path.endsWith('.jsx')) continue;
+    if (file.content.includes('className=') || /<[A-Z]/.test(file.content) || /<[a-z]+[\s>]/.test(file.content)) {
+      const hasJsxContent = /<[A-Za-z]/.test(file.content);
+      if (hasJsxContent && !file.content.includes("from 'react'") && !file.content.includes('from "react"') && !file.content.includes("from 'React'")) {
+        const hasReactFeature = /\buseState\b|\buseEffect\b|\buseRef\b|\buseMemo\b|\buseCallback\b|\buseContext\b|\buseReducer\b/.test(file.content);
+        if (hasReactFeature) {
+          issues.push({
+            type: 'missing_import',
+            severity: 'error',
+            file: file.path,
+            message: 'File uses React hooks but does not import from "react"',
+            importPath: 'react',
+            suggestion: 'Add: import { useState, useEffect, ... } from "react"',
+          });
+        }
+      }
+    }
+  }
+
+  return issues;
+}
+
 function validateRuntimePatterns(files: GeneratedFile[]): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
@@ -350,6 +479,7 @@ export function validateGeneratedFiles(files: GeneratedFile[]): ValidationIssue[
 
   issues.push(...detectImplicitDependencies(files, packageDeps));
   issues.push(...validateRuntimePatterns(files));
+  issues.push(...validateViteCompatibility(files));
 
   return issues;
 }
@@ -498,6 +628,86 @@ export function autoFixFiles(files: GeneratedFile[], issues: ValidationIssue[]):
             }
           }
         } catch {}
+      }
+    }
+  }
+
+  for (const issue of issues) {
+    if (issue.type === 'syntax_hint' && issue.message.includes('Tailwind v4 does not use @tailwind directives')) {
+      const f = fileMap.get(issue.file);
+      if (f) {
+        f.content = f.content
+          .replace(/@tailwind\s+base\s*;?\s*\n?/g, '')
+          .replace(/@tailwind\s+components\s*;?\s*\n?/g, '')
+          .replace(/@tailwind\s+utilities\s*;?\s*\n?/g, '');
+        if (!f.content.includes('@import "tailwindcss"') && !f.content.includes("@import 'tailwindcss'")) {
+          f.content = '@import "tailwindcss";\n\n' + f.content.trimStart();
+        }
+        fixesApplied.push(`Fixed Tailwind v4 directives in ${issue.file}`);
+      }
+    }
+
+    if (issue.type === 'syntax_hint' && issue.message.includes('Tailwind v4 requires @import')) {
+      const f = fileMap.get(issue.file);
+      if (f && !f.content.includes('@import "tailwindcss"') && !f.content.includes("@import 'tailwindcss'")) {
+        f.content = '@import "tailwindcss";\n\n' + f.content.trimStart();
+        fixesApplied.push(`Added @import "tailwindcss" to ${issue.file}`);
+      }
+    }
+
+    if (issue.type === 'syntax_hint' && issue.message.includes('no vite.config.ts file exists')) {
+      if (!fileMap.has('vite.config.ts')) {
+        const viteConfig = `import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+  resolve: {
+    alias: {
+      '@': '/src',
+    },
+  },
+});
+`;
+        fileMap.set('vite.config.ts', { path: 'vite.config.ts', content: viteConfig, language: 'typescript' });
+        fixesApplied.push('Created missing vite.config.ts');
+      }
+    }
+
+    if (issue.type === 'missing_export' && issue.message.includes('App component file has no default export')) {
+      const f = fileMap.get(issue.file);
+      if (f) {
+        const funcMatch = f.content.match(/(?:export\s+)?function\s+(App)\b/);
+        if (funcMatch) {
+          if (!f.content.includes('export default')) {
+            f.content += '\n\nexport default App;\n';
+            fixesApplied.push(`Added default export to ${issue.file}`);
+          }
+        }
+      }
+    }
+
+    if (issue.type === 'syntax_hint' && issue.message.includes('missing <div id="root">')) {
+      const f = fileMap.get('index.html');
+      if (f && !f.content.includes('id="root"')) {
+        f.content = f.content.replace(/<body[^>]*>/, '$&\n  <div id="root"></div>');
+        fixesApplied.push('Added <div id="root"> to index.html');
+      }
+    }
+
+    if (issue.type === 'missing_import' && issue.message.includes('React hooks but does not import from "react"')) {
+      const f = fileMap.get(issue.file);
+      if (f) {
+        const hooks: string[] = [];
+        const hookNames = ['useState', 'useEffect', 'useRef', 'useMemo', 'useCallback', 'useContext', 'useReducer'];
+        for (const hook of hookNames) {
+          if (new RegExp(`\\b${hook}\\b`).test(f.content)) hooks.push(hook);
+        }
+        if (hooks.length > 0) {
+          const importLine = `import { ${hooks.join(', ')} } from 'react';\n`;
+          f.content = importLine + f.content;
+          fixesApplied.push(`Added React hooks import to ${issue.file}`);
+        }
       }
     }
   }

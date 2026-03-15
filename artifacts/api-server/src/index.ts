@@ -3,6 +3,7 @@ import { createServer } from "http";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import { registerRoutes } from "./routes/autocoder";
+import { initializeSLMSystem } from "./modules/slm-registry";
 import fs from "fs";
 import path from "path";
 
@@ -77,5 +78,15 @@ fs.mkdirSync("./cache", { recursive: true });
     console.log(`Server listening on port ${port}`);
 
     console.log("[Startup] Per-project snapshots enabled (prewarm disabled)");
+
+    const aiBaseUrl = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL;
+    const aiApiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+    if (aiBaseUrl && aiApiKey) {
+      initializeSLMSystem({ endpoint: aiBaseUrl });
+      console.log("[Startup] SLM system initialized with AI endpoint");
+    } else {
+      initializeSLMSystem();
+      console.log("[Startup] SLM system initialized (no endpoint — rules-only mode)");
+    }
   });
 })();

@@ -21,6 +21,7 @@ import {
   type RunResult
 } from './webcontainer';
 import { runnerLog } from './logger';
+import { autoFixEngine, type AutoFixContext } from './auto-fix-engine';
 
 export type RunnerStatus =
   | 'idle'
@@ -45,6 +46,24 @@ export interface AutoRunCallbacks {
   onLog: (log: string) => void;
   onPreviewReady: (url: string) => void;
   onError: (error: string) => void;
+}
+
+async function applyUpgradedPackageJson(
+  projectFiles: { path: string; content: string }[],
+  upgradedContent: string,
+  log: (msg: string) => void
+): Promise<void> {
+  try {
+    const idx = projectFiles.findIndex(f => f.path === 'package.json');
+    if (idx >= 0) {
+      projectFiles[idx] = { ...projectFiles[idx], content: upgradedContent };
+    }
+    await writeFile('package.json', upgradedContent);
+    runnerLog.info('Snapshot', 'Applied upgraded package.json to WebContainer');
+    log('✅ Applied upgraded package.json');
+  } catch (err) {
+    runnerLog.debug('Snapshot', `Failed to apply upgraded package.json (non-fatal): ${err}`);
+  }
 }
 
 // Convert file array to WebContainer FileSystemTree
@@ -800,12 +819,16 @@ export default {
           }
 
           await fixBinPermissions();
-          triggerSnapshotBuild(files).catch(() => {});
+          triggerSnapshotBuild(projectFiles).then(upgraded => {
+            if (upgraded) applyUpgradedPackageJson(projectFiles, upgraded, log);
+          }).catch(() => {});
         } catch (e) {
           runnerLog.warn('Pipeline', `Could not diff packages: ${e}, falling back to full install`);
           log('⚠️ Could not diff packages, running full install...');
           await installDependencies((output) => log(output));
-          triggerSnapshotBuild(files).catch(() => {});
+          triggerSnapshotBuild(projectFiles).then(upgraded => {
+            if (upgraded) applyUpgradedPackageJson(projectFiles, upgraded, log);
+          }).catch(() => {});
         }
 
         updateState({ progress: 70, message: 'Dependencies ready' });
@@ -894,7 +917,9 @@ export default {
 
         log('✅ Batched install complete');
         await fixBinPermissions();
-        triggerSnapshotBuild(files).catch(() => {});
+        triggerSnapshotBuild(projectFiles).then(upgraded => {
+          if (upgraded) applyUpgradedPackageJson(projectFiles, upgraded, log);
+        }).catch(() => {});
         updateState({ progress: 70, message: 'Dependencies installed' });
       } else {
         updateState({ status: 'installing', progress: 50, message: 'Installing npm packages...' });
@@ -916,7 +941,9 @@ export default {
         } else {
           runnerLog.success('Pipeline', 'Full npm install completed');
           log('✅ Dependencies installed');
-          triggerSnapshotBuild(files).catch(() => {});
+          triggerSnapshotBuild(projectFiles).then(upgraded => {
+            if (upgraded) applyUpgradedPackageJson(projectFiles, upgraded, log);
+          }).catch(() => {});
           updateState({ progress: 70, message: 'Dependencies installed' });
         }
         await fixBinPermissions();
@@ -956,19 +983,132 @@ export default {
       }
     }
 
-    // Step 5: Start dev server
+    // Step 5: Start dev server with error-fix retry loop
     runnerLog.separator('DEV SERVER');
     updateState({ status: 'starting', progress: 80, message: 'Starting development server...' });
     runnerLog.info('Pipeline', 'Starting dev server...');
     log('🚀 Starting development server...');
 
-    const { url } = await startDevServer(
-      (output) => log(output),
-      (serverUrl) => {
-        log(`✅ Server ready at ${serverUrl}`);
-        callbacks.onPreviewReady?.(serverUrl);
+    const maxFixAttempts = 3;
+    let fixAttempt = 0;
+    let url: string = '';
+    let devServerStarted = false;
+    const errorLines: string[] = [];
+    let needsReinstall = false;
+
+    while (fixAttempt < maxFixAttempts && !devServerStarted) {
+      try {
+        const errorCollector = (output: string) => {
+          log(output);
+          if (output.includes('error') || output.includes('Error') || output.includes('ERROR') ||
+              output.includes('Cannot find') || output.includes('Failed to resolve') ||
+              output.includes('SyntaxError') || output.includes('Module not found')) {
+            errorLines.push(output);
+          }
+        };
+        const result = await startDevServer(
+          errorCollector,
+          (serverUrl) => {
+            log(`✅ Server ready at ${serverUrl}`);
+            callbacks.onPreviewReady?.(serverUrl);
+          }
+        );
+        url = result.url;
+        devServerStarted = true;
+      } catch (devErr) {
+        const devErrorMsg = devErr instanceof Error ? devErr.message : String(devErr);
+        errorLines.push(devErrorMsg);
+
+        fixAttempt++;
+        if (fixAttempt >= maxFixAttempts) {
+          throw devErr;
+        }
+        runnerLog.warn('Pipeline', `Dev server failed (attempt ${fixAttempt}/${maxFixAttempts}), attempting auto-fix...`);
+        log(`⚠️ Dev server error, attempting auto-fix (${fixAttempt}/${maxFixAttempts})...`);
+
+        const fixContext: AutoFixContext = {
+          files: projectFiles,
+          updateFile: async (path: string, content: string) => {
+            await writeFile(path, content);
+            const idx = projectFiles.findIndex(f => f.path === path);
+            if (idx >= 0) {
+              projectFiles[idx] = { ...projectFiles[idx], content };
+            }
+          },
+          addTerminalLine: (_type: string, message: string) => log(message),
+          retryCount: fixAttempt,
+        };
+
+        let fixApplied = false;
+        for (const errorLine of errorLines) {
+          const fixResult = autoFixEngine.processError(errorLine, fixContext);
+          if (fixResult?.fixed && fixResult.codeChanges) {
+            for (const change of fixResult.codeChanges) {
+              await writeFile(change.file, change.fixed);
+              const idx = projectFiles.findIndex(f => f.path === change.file);
+              if (idx >= 0) {
+                projectFiles[idx] = { ...projectFiles[idx], content: change.fixed };
+              }
+              if (change.file === 'package.json' || change.file.endsWith('/package.json')) {
+                needsReinstall = true;
+              }
+            }
+            fixApplied = true;
+            runnerLog.info('AutoFix', `Applied fix: ${fixResult.action}`);
+            log(`🔧 Auto-fix: ${fixResult.action}`);
+          }
+        }
+
+        if (!fixApplied) {
+          try {
+            const resp = await fetch('/api/auto-fix', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                errors: errorLines,
+                files: projectFiles.map(f => ({ path: f.path, content: f.content, language: f.path.split('.').pop() || '' })),
+              }),
+            });
+            const serverFixes = await resp.json();
+            if (serverFixes?.fixes?.length > 0) {
+              for (const fix of serverFixes.fixes) {
+                if (fix.type === 'patch_file' && fix.filePath && fix.newContent) {
+                  const existing = projectFiles.find(f => f.path === fix.filePath);
+                  if (existing && fix.oldContent) {
+                    const patched = existing.content.replace(fix.oldContent, fix.newContent);
+                    await writeFile(fix.filePath, patched);
+                    existing.content = patched;
+                    fixApplied = true;
+                    if (fix.filePath === 'package.json') needsReinstall = true;
+                    log(`🔧 Server fix (patch): ${fix.description || fix.filePath}`);
+                  }
+                } else if (fix.type === 'create_file' && fix.filePath && fix.newContent) {
+                  await writeFile(fix.filePath, fix.newContent);
+                  projectFiles.push({ path: fix.filePath, content: fix.newContent });
+                  fixApplied = true;
+                  log(`🔧 Server fix (create): ${fix.description || fix.filePath}`);
+                }
+              }
+            }
+          } catch (fetchErr) {
+            runnerLog.debug('AutoFix', `Server auto-fix request failed: ${fetchErr}`);
+          }
+        }
+
+        if (needsReinstall) {
+          log('📦 Re-installing dependencies after package.json fix...');
+          await runNpmInstall((output) => log(output));
+          needsReinstall = false;
+        }
+
+        if (!fixApplied) {
+          runnerLog.warn('AutoFix', 'No fixes could be applied, retrying as-is...');
+        }
+
+        errorLines.length = 0;
+        updateState({ progress: 80 + fixAttempt * 3, message: `Retrying after fix (${fixAttempt}/${maxFixAttempts})...` });
       }
-    );
+    }
 
     const totalMs = runnerLog.endTimer('auto-run-total');
 

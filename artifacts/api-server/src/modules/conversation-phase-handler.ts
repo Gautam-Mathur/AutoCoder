@@ -61,12 +61,12 @@ export interface ConversationState {
 
 export type OnStepCallback = (step: ThinkingStep) => void;
 
-export function handleMessage(
+export async function handleMessage(
   userMessage: string,
   state: ConversationState,
   conversationHistory?: string,
   onStep?: OnStepCallback
-): PhaseHandlerResult {
+): Promise<PhaseHandlerResult> {
   const thinkingSteps: ThinkingStep[] = [];
   const emitStep = (phase: string, label: string, detail?: string) => {
     const step: ThinkingStep = { phase, label, detail, timestamp: Date.now() };
@@ -91,7 +91,7 @@ export function handleMessage(
         lower.includes('approve') || lower.includes('go ahead') || lower.includes('looks good') ||
         lower.includes('generate') || lower.includes('build it') || lower.includes('start building') ||
         lower.includes('skip')) {
-      return handleGeneration(state, thinkingSteps, emitStep, onStep);
+      return await handleGeneration(state, thinkingSteps, emitStep, onStep);
     }
 
     if (lower.includes('change') || lower.includes('modify') || lower.includes('add') ||
@@ -738,12 +738,12 @@ function generatePlanFromUnderstanding(
   };
 }
 
-function handleGeneration(
+async function handleGeneration(
   state: ConversationState,
   thinkingSteps: ThinkingStep[],
   emitStep: (phase: string, label: string, detail?: string) => void,
   onStep?: OnStepCallback
-): PhaseHandlerResult {
+): Promise<PhaseHandlerResult> {
   const plan = state.planData;
   if (!plan) {
     return {
@@ -759,7 +759,7 @@ function handleGeneration(
 
   let orchestrationResult: OrchestrationResult;
   try {
-    orchestrationResult = orchestrateGeneration(plan, state.understandingData, onStep);
+    orchestrationResult = await orchestrateGeneration(plan, state.understandingData, onStep);
   } catch (err) {
     emitStep('orchestrator', 'Pipeline encountered critical error, falling back to direct generation');
     const rawFiles = generateProjectFromPlan(plan);

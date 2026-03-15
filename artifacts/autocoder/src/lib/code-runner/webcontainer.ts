@@ -729,27 +729,40 @@ async function computePackageJsonHash(pkgJsonStr: string): Promise<string> {
   }
 }
 
-export async function triggerSnapshotBuild(files: Array<{ path: string; content: string }>): Promise<void> {
+export async function triggerSnapshotBuild(files: Array<{ path: string; content: string }>): Promise<string | null> {
   try {
     const pkgFile = files.find(f => f.path === 'package.json' || f.path === '/package.json');
     if (!pkgFile) {
       runnerLog.debug('Snapshot', 'No package.json found in files, skipping snapshot trigger');
-      return;
+      return null;
     }
     const hash = await computePackageJsonHash(pkgFile.content);
     localStorage.setItem('autocoder-last-project-hash', hash);
     runnerLog.info('Snapshot', `Triggering snapshot build for hash ${hash}`);
-    fetch('/api/cache/build-snapshot', {
+    const resp = await fetch('/api/cache/build-snapshot', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ packageJsonContent: pkgFile.content, hash }),
-    }).then(r => r.json()).then(data => {
-      runnerLog.debug('Snapshot', `Build trigger response: ${data.status}`);
-    }).catch(err => {
-      runnerLog.debug('Snapshot', `Build trigger failed (non-fatal): ${err}`);
     });
+    const data = await resp.json();
+    runnerLog.debug('Snapshot', `Build trigger response: ${data.status}`);
+    if (data.upgradedPackageJson && typeof data.upgradedPackageJson === 'string') {
+      runnerLog.info('Snapshot', 'Received upgraded package.json from server');
+      if (data.upgradeInfo) {
+        const info = data.upgradeInfo;
+        if (info.removedPackages?.length > 0) {
+          runnerLog.debug('Snapshot', `Removed packages: ${info.removedPackages.join(', ')}`);
+        }
+        if (info.renamedPackages?.length > 0) {
+          runnerLog.debug('Snapshot', `Renamed packages: ${info.renamedPackages.map((r: any) => `${r.from} → ${r.to}`).join(', ')}`);
+        }
+      }
+      return data.upgradedPackageJson;
+    }
+    return null;
   } catch (err) {
     runnerLog.debug('Snapshot', `triggerSnapshotBuild error (non-fatal): ${err}`);
+    return null;
   }
 }
 
@@ -1077,21 +1090,16 @@ async function tryLoadSnapshot(container: WebContainer): Promise<boolean> {
 
   const origin = window.location.origin;
 
-  // Try project-specific snapshot first (keyed by package.json deps hash)
   const projectHash = localStorage.getItem('autocoder-last-project-hash');
   if (projectHash) {
     const projectSnapshotUrl = `${origin}/cache/snapshot-${projectHash}.json.gz`;
     const loaded = await tryFetchAndMountSnapshot(container, projectSnapshotUrl, `project snapshot (${projectHash})`);
     if (loaded) return true;
-    runnerLog.debug('PreWarm', `Project snapshot not ready yet (hash ${projectHash}), trying fallback...`);
+    runnerLog.debug('PreWarm', `Project snapshot not ready yet (hash ${projectHash}), falling back to live npm install`);
+  } else {
+    runnerLog.debug('PreWarm', 'No project hash found, falling back to live npm install');
   }
 
-  // Fall back to the generic prewarm snapshot if it exists
-  const genericUrl = `${origin}/cache/prewarm-snapshot.json.gz`;
-  const loaded = await tryFetchAndMountSnapshot(container, genericUrl, 'generic prewarm snapshot');
-  if (loaded) return true;
-
-  runnerLog.debug('PreWarm', 'No snapshot available, falling back to live npm install');
   return false;
 }
 

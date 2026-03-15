@@ -33,6 +33,10 @@ import { analyzeCodeQuality, applyQualityFixes } from './code-quality-engine.js'
 import { resolveDependencies } from './dependency-resolver.js';
 import { generateProjectFromPlan } from './plan-driven-generator.js';
 import { validateAndFix } from './post-generation-validator.js';
+import { isSLMAvailable, runSLM } from './slm-inference-engine.js';
+import { UNDERSTANDING_STAGE_ID, mergeUnderstandingResults } from './slm-stage-understanding.js';
+import { CODEGEN_STAGE_ID, applyCodeEnhancements, validateCodeEnhancement } from './slm-stage-codegen.js';
+import type { CodeEnhancement } from './slm-stage-codegen.js';
 import { generateTestFiles } from './test-generator.js';
 import { learningEngine } from './generation-learning-engine.js';
 import { inferEntityFields, isSemanticDuplicate } from './entity-field-inference.js';
@@ -282,7 +286,7 @@ function executeStage(
   throw new Error(`Stage "${stage.name}" exhausted all retries: ${errMsg}`);
 }
 
-export function orchestrateGeneration(plan: ProjectPlan, understanding?: UnderstandingResult, onStep?: OnStepCallback): OrchestrationResult {
+export async function orchestrateGeneration(plan: ProjectPlan, understanding?: UnderstandingResult, onStep?: OnStepCallback): Promise<OrchestrationResult> {
   const pipelineStart = Date.now();
 
   const ctx: PipelineContext = {
@@ -319,6 +323,27 @@ export function orchestrateGeneration(plan: ProjectPlan, understanding?: Underst
       output: understanding,
     }));
     emitStep(ctx, 'understand', 'Confidence assessment', `${Math.round(understanding.confidence * 100)}% confident in requirement interpretation${understanding.confidence < 0.7 ? ' — will proceed cautiously with more generic patterns' : ' — high confidence, proceeding with domain-specific optimizations'}`);
+
+    if (isSLMAvailable()) {
+      emitStep(ctx, 'understand', 'SLM enhancing understanding', 'Running AI-enhanced analysis to detect implicit requirements and hidden entities');
+      try {
+        const slmResult = await runSLM(UNDERSTANDING_STAGE_ID, {
+          userRequest: ctx.userRequest || understanding.level1_intent?.primaryGoal || '',
+          ruleOutput: understanding,
+        });
+        if (slmResult.success && slmResult.data) {
+          const merged = mergeUnderstandingResults(understanding, slmResult.data);
+          Object.assign(understanding, merged);
+          const implicitCount = slmResult.data.implicitRequirements?.length || 0;
+          const newEntities = slmResult.data.entities?.filter((e: any) => e.isImplied)?.length || 0;
+          emitStep(ctx, 'understand', 'SLM enhancement complete', `Added ${implicitCount} implicit requirements, ${newEntities} inferred entities (${slmResult.latencyMs}ms)`);
+        } else {
+          emitStep(ctx, 'understand', 'SLM enhancement skipped', slmResult.error || 'No useful enhancements found');
+        }
+      } catch (err) {
+        emitStep(ctx, 'understand', 'SLM enhancement skipped', `Non-fatal error: ${err}`);
+      }
+    }
   } else {
     emitStep(ctx, 'understand', 'Skipping re-analysis', 'No prior understanding data available — the plan will be used as-is');
     skippedStages.push('understand');
@@ -746,6 +771,30 @@ export function orchestrateGeneration(plan: ProjectPlan, understanding?: Underst
       output: { files: fileCount, lines: lineCount },
     };
   }, 1);
+
+  if (isSLMAvailable() && ctx.files.length > 0) {
+    emitStep(ctx, 'generate', 'SLM enhancing function bodies', 'AI micro-writer improving logic, validation, and error handling in generated code');
+    try {
+      const slmResult = await runSLM<{ enhancements: CodeEnhancement[] }>(CODEGEN_STAGE_ID, {
+        files: ctx.files,
+        plan: ctx.plan,
+      });
+      if (slmResult.success && slmResult.data?.enhancements?.length) {
+        const validEnhancements = slmResult.data.enhancements.filter(e => validateCodeEnhancement(e, ctx.files));
+        if (validEnhancements.length > 0) {
+          const result = applyCodeEnhancements(ctx.files, validEnhancements);
+          ctx.files = result.files;
+          emitStep(ctx, 'generate', 'SLM code enhancement complete', `${result.applied} enhancements applied, ${result.rejected} rejected (${slmResult.latencyMs}ms)`);
+        } else {
+          emitStep(ctx, 'generate', 'SLM code enhancement skipped', 'No valid enhancements met safety criteria');
+        }
+      } else {
+        emitStep(ctx, 'generate', 'SLM code enhancement skipped', slmResult.error || 'No enhancements returned');
+      }
+    } catch (err) {
+      emitStep(ctx, 'generate', 'SLM code enhancement skipped', `Non-fatal error: ${err}`);
+    }
+  }
 
   // Stage 12: Dependency resolution
   const resolveStage = PIPELINE_STAGES.find(s => s.id === 'resolve')!;

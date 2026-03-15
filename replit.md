@@ -58,6 +58,9 @@ Express 5 API server. Routes live in `src/routes/` and use `@workspace/api-zod` 
 - Entry: `src/index.ts` — reads `PORT`, starts Express + HTTP server (with WebSocket support via ws)
 - Routes: `src/routes/autocoder.ts` — the main AutoCoder routes + WebSocket handlers; `src/routes/health.ts` — health check
 - Modules: `src/modules/` — 35+ AI-powered modules (code generation, planning, security scanning, etc.)
+- SLM system: 8 registered stage templates (understand, design, semantic, quality, schema, api, components, generate) initialized at startup via `slm-registry.ts`. When an AI endpoint is available, the pipeline uses SLM to enhance understanding (implicit requirements, inferred entities) and codegen (function-body improvements). Falls back to rules-only mode if no endpoint is configured.
+- Snapshot system: Per-project snapshots only (generic prewarm disabled). The route `/api/cache/build-snapshot` accepts a project's package.json, upgrades it via `upgradePackageJson()` (cross-references dependency registry, removes bad packages, applies renames), and builds an npm install snapshot. Frontend applies the upgraded package.json back to the WebContainer.
+- Validation: Multi-pass `validateAndFix()` in `post-generation-validator.ts` catches import/export mismatches, missing dependencies, and Vite-specific issues (Tailwind v4 directives, missing vite.config.ts, missing React imports, missing default exports in App.tsx). Auto-fixes are applied iteratively (up to 3 passes).
 - Storage: `src/storage.ts` — in-memory or PostgreSQL storage (auto-selects based on DATABASE_URL)
 - Client-lib: `src/client-lib/code-generator/` — shared code validator and pro-generator (used server-side)
 - AI: Uses `AI_INTEGRATIONS_OPENAI_API_KEY` + `AI_INTEGRATIONS_OPENAI_BASE_URL` (Replit AI Integrations) or `OPENAI_API_KEY`
@@ -72,6 +75,7 @@ AutoCoder React + Vite frontend. Full-stack AI code generation UI.
 - Pages: `landing` (home), `chat` (main IDE), `vapt-dashboard` (security scans), `slm-settings`
 - Components: chat interface, VS Code-style IDE, file panel, preview panel, code preview, deployment panel
 - Uses `@webcontainer/api` for in-browser code execution/preview
+- Auto-fix engine: When the dev server fails in WebContainer, the `auto-fix-engine.ts` parses errors (missing modules, export mismatches, syntax errors) and applies targeted fixes, retrying up to 3 times. Falls back to server-side `/api/auto-fix` endpoint for deeper analysis.
 - Uses `@shared/schema` alias → `artifacts/autocoder/shared/schema.ts`
 - CSS: Tailwind v4 with custom CSS variables for theming
 - AI: Communicates with api-server via REST + WebSockets

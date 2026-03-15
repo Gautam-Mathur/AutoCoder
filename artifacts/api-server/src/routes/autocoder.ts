@@ -514,7 +514,7 @@ export async function registerRoutes(
         } catch {}
       };
 
-      const result = handlePhaseMessage(content, convState, conversationHistory, onStep);
+      const result = await handlePhaseMessage(content, convState, conversationHistory, onStep);
 
       if (result.generatedFiles && result.generatedFiles.length > 0) {
         const isIterativeEdit = result.fileEdits && result.fileEdits.length > 0;
