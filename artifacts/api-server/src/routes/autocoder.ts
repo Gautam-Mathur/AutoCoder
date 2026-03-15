@@ -607,6 +607,10 @@ export async function registerRoutes(
       if (result.validationSummary) {
         donePayload.validationSummary = result.validationSummary;
       }
+      if (result.slmEnhanced) {
+        donePayload.slmEnhanced = true;
+        donePayload.slmStagesRun = result.slmStagesRun || [];
+      }
       if (result.newPhase === 'approval') {
         donePayload.showApproval = true;
       }

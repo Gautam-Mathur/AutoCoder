@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Plus, MessageSquare, Trash2, MoreHorizontal, Terminal, PanelRightClose, PanelRight, Pencil, ShieldCheck, AlertTriangle } from "lucide-react";
+import { Plus, MessageSquare, Trash2, MoreHorizontal, Terminal, PanelRightClose, PanelRight, Pencil, ShieldCheck, AlertTriangle, Sparkles } from "lucide-react";
 import { isWebContainerSupported, onPreWarmProgress, getPreWarmStatus } from "@/lib/code-runner/webcontainer";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -254,6 +254,8 @@ export default function Chat() {
   const [preWarmMessage, setPreWarmMessage] = useState<string>('');
   const [recentEdits, setRecentEdits] = useState<{filePath: string; editType: string; description: string; linesChanged: number}[]>([]);
   const [validationSummary, setValidationSummary] = useState<{passes: number; issuesFound: number; issuesFixed: number; unfixableIssues: string[]} | null>(null);
+  const [slmEnhanced, setSlmEnhanced] = useState<boolean>(false);
+  const [slmStagesRun, setSlmStagesRun] = useState<string[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Prevent CMD+1/CMD+2 from interfering with the app
@@ -381,6 +383,8 @@ export default function Chat() {
     setIsStreaming(true);
     setStreamingContent("");
     setValidationSummary(null);
+    setSlmEnhanced(false);
+    setSlmStagesRun([]);
     setStreamingThinkingSteps([]);
 
     queryClient.setQueryData<ConversationWithMessages>(
@@ -454,6 +458,10 @@ export default function Chat() {
                 }
                 if (data.validationSummary) {
                   setValidationSummary(data.validationSummary);
+                }
+                if (data.slmEnhanced) {
+                  setSlmEnhanced(true);
+                  setSlmStagesRun(data.slmStagesRun || []);
                 }
                 if (data.fileEdits && data.fileEdits.length > 0) {
                   setRecentEdits(data.fileEdits);
@@ -713,6 +721,14 @@ export default function Chat() {
                       {validationSummary.unfixableIssues.length > 0
                         ? ` \u00b7 ${validationSummary.unfixableIssues.length} need review`
                         : ' \u00b7 all verified'}
+                    </span>
+                  </div>
+                )}
+                {slmEnhanced && slmStagesRun.length > 0 && (
+                  <div className="flex items-center gap-2 mb-2 text-xs text-muted-foreground" data-testid="slm-enhanced-panel">
+                    <Sparkles className="h-3 w-3 text-violet-500 flex-shrink-0" />
+                    <span className="truncate">
+                      AI-enhanced: {slmStagesRun.join(', ')}
                     </span>
                   </div>
                 )}

@@ -1035,21 +1035,23 @@ function stripAnsi(str: string): string {
   return str.replace(/\x1B\[[0-9;]*[A-Za-z]|\x1B\].*?\x07|\x1B\[[\?]?[0-9;]*[A-Za-z]/g, '');
 }
 
-async function tryFetchAndMountSnapshot(container: WebContainer, url: string, label: string): Promise<boolean> {
+async function tryFetchAndMountSnapshot(container: WebContainer, url: string, label: string, onOutput?: (msg: string) => void): Promise<boolean> {
   try {
+    const emit = (msg: string) => { notifyPreWarm('installing', msg); onOutput?.(msg); };
     runnerLog.info('PreWarm', `Trying snapshot from ${label}...`);
-    notifyPreWarm('installing', 'Downloading package cache...');
+    emit('Downloading package cache...');
 
     const response = await fetch(url);
     if (!response.ok) {
       runnerLog.debug('PreWarm', `Snapshot not available at ${label} (HTTP ${response.status})`);
+      onOutput?.(`Snapshot not available (${label})`);
       return false;
     }
 
     const compressedBuffer = await response.arrayBuffer();
     const compressedSize = (compressedBuffer.byteLength / 1024 / 1024).toFixed(1);
     runnerLog.info('PreWarm', `Downloaded snapshot: ${compressedSize} MB compressed`);
-    notifyPreWarm('installing', `Package cache downloaded (${compressedSize} MB), extracting...`);
+    emit(`Package cache downloaded (${compressedSize} MB), extracting...`);
 
     const ds = new DecompressionStream('gzip');
     const decompressedStream = new Response(
@@ -1058,7 +1060,7 @@ async function tryFetchAndMountSnapshot(container: WebContainer, url: string, la
     const jsonText = await decompressedStream.text();
     const uncompressedSize = (jsonText.length / 1024 / 1024).toFixed(1);
     runnerLog.info('PreWarm', `Decompressed: ${uncompressedSize} MB`);
-    notifyPreWarm('installing', 'Mounting packages into environment...');
+    emit('Mounting packages into environment...');
 
     const snapshot = JSON.parse(jsonText) as FileSystemTree;
 
@@ -1066,6 +1068,7 @@ async function tryFetchAndMountSnapshot(container: WebContainer, url: string, la
     await container.mount(snapshot);
     const mountTime = runnerLog.endTimer('snapshot-mount');
     runnerLog.success('PreWarm', `Snapshot mounted from ${label}`, undefined, mountTime);
+    emit(`Snapshot mounted (${mountTime}ms)`);
 
     await container.fs.writeFile('vite.config.ts', VITE_CONFIG_CONTENTS);
     runnerLog.debug('FileSystem', 'Wrote vite.config.ts after snapshot mount');
@@ -1074,17 +1077,21 @@ async function tryFetchAndMountSnapshot(container: WebContainer, url: string, la
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     runnerLog.debug('PreWarm', `Snapshot load failed from ${label}: ${errMsg}`);
+    onOutput?.(`Snapshot load failed: ${errMsg}`);
     return false;
   }
 }
 
-async function tryLoadSnapshot(container: WebContainer): Promise<boolean> {
+async function tryLoadSnapshot(container: WebContainer, onOutput?: (msg: string) => void): Promise<boolean> {
+  const emit = (msg: string) => { onOutput?.(msg); };
   if (typeof window === 'undefined' || typeof fetch === 'undefined') {
     runnerLog.warn('PreWarm', 'Snapshot skipped: no browser environment (window/fetch unavailable)');
+    emit('Snapshot skipped: no browser environment');
     return false;
   }
   if (typeof DecompressionStream === 'undefined') {
     runnerLog.warn('PreWarm', 'Snapshot skipped: DecompressionStream not supported in this browser');
+    emit('Snapshot skipped: browser does not support DecompressionStream');
     return false;
   }
 
@@ -1092,12 +1099,16 @@ async function tryLoadSnapshot(container: WebContainer): Promise<boolean> {
 
   const projectHash = localStorage.getItem('autocoder-last-project-hash');
   if (projectHash) {
+    emit(`Looking for project snapshot (${projectHash})...`);
+    notifyPreWarm('installing', `Looking for cached snapshot...`);
     const projectSnapshotUrl = `${origin}/cache/snapshot-${projectHash}.json.gz`;
-    const loaded = await tryFetchAndMountSnapshot(container, projectSnapshotUrl, `project snapshot (${projectHash})`);
+    const loaded = await tryFetchAndMountSnapshot(container, projectSnapshotUrl, `project snapshot (${projectHash})`, onOutput);
     if (loaded) return true;
     runnerLog.debug('PreWarm', `Project snapshot not ready yet (hash ${projectHash}), falling back to live npm install`);
+    emit('Project snapshot not available, falling back to npm install');
   } else {
     runnerLog.debug('PreWarm', 'No project hash found, falling back to live npm install');
+    emit('No cached snapshot found, using npm install');
   }
 
   return false;

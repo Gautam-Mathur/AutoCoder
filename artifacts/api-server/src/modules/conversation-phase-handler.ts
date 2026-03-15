@@ -17,6 +17,9 @@ import { planIntegrations } from './integration-planner.js';
 import { planSecurity } from './security-planner.js';
 import { planPerformance } from './performance-planner.js';
 import { analyzeAndFix as viteAnalyzeAndFix, parseErrors as viteParseErrors, type FixAction } from './vite-error-fixer.js';
+import { isSLMAvailable, runSLM } from './slm-inference-engine.js';
+import { UNDERSTANDING_STAGE_ID, mergeUnderstandingResults } from './slm-stage-understanding.js';
+import { CODEGEN_STAGE_ID, applyCodeEnhancements, validateCodeEnhancement, type CodeEnhancement } from './slm-stage-codegen.js';
 
 export type ConversationPhase = 'initial' | 'understanding' | 'clarifying' | 'planning' | 'approval' | 'generating' | 'complete' | 'editing';
 
@@ -39,6 +42,8 @@ export interface PhaseHandlerResult {
   clarificationRound?: number;
   clarificationState?: ClarificationState;
   validationSummary?: ValidationSummaryResult;
+  slmEnhanced?: boolean;
+  slmStagesRun?: string[];
 }
 
 export interface ThinkingStep {
@@ -87,7 +92,7 @@ export async function handleMessage(
 
   if (currentPhase === 'generating') {
     emitStep('recovery', 'Phase recovery', 'Detected stuck generating phase, restarting');
-    return handleInitialRequest(userMessage, thinkingSteps, emitStep, conversationHistory);
+    return await handleInitialRequest(userMessage, thinkingSteps, emitStep, conversationHistory);
   }
 
   if (currentPhase === 'approval' || currentPhase === 'planning') {
@@ -112,7 +117,7 @@ export async function handleMessage(
   if (currentPhase === 'clarifying') {
     if (!state.understandingData) {
       emitStep('recovery', 'Phase recovery', 'Missing context from previous analysis, re-analyzing');
-      return handleInitialRequest(userMessage, thinkingSteps, emitStep, conversationHistory);
+      return await handleInitialRequest(userMessage, thinkingSteps, emitStep, conversationHistory);
     }
     return handleClarificationResponse(userMessage, state, thinkingSteps, emitStep);
   }
@@ -123,7 +128,7 @@ export async function handleMessage(
       /\b(add|change|modify|update|remove|delete|fix|replace|rename|move|create|implement|make|refactor|redesign|restyle|improve)\b/i.test(userMessage);
 
     if (isEditRequest) {
-      return handleIterativeEdit(userMessage, state, thinkingSteps, emitStep);
+      return await handleIterativeEdit(userMessage, state, thinkingSteps, emitStep);
     }
 
     const localResult = handleLocalResponse(userMessage, state);
@@ -146,15 +151,15 @@ export async function handleMessage(
     }
   }
 
-  return handleInitialRequest(userMessage, thinkingSteps, emitStep, conversationHistory);
+  return await handleInitialRequest(userMessage, thinkingSteps, emitStep, conversationHistory);
 }
 
-function handleInitialRequest(
+async function handleInitialRequest(
   userMessage: string,
   thinkingSteps: ThinkingStep[],
   emitStep: (phase: string, label: string, detail?: string) => void,
   conversationHistory?: string
-): PhaseHandlerResult {
+): Promise<PhaseHandlerResult> {
   emitStep('understanding', 'Deep Understanding Engine activated', `Analyzing your request through 5 levels of decomposition to fully grasp what you need built`);
   emitStep('understanding', 'Why multi-level analysis', 'A single pass would miss nuances — each level builds on the previous, from raw intent through domain expertise to specific entity structures and workflows');
 
@@ -163,6 +168,27 @@ function handleInitialRequest(
   const understanding = analyzeRequest(userMessage, conversationHistory);
 
   emitStep('understanding', 'Intent identified', `Primary goal: "${understanding.level1_intent?.primaryGoal || userMessage.slice(0, 60)}" | Complexity: ${(understanding.level1_intent as any)?.complexity || 'moderate'}`);
+
+  if (isSLMAvailable()) {
+    emitStep('understanding', 'SLM enhancing understanding', 'Running AI-enhanced analysis to detect implicit requirements and hidden entities');
+    try {
+      const slmResult = await runSLM(UNDERSTANDING_STAGE_ID, {
+        userRequest: userMessage,
+        ruleOutput: understanding,
+      });
+      if (slmResult.success && slmResult.data) {
+        const merged = mergeUnderstandingResults(understanding, slmResult.data);
+        Object.assign(understanding, merged);
+        const implicitCount = slmResult.data.implicitRequirements?.length || 0;
+        const newEntities = slmResult.data.entities?.filter((e: any) => e.isImplied)?.length || 0;
+        emitStep('understanding', 'SLM enhancement complete', `Added ${implicitCount} implicit requirements, ${newEntities} inferred entities (${slmResult.latencyMs}ms)`);
+      } else {
+        emitStep('understanding', 'SLM enhancement skipped', slmResult.error || 'No useful enhancements found');
+      }
+    } catch (err) {
+      emitStep('understanding', 'SLM enhancement skipped', `Non-fatal error: ${err}`);
+    }
+  }
 
   emitStep('understanding', 'Level 2: Domain Detection',
     understanding.level2_domain.primaryDomain
@@ -771,8 +797,35 @@ async function handleGeneration(
     orchestrationResult = await orchestrateGeneration(plan, state.understandingData, onStep);
   } catch (err) {
     emitStep('orchestrator', 'Pipeline encountered critical error, falling back to direct generation');
-    const rawFiles = generateProjectFromPlan(plan);
+    let rawFiles = generateProjectFromPlan(plan);
     emitStep('generating', 'Code generation complete', `${rawFiles.length} files created`);
+    const fallbackSlmStages: string[] = [];
+
+    if (isSLMAvailable() && rawFiles.length > 0) {
+      emitStep('generating', 'SLM enhancing function bodies', 'AI micro-writer improving logic, validation, and error handling');
+      try {
+        const slmResult = await runSLM<{ enhancements: CodeEnhancement[] }>(CODEGEN_STAGE_ID, {
+          files: rawFiles,
+          plan,
+        });
+        if (slmResult.success && slmResult.data?.enhancements?.length) {
+          const validEnhancements = slmResult.data.enhancements.filter(e => validateCodeEnhancement(e, rawFiles));
+          if (validEnhancements.length > 0) {
+            const enhanceResult = applyCodeEnhancements(rawFiles, validEnhancements);
+            rawFiles = enhanceResult.files;
+            fallbackSlmStages.push('generate');
+            emitStep('generating', 'SLM code enhancement complete', `${enhanceResult.applied} enhancements applied, ${enhanceResult.rejected} rejected (${slmResult.latencyMs}ms)`);
+          } else {
+            emitStep('generating', 'SLM code enhancement skipped', 'No valid enhancements met safety criteria');
+          }
+        } else {
+          emitStep('generating', 'SLM code enhancement skipped', slmResult.error || 'No enhancements returned');
+        }
+      } catch (slmErr) {
+        emitStep('generating', 'SLM code enhancement skipped', `Non-fatal error: ${slmErr}`);
+      }
+    }
+
     const MAX_VALIDATION_PASSES = 3;
     let currentFiles = rawFiles;
     let totalFixesApplied: string[] = [];
@@ -852,6 +905,8 @@ async function handleGeneration(
       generatedFiles: fallbackFiles,
       planData: plan,
       validationSummary: fallbackValSummary,
+      slmEnhanced: fallbackSlmStages.length > 0,
+      slmStagesRun: fallbackSlmStages,
     };
   }
 
@@ -940,6 +995,16 @@ ${warningsList}
       }
     : undefined;
 
+  const orchSlmStages: string[] = [];
+  for (const step of thinkingSteps) {
+    if (step.label === 'SLM enhancement complete' && step.phase === 'understand') {
+      if (!orchSlmStages.includes('understand')) orchSlmStages.push('understand');
+    }
+    if (step.label === 'SLM code enhancement complete' && step.phase === 'generate') {
+      if (!orchSlmStages.includes('generate')) orchSlmStages.push('generate');
+    }
+  }
+
   return {
     responseContent,
     newPhase: 'complete',
@@ -947,6 +1012,8 @@ ${warningsList}
     generatedFiles: finalFiles,
     planData: plan,
     validationSummary: orchestrationValSummary,
+    slmEnhanced: orchSlmStages.length > 0,
+    slmStagesRun: orchSlmStages,
   };
 }
 
@@ -1629,16 +1696,16 @@ function isEditRequest(message: string): boolean {
   return editPatterns.some(p => p.test(message));
 }
 
-function handleIterativeEdit(
+async function handleIterativeEdit(
   userMessage: string,
   state: ConversationState,
   thinkingSteps: ThinkingStep[],
   emitStep: (phase: string, label: string, detail?: string) => void
-): PhaseHandlerResult {
+): Promise<PhaseHandlerResult> {
   const lower = userMessage.toLowerCase().trim();
 
   if (lower.includes('regenerate') || lower.includes('start over') || lower.includes('rebuild')) {
-    return handleInitialRequest(userMessage, thinkingSteps, emitStep);
+    return await handleInitialRequest(userMessage, thinkingSteps, emitStep);
   }
 
   if (!state.existingFiles || state.existingFiles.length === 0) {
