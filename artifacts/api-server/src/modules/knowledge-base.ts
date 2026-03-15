@@ -80,6 +80,23 @@ import {
   EXPANDED_DOMAIN_MODELS_8b,
 } from './knowledge-base-expansion-8';
 
+import {
+  EXPANDED_CONCEPTS_9,
+  EXPANDED_ENTITY_ARCHETYPES_9,
+  EXPANDED_DOMAIN_MODELS_9,
+  EXPANDED_CODE_SNIPPETS_9,
+  EXPANDED_ANTI_PATTERNS_9,
+  EXPANDED_BEST_PRACTICES_9,
+} from './knowledge-base-expansion-9';
+
+import {
+  EXPANDED_CONCEPTS_10,
+  EXPANDED_ENTITY_ARCHETYPES_10,
+  EXPANDED_CODE_SNIPPETS_10,
+  EXPANDED_ANTI_PATTERNS_10,
+  EXPANDED_BEST_PRACTICES_10,
+} from './knowledge-base-expansion-10';
+
 // ============================================
 // Concepts
 // ============================================
@@ -833,6 +850,8 @@ Object.assign(CONCEPTS, EXPANDED_CONCEPTS_5);
 Object.assign(CONCEPTS, EXPANDED_CONCEPTS_6);
 Object.assign(CONCEPTS, EXPANDED_CONCEPTS_7);
 Object.assign(CONCEPTS, EXPANDED_CONCEPTS_8);
+Object.assign(CONCEPTS, EXPANDED_CONCEPTS_9);
+Object.assign(CONCEPTS, EXPANDED_CONCEPTS_10);
 
 // ============================================
 // Entity Archetype Registry
@@ -2553,6 +2572,8 @@ Object.assign(ENTITY_ARCHETYPES, EXPANDED_ENTITY_ARCHETYPES_5);
 Object.assign(ENTITY_ARCHETYPES, EXPANDED_ENTITY_ARCHETYPES_6);
 Object.assign(ENTITY_ARCHETYPES, EXPANDED_ENTITY_ARCHETYPES_7);
 Object.assign(ENTITY_ARCHETYPES, EXPANDED_ENTITY_ARCHETYPES_8);
+Object.assign(ENTITY_ARCHETYPES, EXPANDED_ENTITY_ARCHETYPES_9);
+Object.assign(ENTITY_ARCHETYPES, EXPANDED_ENTITY_ARCHETYPES_10);
 
 // ============================================
 // Domain Model Registry
@@ -2968,6 +2989,7 @@ Object.assign(DOMAIN_MODELS, EXPANDED_DOMAIN_MODELS_6);
 Object.assign(DOMAIN_MODELS, EXPANDED_DOMAIN_MODELS_7);
 Object.assign(DOMAIN_MODELS, EXPANDED_DOMAIN_MODELS_8);
 Object.assign(DOMAIN_MODELS, EXPANDED_DOMAIN_MODELS_8b);
+Object.assign(DOMAIN_MODELS, EXPANDED_DOMAIN_MODELS_9);
 
 // ============================================
 // Anti-Pattern Registry — LLM bad habits
@@ -3271,6 +3293,8 @@ ANTI_PATTERNS.push(...EXPANDED_ANTI_PATTERNS_5);
 ANTI_PATTERNS.push(...EXPANDED_ANTI_PATTERNS_6);
 ANTI_PATTERNS.push(...EXPANDED_ANTI_PATTERNS_7);
 ANTI_PATTERNS.push(...EXPANDED_ANTI_PATTERNS_8);
+ANTI_PATTERNS.push(...EXPANDED_ANTI_PATTERNS_9);
+ANTI_PATTERNS.push(...EXPANDED_ANTI_PATTERNS_10);
 
 // ============================================
 // Tech Stack Code Snippets
@@ -4904,6 +4928,8 @@ CODE_SNIPPETS.push(...EXPANDED_CODE_SNIPPETS_6);
 CODE_SNIPPETS.push(...EXPANDED_CODE_SNIPPETS_7);
 CODE_SNIPPETS.push(...EXPANDED_CODE_SNIPPETS_8);
 CODE_SNIPPETS.push(...EXPANDED_CODE_SNIPPETS_8b);
+CODE_SNIPPETS.push(...Object.values(EXPANDED_CODE_SNIPPETS_9));
+CODE_SNIPPETS.push(...Object.values(EXPANDED_CODE_SNIPPETS_10));
 
 // ============================================
 // Best Practices Database
@@ -5418,6 +5444,8 @@ BEST_PRACTICES.push(...EXPANDED_BEST_PRACTICES_5);
 BEST_PRACTICES.push(...EXPANDED_BEST_PRACTICES_6);
 BEST_PRACTICES.push(...EXPANDED_BEST_PRACTICES_7);
 BEST_PRACTICES.push(...EXPANDED_BEST_PRACTICES_8);
+BEST_PRACTICES.push(...EXPANDED_BEST_PRACTICES_9);
+BEST_PRACTICES.push(...EXPANDED_BEST_PRACTICES_10);
 
 // ============================================
 // Learning Paths
@@ -5625,6 +5653,10 @@ export function getContextForGeneration(ctx: GenerationContext): string {
     'wiki': ['drizzle-schema-blog', 'search-filter-bar', 'pagination-component'],
     'knowledge-base': ['drizzle-schema-blog', 'search-filter-bar'],
     'subscription': ['notification-bell-component', 'drizzle-schema-saas-billing'],
+    'finance': ['drizzle-schema-personal-finance', 'react-data-table', 'api-error-handling'],
+    'personal-finance': ['drizzle-schema-personal-finance', 'react-data-table'],
+    'hr': ['drizzle-schema-hr-management', 'react-data-table', 'api-error-handling'],
+    'hr-management': ['drizzle-schema-hr-management', 'react-data-table'],
   };
 
   if (ctx.domain) {

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "exportedAt": "2026-03-15T14:33:46.051Z",
+  "exportedAt": "2026-03-15T16:48:56.004Z",
   "patterns": [
     {
       "patternType": "entity-structure",
@@ -199,7 +199,7 @@
     {
       "id": 7,
       "patternType": "entity-structure",
-      "domainId": "project-management",
+      "domainId": "portfolio",
       "entityType": "Project",
       "patternKey": "entity-project",
       "patternValue": {
@@ -208,17 +208,27 @@
           "name": "text",
           "tags": "string[]",
           "budget": "number",
-          "status": "enum(planning,active,on-hold,completed,archived)",
+          "status": "enum(published,draft)",
           "endDate": "date",
           "ownerId": "integer",
           "duration": "text",
           "priority": "enum:low,medium,high,critical",
-          "progress": "integer",
+          "progress": "number",
           "createdAt": "datetime",
           "startDate": "date",
           "taskCount": "text",
           "description": "text",
-          "milestoneCount": "text"
+          "milestoneCount": "text",
+          "title": "text",
+          "slug": "text",
+          "longDescription": "text",
+          "imageUrl": "text",
+          "liveUrl": "text",
+          "githubUrl": "text",
+          "techStack": "text[]",
+          "category": "text",
+          "featured": "boolean",
+          "sortOrder": "integer"
         },
         "recommended": [
           "id",
@@ -235,10 +245,20 @@
           "createdAt",
           "duration",
           "taskCount",
-          "milestoneCount"
+          "milestoneCount",
+          "title",
+          "slug",
+          "longDescription",
+          "imageUrl",
+          "liveUrl",
+          "githubUrl",
+          "techStack",
+          "category",
+          "featured",
+          "sortOrder"
         ]
       },
-      "successCount": 4,
+      "successCount": 6,
       "failureCount": 0,
       "reliability": 1
     },
@@ -460,9 +480,9 @@
           }
         ]
       },
-      "successCount": 3,
+      "successCount": 5,
       "failureCount": 1,
-      "reliability": 0.75
+      "reliability": 0.8333333333333334
     },
     {
       "id": 12,
@@ -575,7 +595,7 @@
           "dashboard-widget view"
         ]
       },
-      "successCount": 2,
+      "successCount": 3,
       "failureCount": 0,
       "reliability": 1
     },
@@ -593,7 +613,7 @@
           "files"
         ]
       },
-      "successCount": 3,
+      "successCount": 4,
       "failureCount": 0,
       "reliability": 1
     },
@@ -622,7 +642,7 @@
       "patternType": "tech-choice",
       "patternKey": "file-structure-general",
       "patternValue": {
-        "fileCount": 69,
+        "fileCount": 63,
         "recentPaths": [
           "src/lib/utils.ts",
           "src/lib/queryClient.ts",
@@ -644,7 +664,6 @@
           "src/components/search-bar.tsx",
           "src/components/empty-state.tsx",
           "src/components/status-badge.tsx",
-          "src/components/kpi-card.tsx",
           "package.json",
           "index.html",
           "src/main.tsx",
@@ -653,11 +672,12 @@
           "postcss.config.js",
           "tsconfig.json",
           "tsconfig.node.json",
-          "src/index.css"
+          "src/index.css",
+          "shared/schema.ts"
         ],
         "qualityScore": 90
       },
-      "successCount": 9,
+      "successCount": 10,
       "failureCount": 0,
       "reliability": 1
     },
@@ -2553,11 +2573,32 @@
       "reliability": 1
     },
     {
+      "id": 119,
       "patternType": "entity-structure",
-      "entityType": "Employee",
       "domainId": "hr",
+      "entityType": "Employee",
       "patternKey": "entity-employee",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "email": "text",
+          "phone": "text",
+          "avatar": "string",
+          "salary": "integer",
+          "status": "enum(active,on-leave,terminated,probation)",
+          "fullName": "text",
+          "hireDate": "date",
+          "lastName": "text",
+          "position": "text",
+          "createdAt": "datetime",
+          "firstName": "text",
+          "managerId": "integer",
+          "department": "string",
+          "departmentId": "integer",
+          "paySlipCount": "text",
+          "leaveBalanceCount": "text",
+          "leaveRequestCount": "text"
+        },
         "recommended": [
           "id",
           "firstName",
@@ -2577,38 +2618,27 @@
           "leaveRequestCount",
           "leaveBalanceCount",
           "paySlipCount"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "firstName": "text",
-          "lastName": "text",
-          "email": "text",
-          "phone": "text",
-          "departmentId": "integer",
-          "position": "text",
-          "salary": "integer",
-          "hireDate": "date",
-          "managerId": "integer",
-          "status": "enum(active,on-leave,terminated,probation)",
-          "department": "string",
-          "avatar": "string",
-          "createdAt": "datetime",
-          "fullName": "text",
-          "leaveRequestCount": "text",
-          "leaveBalanceCount": "text",
-          "paySlipCount": "text"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 118,
       "patternType": "entity-structure",
-      "entityType": "Department",
       "domainId": "hr",
+      "entityType": "Department",
       "patternKey": "entity-department",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "budget": "integer",
+          "headId": "integer",
+          "employeeCount": "text",
+          "jobPostingCount": "text"
+        },
         "recommended": [
           "id",
           "name",
@@ -2616,26 +2646,30 @@
           "budget",
           "employeeCount",
           "jobPostingCount"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "name": "text",
-          "headId": "integer",
-          "budget": "integer",
-          "employeeCount": "text",
-          "jobPostingCount": "text"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 123,
       "patternType": "entity-structure",
-      "entityType": "LeaveRequest",
       "domainId": "hr",
+      "entityType": "LeaveRequest",
       "patternKey": "entity-leaverequest",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "days": "integer",
+          "type": "enum(vacation,sick,personal,maternity,paternity,unpaid)",
+          "reason": "text",
+          "status": "enum(pending,approved,rejected,cancelled)",
+          "endDate": "date",
+          "duration": "text",
+          "startDate": "date",
+          "employeeId": "integer"
+        },
         "recommended": [
           "id",
           "employeeId",
@@ -2646,29 +2680,27 @@
           "reason",
           "status",
           "duration"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "employeeId": "integer",
-          "type": "enum(vacation,sick,personal,maternity,paternity,unpaid)",
-          "startDate": "date",
-          "endDate": "date",
-          "days": "integer",
-          "reason": "text",
-          "status": "enum(pending,approved,rejected,cancelled)",
-          "duration": "text"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 120,
       "patternType": "entity-structure",
-      "entityType": "LeaveBalance",
       "domainId": "hr",
+      "entityType": "LeaveBalance",
       "patternKey": "entity-leavebalance",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "type": "text",
+          "used": "integer",
+          "total": "integer",
+          "remaining": "integer",
+          "employeeId": "integer"
+        },
         "recommended": [
           "id",
           "employeeId",
@@ -2676,26 +2708,29 @@
           "total",
           "used",
           "remaining"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "employeeId": "integer",
-          "type": "text",
-          "total": "integer",
-          "used": "integer",
-          "remaining": "integer"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 127,
       "patternType": "entity-structure",
-      "entityType": "PayrollRun",
       "domainId": "hr",
+      "entityType": "PayrollRun",
       "patternKey": "entity-payrollrun",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "year": "integer",
+          "month": "text",
+          "status": "enum(draft,processing,completed)",
+          "totalAmount": "integer",
+          "paySlipCount": "text",
+          "employeeCount": "integer",
+          "processedDate": "date"
+        },
         "recommended": [
           "id",
           "month",
@@ -2705,28 +2740,28 @@
           "status",
           "processedDate",
           "paySlipCount"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "month": "text",
-          "year": "integer",
-          "totalAmount": "integer",
-          "employeeCount": "integer",
-          "status": "enum(draft,processing,completed)",
-          "processedDate": "date",
-          "paySlipCount": "text"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 125,
       "patternType": "entity-structure",
-      "entityType": "PaySlip",
       "domainId": "hr",
+      "entityType": "PaySlip",
       "patternKey": "entity-payslip",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "netPay": "integer",
+          "bonuses": "integer",
+          "baseSalary": "integer",
+          "deductions": "integer",
+          "employeeId": "integer",
+          "payrollRunId": "integer"
+        },
         "recommended": [
           "id",
           "payrollRunId",
@@ -2735,27 +2770,29 @@
           "deductions",
           "bonuses",
           "netPay"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "payrollRunId": "integer",
-          "employeeId": "integer",
-          "baseSalary": "integer",
-          "deductions": "integer",
-          "bonuses": "integer",
-          "netPay": "integer"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 132,
       "patternType": "entity-structure",
-      "entityType": "JobPosting",
       "domainId": "hr",
+      "entityType": "JobPosting",
       "patternKey": "entity-jobposting",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "title": "text",
+          "status": "enum(open,closed,on-hold)",
+          "description": "text",
+          "salaryRange": "text",
+          "departmentId": "integer",
+          "requirements": "text",
+          "applicantCount": "text"
+        },
         "recommended": [
           "id",
           "title",
@@ -2765,28 +2802,35 @@
           "salaryRange",
           "status",
           "applicantCount"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "title": "text",
-          "departmentId": "integer",
-          "description": "text",
-          "requirements": "text",
-          "salaryRange": "text",
-          "status": "enum(open,closed,on-hold)",
-          "applicantCount": "text"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 131,
       "patternType": "entity-structure",
-      "entityType": "Applicant",
       "domainId": "hr",
+      "entityType": "Applicant",
       "patternKey": "entity-applicant",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "email": "text",
+          "notes": "text",
+          "phone": "text",
+          "stage": "enum(applied,screening,interview,offer,hired,rejected)",
+          "skills": "string[]",
+          "createdAt": "datetime",
+          "resumeUrl": "text",
+          "experience": "number",
+          "appliedDate": "date",
+          "coverLetter": "string",
+          "linkedinUrl": "string",
+          "jobPostingId": "integer"
+        },
         "recommended": [
           "id",
           "jobPostingId",
@@ -2802,29 +2846,14 @@
           "skills",
           "appliedDate",
           "createdAt"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "jobPostingId": "integer",
-          "name": "text",
-          "email": "text",
-          "phone": "text",
-          "resumeUrl": "text",
-          "stage": "enum(applied,screening,interview,offer,hired,rejected)",
-          "notes": "text",
-          "coverLetter": "string",
-          "linkedinUrl": "string",
-          "experience": "number",
-          "skills": "string[]",
-          "appliedDate": "date",
-          "createdAt": "datetime"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 130,
       "patternType": "workflow-design",
       "patternKey": "workflow-leaverequest",
       "patternValue": {
@@ -2860,6 +2889,7 @@
       "reliability": 1
     },
     {
+      "id": 135,
       "patternType": "workflow-design",
       "patternKey": "workflow-applicant",
       "patternValue": {
@@ -2915,6 +2945,7 @@
       "reliability": 1
     },
     {
+      "id": 109,
       "patternType": "page-structure",
       "patternKey": "page-layout-employees",
       "patternValue": {
@@ -2934,6 +2965,7 @@
       "reliability": 1
     },
     {
+      "id": 108,
       "patternType": "page-structure",
       "patternKey": "page-layout-employee-detail",
       "patternValue": {
@@ -2951,6 +2983,7 @@
       "reliability": 1
     },
     {
+      "id": 110,
       "patternType": "page-structure",
       "patternKey": "page-layout-leave-calendar",
       "patternValue": {
@@ -2969,6 +3002,7 @@
       "reliability": 1
     },
     {
+      "id": 111,
       "patternType": "page-structure",
       "patternKey": "page-layout-leave-approvals",
       "patternValue": {
@@ -2984,6 +3018,7 @@
       "reliability": 1
     },
     {
+      "id": 112,
       "patternType": "page-structure",
       "patternKey": "page-layout-payroll",
       "patternValue": {
@@ -3001,6 +3036,7 @@
       "reliability": 1
     },
     {
+      "id": 113,
       "patternType": "page-structure",
       "patternKey": "page-layout-pay-slips",
       "patternValue": {
@@ -3016,6 +3052,7 @@
       "reliability": 1
     },
     {
+      "id": 114,
       "patternType": "page-structure",
       "patternKey": "page-layout-job-postings",
       "patternValue": {
@@ -3035,6 +3072,7 @@
       "reliability": 1
     },
     {
+      "id": 115,
       "patternType": "page-structure",
       "patternKey": "page-layout-applicant-tracker",
       "patternValue": {
@@ -3051,27 +3089,11 @@
       "reliability": 1
     },
     {
+      "id": 129,
       "patternType": "domain-mapping",
       "domainId": "hr",
       "patternKey": "domain-hr",
       "patternValue": {
-        "entities": [
-          "Employee",
-          "Department",
-          "LeaveRequest",
-          "LeaveBalance",
-          "PayrollRun",
-          "PaySlip",
-          "JobPosting",
-          "Applicant"
-        ],
-        "modules": [
-          "Employee Directory",
-          "Leave Management",
-          "Payroll",
-          "Recruitment",
-          "Dashboard"
-        ],
         "kpis": [
           "Headcount",
           "Turnover Rate",
@@ -3082,30 +3104,254 @@
           "New Hires This Month",
           "Pending Requests"
         ],
+        "modules": [
+          "Employee Directory",
+          "Leave Management",
+          "Payroll",
+          "Recruitment",
+          "Dashboard"
+        ],
+        "entities": [
+          "Employee",
+          "Department",
+          "LeaveRequest",
+          "LeaveBalance",
+          "PayrollRun",
+          "PaySlip",
+          "JobPosting",
+          "Applicant"
+        ],
         "pageCount": 9,
         "relationships": {
-          "Employee": [
-            "belongsTo Department",
-            "belongsTo Manager"
-          ],
-          "Department": [
-            "belongsTo Head"
-          ],
-          "LeaveRequest": [
-            "belongsTo Employee"
-          ],
-          "LeaveBalance": [
-            "belongsTo Employee"
-          ],
           "PaySlip": [
             "belongsTo PayrollRun",
             "belongsTo Employee"
           ],
-          "JobPosting": [
-            "belongsTo Department"
+          "Employee": [
+            "belongsTo Department",
+            "belongsTo Manager"
           ],
           "Applicant": [
             "belongsTo JobPosting"
+          ],
+          "Department": [
+            "belongsTo Head"
+          ],
+          "JobPosting": [
+            "belongsTo Department"
+          ],
+          "LeaveBalance": [
+            "belongsTo Employee"
+          ],
+          "LeaveRequest": [
+            "belongsTo Employee"
+          ]
+        }
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "Skill",
+      "domainId": "portfolio",
+      "patternKey": "entity-skill",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "name",
+          "category",
+          "proficiency",
+          "iconUrl",
+          "sortOrder"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "category": "enum(frontend,backend,database,devops,design,other)",
+          "proficiency": "integer",
+          "iconUrl": "text",
+          "sortOrder": "integer"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "Experience",
+      "domainId": "portfolio",
+      "patternKey": "entity-experience",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "company",
+          "role",
+          "description",
+          "startDate",
+          "endDate",
+          "current",
+          "location",
+          "duration"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "company": "text",
+          "role": "text",
+          "description": "text",
+          "startDate": "date",
+          "endDate": "date",
+          "current": "boolean",
+          "location": "text",
+          "duration": "text"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "ContactMessage",
+      "domainId": "portfolio",
+      "patternKey": "entity-contactmessage",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "name",
+          "email",
+          "subject",
+          "message",
+          "read",
+          "phone",
+          "company",
+          "source",
+          "tags",
+          "lastContactedAt",
+          "status",
+          "createdAt"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "email": "text",
+          "subject": "text",
+          "message": "text",
+          "read": "boolean",
+          "phone": "string",
+          "company": "string",
+          "source": "enum:website,referral,social,event,cold-call,other",
+          "tags": "string[]",
+          "lastContactedAt": "datetime",
+          "status": "enum:new,contacted,qualified,unqualified",
+          "createdAt": "datetime"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-about",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "bio-section",
+          "skills-grid",
+          "experience-timeline",
+          "education",
+          "card-grid view",
+          "form-wizard view"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-contact",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "contact-form",
+          "social-links",
+          "email-link",
+          "location-map",
+          "form-wizard view"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-blog",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "post-list",
+          "category-filter",
+          "search",
+          "read-time"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-home",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "hero-section",
+          "featured-projects",
+          "skills-preview",
+          "cta-button"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "domain-mapping",
+      "domainId": "portfolio",
+      "patternKey": "domain-portfolio",
+      "patternValue": {
+        "entities": [
+          "Project",
+          "Skill",
+          "Experience",
+          "ContactMessage"
+        ],
+        "modules": [
+          "Projects Showcase",
+          "About & Skills",
+          "Contact",
+          "Blog",
+          "Home"
+        ],
+        "kpis": [
+          "Projects Showcased",
+          "Contact Messages",
+          "Page Views",
+          "Total Projects",
+          "Featured Projects",
+          "Skills Listed",
+          "Years Experience",
+          "Messages Received"
+        ],
+        "pageCount": 6,
+        "relationships": {
+          "Project": [
+            "belongsTo Owner"
           ]
         }
       },
@@ -3119,12 +3365,12 @@
       "key": "quality-score-general",
       "value": "91",
       "category": "architecture",
-      "frequency": 9
+      "frequency": 10
     }
   ],
   "stats": {
-    "totalPatterns": 107,
-    "reliablePatterns": 107,
+    "totalPatterns": 115,
+    "reliablePatterns": 115,
     "totalPreferences": 1
   }
 }
