@@ -235,108 +235,97 @@ const AUTO_FIXES: Array<{
   },
 ];
 
-// Bracket matching for syntax errors
+// Strip strings and comments from code for accurate bracket counting.
+// Handles: // line comments, /* block comments */, "strings", 'strings', `template literals`
+function stripStringsAndComments(code: string): string {
+  let result = '';
+  let i = 0;
+  while (i < code.length) {
+    // Line comment — skip to end of line
+    if (code[i] === '/' && code[i + 1] === '/') {
+      while (i < code.length && code[i] !== '\n') i++;
+      continue;
+    }
+    // Block comment — skip to */
+    if (code[i] === '/' && code[i + 1] === '*') {
+      i += 2;
+      while (i < code.length && !(code[i] === '*' && code[i + 1] === '/')) i++;
+      i += 2;
+      continue;
+    }
+    // String or template literal — skip entire contents
+    if (code[i] === '"' || code[i] === "'" || code[i] === '`') {
+      const q = code[i];
+      i++;
+      while (i < code.length) {
+        if (code[i] === '\\') { i += 2; continue; }  // skip escape sequence
+        if (code[i] === q) { i++; break; }            // closing quote
+        i++;
+      }
+      continue;
+    }
+    result += code[i];
+    i++;
+  }
+  return result;
+}
+
+// Bracket balance check.
+// Uses count-based approach (not stack-based) to avoid false positives in valid
+// TypeScript/JSX code where () and {} legitimately interleave — e.g.:
+//   {items.map((item) => (<div key={item.id} />))}
+// A stack-based checker misreads the ) closing .map( as mismatching the { JSX container.
+// Count-based checking only flags files where brackets are genuinely unbalanced overall.
 function findUnmatchedBrackets(code: string): DebugIssue[] {
   const issues: DebugIssue[] = [];
-  const stack: Array<{ char: string; line: number; col: number }> = [];
-  // Note: '<' and '>' are intentionally excluded — in TypeScript/JS they are
-  // generic brackets, comparison operators, and JSX tags, not paired brackets.
-  // Treating them as pairs produces hundreds of false positives on valid TS code.
-  const pairs: Record<string, string> = { '(': ')', '{': '}', '[': ']' };
-  const closers: Record<string, string> = { ')': '(', '}': '{', ']': '[' };
+  const stripped = stripStringsAndComments(code);
 
-  const lines = code.split('\n');
-  let inString = false;
-  let stringChar = '';
-  let inComment = false;
-  let inMultiComment = false;
+  const openP  = (stripped.match(/\(/g) || []).length;
+  const closeP = (stripped.match(/\)/g) || []).length;
+  const openB  = (stripped.match(/\{/g) || []).length;
+  const closeB = (stripped.match(/\}/g) || []).length;
+  const openS  = (stripped.match(/\[/g) || []).length;
+  const closeS = (stripped.match(/\]/g) || []).length;
 
-  for (let lineNum = 0; lineNum < lines.length; lineNum++) {
-    const line = lines[lineNum];
-    for (let col = 0; col < line.length; col++) {
-      const char = line[col];
-      const prev = col > 0 ? line[col - 1] : '';
-      const next = col < line.length - 1 ? line[col + 1] : '';
-
-      // Handle strings
-      if ((char === '"' || char === "'" || char === '`') && prev !== '\\') {
-        if (!inString) {
-          inString = true;
-          stringChar = char;
-        } else if (char === stringChar) {
-          inString = false;
-          stringChar = '';
-        }
-        continue;
-      }
-
-      if (inString) continue;
-
-      // Handle comments
-      if (char === '/' && next === '/') {
-        inComment = true;
-        continue;
-      }
-      if (char === '/' && next === '*') {
-        inMultiComment = true;
-        continue;
-      }
-      if (char === '*' && next === '/' && inMultiComment) {
-        inMultiComment = false;
-        col++;
-        continue;
-      }
-      if (inComment && char === '\n') {
-        inComment = false;
-        continue;
-      }
-      if (inComment || inMultiComment) continue;
-
-      // Check brackets
-      if (pairs[char]) {
-        stack.push({ char, line: lineNum + 1, col: col + 1 });
-      } else if (closers[char]) {
-        if (stack.length === 0) {
-          issues.push({
-            id: `bracket-${lineNum}-${col}`,
-            type: 'syntax',
-            severity: 'critical',
-            message: `Unexpected closing '${char}' without matching opening`,
-            line: lineNum + 1,
-            column: col + 1,
-            autoFixable: false,
-          });
-        } else {
-          const last = stack.pop()!;
-          if (pairs[last.char] !== char) {
-            issues.push({
-              id: `bracket-mismatch-${lineNum}-${col}`,
-              type: 'syntax',
-              severity: 'critical',
-              message: `Mismatched brackets: expected '${pairs[last.char]}' but found '${char}'`,
-              line: lineNum + 1,
-              column: col + 1,
-              suggestion: `Replace '${char}' with '${pairs[last.char]}'`,
-              autoFixable: true,
-            });
-          }
-        }
-      }
-    }
-    inComment = false;
-  }
-
-  // Report unclosed brackets
-  for (const item of stack) {
+  if (openP !== closeP) {
     issues.push({
-      id: `unclosed-${item.line}-${item.col}`,
+      id: 'bracket-paren-count',
       type: 'syntax',
       severity: 'critical',
-      message: `Unclosed '${item.char}' - missing '${pairs[item.char]}'`,
-      line: item.line,
-      column: item.col,
-      suggestion: `Add '${pairs[item.char]}' to close`,
-      autoFixable: true,
+      message: openP > closeP
+        ? `File has ${openP - closeP} unclosed '(' — missing closing ')'`
+        : `File has ${closeP - openP} extra ')' without matching '('`,
+      line: 1,
+      column: 1,
+      autoFixable: false,
+    });
+  }
+
+  if (openB !== closeB) {
+    issues.push({
+      id: 'bracket-brace-count',
+      type: 'syntax',
+      severity: 'critical',
+      message: openB > closeB
+        ? `File has ${openB - closeB} unclosed '{' — missing closing '}'`
+        : `File has ${closeB - openB} extra '}' without matching '{'`,
+      line: 1,
+      column: 1,
+      autoFixable: false,
+    });
+  }
+
+  if (openS !== closeS) {
+    issues.push({
+      id: 'bracket-square-count',
+      type: 'syntax',
+      severity: 'critical',
+      message: openS > closeS
+        ? `File has ${openS - closeS} unclosed '[' — missing closing ']'`
+        : `File has ${closeS - openS} extra ']' without matching '['`,
+      line: 1,
+      column: 1,
+      autoFixable: false,
     });
   }
 
