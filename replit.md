@@ -1,5 +1,7 @@
 # Workspace
 
+> Complete technical documentation: **[DOCS.md](./DOCS.md)** — covers every module, pipeline stage, SLM stage, API endpoint, frontend component, and environment variable.
+
 ## Overview
 
 pnpm workspace monorepo using TypeScript. Each package manages its own dependencies.
