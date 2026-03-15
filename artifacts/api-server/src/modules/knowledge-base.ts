@@ -4585,19 +4585,29 @@ export async function withIdempotency<T>(
 
   const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000);
 
-  await db
+  const inserted = await db
     .insert(idempotencyKeys)
     .values({ key, source, expiresAt })
-    .onConflictDoNothing();
+    .onConflictDoNothing()
+    .returning();
 
-  const result = await handler();
+  if (inserted.length === 0) {
+    const race = await db.select().from(idempotencyKeys).where(eq(idempotencyKeys.key, key)).limit(1);
+    if (race[0]?.processed) return { result: race[0].result as T, wasProcessed: true };
+    throw new Error(\`Idempotency key \${key} is already being processed by another worker\`);
+  }
 
-  await db
-    .update(idempotencyKeys)
-    .set({ processed: true, result: result as any })
-    .where(eq(idempotencyKeys.key, key));
-
-  return { result, wasProcessed: false };
+  try {
+    const result = await handler();
+    await db
+      .update(idempotencyKeys)
+      .set({ processed: true, result: result as any })
+      .where(eq(idempotencyKeys.key, key));
+    return { result, wasProcessed: false };
+  } catch (err) {
+    await db.delete(idempotencyKeys).where(eq(idempotencyKeys.key, key));
+    throw err;
+  }
 }
 
 // Usage:
