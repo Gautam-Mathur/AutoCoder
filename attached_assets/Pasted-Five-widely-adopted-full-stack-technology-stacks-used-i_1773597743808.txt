@@ -1,0 +1,190 @@
+Five widely adopted full-stack technology stacks used in production environments across startups and large enterprises.
+
+
+---
+
+1. JavaScript / TypeScript – MERN Stack
+
+Programming Languages
+
+JavaScript
+
+TypeScript
+
+
+Frameworks & Core Tools
+
+Frontend: React
+
+Backend: Node.js + Express.js
+
+Database: MongoDB
+
+Package manager: npm / Yarn
+
+Testing: Jest
+
+State management: Redux
+
+
+Deployment Practices
+
+Containerization using Docker
+
+CI/CD pipelines with GitHub Actions or Jenkins
+
+Cloud hosting on Amazon Web Services or Vercel
+
+Use of API gateways and microservices architecture
+
+
+
+---
+
+2. Python – Django Stack
+
+Programming Languages
+
+Python
+
+JavaScript / TypeScript
+
+
+Frameworks & Core Tools
+
+Backend framework: Django
+
+API framework: Django REST Framework
+
+Frontend: React or Vue.js
+
+Database: PostgreSQL
+
+Task queues: Celery
+
+Cache: Redis
+
+
+Deployment Practices
+
+Containerized deployments using Docker
+
+Web serving with Gunicorn + Nginx
+
+CI/CD pipelines through GitLab CI/CD
+
+Cloud deployment on Amazon Web Services or Google Cloud
+
+
+
+---
+
+3. Java – Spring Boot Stack
+
+Programming Languages
+
+Java
+
+JavaScript / TypeScript
+
+
+Frameworks & Core Tools
+
+Backend framework: Spring Boot
+
+ORM: Hibernate
+
+Frontend: Angular or React
+
+Build tool: Maven or Gradle
+
+Database: MySQL / PostgreSQL
+
+
+Deployment Practices
+
+Microservices with Docker and Kubernetes
+
+CI/CD using Jenkins
+
+Monitoring with Prometheus and Grafana
+
+Enterprise deployment on Amazon Web Services or Microsoft Azure
+
+
+
+---
+
+4. Microsoft .NET Stack
+
+Programming Languages
+
+C#
+
+TypeScript / JavaScript
+
+
+Frameworks & Core Tools
+
+Backend: .NET / ASP.NET Core
+
+Frontend: Angular or React
+
+Database: Microsoft SQL Server
+
+ORM: Entity Framework Core
+
+IDE: Visual Studio
+
+
+Deployment Practices
+
+CI/CD pipelines via Azure DevOps
+
+Containerization with Docker
+
+Cloud hosting on Microsoft Azure
+
+Infrastructure as Code using Terraform
+
+
+
+---
+
+5. Go + React Stack (Modern Cloud-Native)
+
+Programming Languages
+
+Go
+
+TypeScript / JavaScript
+
+
+Frameworks & Core Tools
+
+Backend: Gin or Fiber
+
+Frontend: React
+
+Database: PostgreSQL
+
+Caching: Redis
+
+API design: gRPC
+
+
+Deployment Practices
+
+Cloud-native architecture with Docker and Kubernetes
+
+CI/CD pipelines via GitHub Actions
+
+Observability with OpenTelemetry
+
+Deployment on Google Cloud or Amazon Web Services
+
+
+
+---
+
+If useful, the next step would be to also compare these stacks by learning curve, scalability, hiring demand, and startup vs enterprise suitability.
