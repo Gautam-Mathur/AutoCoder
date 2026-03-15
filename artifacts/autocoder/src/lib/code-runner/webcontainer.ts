@@ -1068,7 +1068,7 @@ async function tryFetchAndMountSnapshot(container: WebContainer, url: string, la
     await container.mount(snapshot);
     const mountTime = runnerLog.endTimer('snapshot-mount');
     runnerLog.success('PreWarm', `Snapshot mounted from ${label}`, undefined, mountTime);
-    emit(`Snapshot mounted (${mountTime}ms)`);
+    emit(`✅ Snapshot loaded — skipping npm install (${mountTime}ms)`);
 
     await container.fs.writeFile('vite.config.ts', VITE_CONFIG_CONTENTS);
     runnerLog.debug('FileSystem', 'Wrote vite.config.ts after snapshot mount');
@@ -1077,7 +1077,7 @@ async function tryFetchAndMountSnapshot(container: WebContainer, url: string, la
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     runnerLog.debug('PreWarm', `Snapshot load failed from ${label}: ${errMsg}`);
-    onOutput?.(`Snapshot load failed: ${errMsg}`);
+    onOutput?.(`⚠️ Snapshot load failed: ${errMsg}`);
     return false;
   }
 }
@@ -1099,16 +1099,15 @@ async function tryLoadSnapshot(container: WebContainer, onOutput?: (msg: string)
 
   const projectHash = localStorage.getItem('autocoder-last-project-hash');
   if (projectHash) {
-    emit(`Looking for project snapshot (${projectHash})...`);
-    notifyPreWarm('installing', `Looking for cached snapshot...`);
+    emit('🔍 Checking for project snapshot...');
     const projectSnapshotUrl = `${origin}/cache/snapshot-${projectHash}.json.gz`;
     const loaded = await tryFetchAndMountSnapshot(container, projectSnapshotUrl, `project snapshot (${projectHash})`, onOutput);
     if (loaded) return true;
     runnerLog.debug('PreWarm', `Project snapshot not ready yet (hash ${projectHash}), falling back to live npm install`);
-    emit('Project snapshot not available, falling back to npm install');
+    emit('📦 No snapshot cached yet, running npm install...');
   } else {
     runnerLog.debug('PreWarm', 'No project hash found, falling back to live npm install');
-    emit('No cached snapshot found, using npm install');
+    emit('📦 No snapshot cached yet, running npm install...');
   }
 
   return false;
@@ -1223,7 +1222,8 @@ export async function preWarmWebContainer(): Promise<boolean> {
 
       preWarmStatus = 'installing';
 
-      const snapshotLoaded = await tryLoadSnapshot(container);
+      const snapshotOutput = (msg: string) => { notifyPreWarm('installing', msg); };
+      const snapshotLoaded = await tryLoadSnapshot(container, snapshotOutput);
 
       if (snapshotLoaded) {
         preWarmCompletedBatches = PREWARM_BATCHES.length;
