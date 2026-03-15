@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Plus, MessageSquare, Trash2, MoreHorizontal, Terminal, PanelRightClose, PanelRight, Pencil, ShieldCheck, AlertTriangle, Sparkles, Bug, ChevronDown, ChevronRight, Wrench } from "lucide-react";
+import { Plus, MessageSquare, Trash2, MoreHorizontal, Terminal, PanelRightClose, PanelRight, Pencil, ShieldCheck, AlertTriangle, Sparkles, Bug, ChevronDown, ChevronRight, Wrench, Cpu } from "lucide-react";
 import { isWebContainerSupported, onPreWarmProgress, getPreWarmStatus } from "@/lib/code-runner/webcontainer";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -681,6 +681,17 @@ export default function Chat() {
                     />
                   </div>
                 )}
+                <Link href="/slm">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="gap-1.5 text-xs"
+                    data-testid="link-slm-settings"
+                  >
+                    <Cpu className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">SLM Settings</span>
+                  </Button>
+                </Link>
                 <Button
                   variant="ghost"
                   size="icon"

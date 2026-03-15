@@ -56,6 +56,8 @@ import { generatePlanFromCodebase, formatReversePlanSummary } from "../modules/r
 import { traceCrossFileRelationships } from "../modules/cross-file-tracer";
 import { runStageTest, getAvailableStages, runModularFix, runDiagnostics } from "../modules/modular-test-engine";
 import { getConfig, saveConfig, applyPreset, buildPromptInstructions, getConfigSummary, PROMPT_PRESETS, DEFAULT_CONFIG } from "../modules/prompt-config";
+import { initializeSLMSystem, connectSLMEndpoint, getSLMSystemStatus, getAllStageModes, setStageMode } from "../modules/slm-registry";
+import { getRegisteredStages } from "../modules/slm-inference-engine";
 
 function sanitizeHtml(input: string): string {
   return input
@@ -4490,6 +4492,68 @@ Output ONLY the fixed code. No explanations.`;
       url: null,
       message: 'Prewarm snapshots are disabled. Use per-project snapshots via /api/cache/build-snapshot.',
     });
+  });
+
+  app.get("/api/slm/status", (_req, res) => {
+    try {
+      const status = getSLMSystemStatus();
+      res.json(status);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/slm/initialize", (req, res) => {
+    try {
+      const config = req.body || {};
+      initializeSLMSystem(config);
+      const status = getSLMSystemStatus();
+      res.json({ success: true, status });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/slm/connect", (req, res) => {
+    try {
+      const { endpoint } = req.body;
+      if (!endpoint || typeof endpoint !== "string") {
+        return res.status(400).json({ error: "endpoint is required" });
+      }
+      connectSLMEndpoint(endpoint);
+      const status = getSLMSystemStatus();
+      res.json({ success: true, status });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/slm/stages", (_req, res) => {
+    try {
+      const stages = getRegisteredStages();
+      const modes = getAllStageModes();
+      res.json({ stages, modes });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/slm/stages/:stage", (req, res) => {
+    try {
+      const { stage } = req.params;
+      const { mode } = req.body;
+      if (!mode || (mode !== "rules-only" && mode !== "slm-enhanced")) {
+        return res.status(400).json({ error: "mode must be 'rules-only' or 'slm-enhanced'" });
+      }
+      const stages = getRegisteredStages();
+      if (!stages.includes(stage)) {
+        return res.status(404).json({ error: `Stage '${stage}' not found` });
+      }
+      setStageMode(stage, mode);
+      res.json({ success: true, stage, mode });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
   });
 
   return httpServer;

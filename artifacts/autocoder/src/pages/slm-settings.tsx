@@ -732,7 +732,7 @@ export default function SLMSettings() {
 
   const stageModeMutation = useMutation({
     mutationFn: async ({ stageId, mode }: { stageId: string; mode: string }) => {
-      const res = await apiRequest("POST", "/api/slm/stage-mode", { stageId, mode });
+      const res = await apiRequest("PUT", `/api/slm/stages/${stageId}`, { mode });
       return res.json();
     },
     onSuccess: (_, { stageId, mode }) => {
