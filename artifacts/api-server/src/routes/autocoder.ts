@@ -83,17 +83,44 @@ function inferLanguageFromPath(filePath: string): string {
   return map[ext] || 'text';
 }
 
-const AI_API_KEY = process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY || "";
-const AI_BASE_URL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL;
-const hasCloudAI = !!AI_API_KEY;
-export const AI_MODEL = process.env.OPENAI_MODEL || "llama3.2";
+let runtimeAIConfig = {
+  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY || "",
+  baseUrl: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL || "",
+  model: process.env.OPENAI_MODEL || "qwen2.5-coder:7b",
+};
+
+const hasCloudAI = !!runtimeAIConfig.apiKey;
+export function getAIModel(): string { return runtimeAIConfig.model; }
+export const AI_MODEL = runtimeAIConfig.model;
 
 let openai: OpenAI | null = null;
-if (AI_API_KEY) {
-  openai = new OpenAI({
-    apiKey: AI_API_KEY,
-    ...(AI_BASE_URL ? { baseURL: AI_BASE_URL } : {}),
-  });
+function rebuildOpenAIClient() {
+  if (runtimeAIConfig.apiKey) {
+    openai = new OpenAI({
+      apiKey: runtimeAIConfig.apiKey,
+      ...(runtimeAIConfig.baseUrl ? { baseURL: runtimeAIConfig.baseUrl } : {}),
+    });
+  } else {
+    openai = null;
+  }
+}
+rebuildOpenAIClient();
+
+export function reconfigureAI(cfg: { baseUrl?: string; apiKey?: string; model?: string }) {
+  if (cfg.baseUrl !== undefined) runtimeAIConfig.baseUrl = cfg.baseUrl;
+  if (cfg.apiKey !== undefined) runtimeAIConfig.apiKey = cfg.apiKey;
+  if (cfg.model !== undefined) runtimeAIConfig.model = cfg.model;
+  rebuildOpenAIClient();
+  console.log(`[AI Config] Reconfigured — endpoint=${runtimeAIConfig.baseUrl || '(default)'}, model=${runtimeAIConfig.model}, hasKey=${!!runtimeAIConfig.apiKey}`);
+}
+
+export function getAIConfig() {
+  return {
+    baseUrl: runtimeAIConfig.baseUrl || null,
+    model: runtimeAIConfig.model,
+    hasApiKey: !!runtimeAIConfig.apiKey,
+    clientReady: openai !== null,
+  };
 }
 
 const createConversationSchema = z.object({
@@ -4492,6 +4519,55 @@ Output ONLY the fixed code. No explanations.`;
       url: null,
       message: 'Prewarm snapshots are disabled. Use per-project snapshots via /api/cache/build-snapshot.',
     });
+  });
+
+  app.get("/api/ai/connection", (_req, res) => {
+    try {
+      res.json(getAIConfig());
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/ai/config", async (req, res) => {
+    try {
+      const { baseUrl, apiKey, model } = req.body || {};
+      reconfigureAI({ baseUrl, apiKey, model });
+
+      try {
+        const { reconfigureGenerator } = await import("../modules/ai-fullstack-generator");
+        reconfigureGenerator({ baseUrl, apiKey, model });
+      } catch {}
+
+      if (baseUrl) {
+        connectSLMEndpoint(baseUrl);
+      }
+
+      res.json({ success: true, config: getAIConfig() });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/ai/test", async (req, res) => {
+    try {
+      if (!openai) {
+        return res.status(400).json({ success: false, error: "No AI client configured. Set an endpoint + API key first." });
+      }
+      const model = runtimeAIConfig.model;
+      const startMs = Date.now();
+      const completion = await openai.chat.completions.create({
+        model,
+        messages: [{ role: "user", content: "Reply with exactly: OK" }],
+        max_tokens: 5,
+        temperature: 0,
+      });
+      const latencyMs = Date.now() - startMs;
+      const reply = completion.choices?.[0]?.message?.content || "";
+      res.json({ success: true, reply: reply.trim(), model, latencyMs });
+    } catch (error: any) {
+      res.status(200).json({ success: false, error: error.message || "Connection failed" });
+    }
   });
 
   app.get("/api/slm/status", (_req, res) => {

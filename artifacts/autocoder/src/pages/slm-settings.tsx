@@ -688,14 +688,37 @@ function PromptConfigPanel() {
   );
 }
 
+interface AIStatus {
+  baseUrl: string | null;
+  model: string;
+  hasApiKey: boolean;
+  clientReady: boolean;
+}
+
+interface TestResult {
+  success: boolean;
+  reply?: string;
+  model?: string;
+  latencyMs?: number;
+  error?: string;
+}
+
 export default function SLMSettings() {
   const { toast } = useToast();
   const [endpoint, setEndpoint] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [model, setModel] = useState("qwen2.5-coder:7b");
   const [activeTab, setActiveTab] = useState<"model" | "prompts">("model");
   const [showGuide, setShowGuide] = useState(false);
+  const [testResult, setTestResult] = useState<TestResult | null>(null);
 
   const { data: status, isLoading } = useQuery<SLMStatus>({
     queryKey: ["/api/slm/status"],
+    refetchInterval: 10000,
+  });
+
+  const { data: aiStatus } = useQuery<AIStatus>({
+    queryKey: ["/api/ai/connection"],
     refetchInterval: 10000,
   });
 
@@ -704,6 +727,13 @@ export default function SLMSettings() {
       setEndpoint(status.modelManager.endpointUrl);
     }
   }, [status?.modelManager.endpointUrl]);
+
+  useEffect(() => {
+    if (aiStatus) {
+      if (aiStatus.baseUrl && !endpoint) setEndpoint(aiStatus.baseUrl);
+      if (aiStatus.model) setModel(aiStatus.model);
+    }
+  }, [aiStatus]);
 
   const initMutation = useMutation({
     mutationFn: async () => {
@@ -720,16 +750,41 @@ export default function SLMSettings() {
   });
 
   const connectMutation = useMutation({
-    mutationFn: async (endpointUrl: string) => {
-      const res = await apiRequest("POST", "/api/slm/connect", { endpoint: endpointUrl });
+    mutationFn: async (cfg: { baseUrl: string; apiKey: string; model: string }) => {
+      const res = await apiRequest("POST", "/api/ai/config", {
+        baseUrl: cfg.baseUrl,
+        apiKey: cfg.apiKey,
+        model: cfg.model,
+      });
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/slm/status"] });
-      toast({ title: "Endpoint Connected", description: `Connected to ${endpoint}` });
+      queryClient.invalidateQueries({ queryKey: ["/api/ai/status"] });
+      setTestResult(null);
+      toast({ title: "AI Configured", description: `Connected to ${endpoint} with model ${model}` });
     },
     onError: (err: Error) => {
-      toast({ title: "Connection Failed", description: err.message, variant: "destructive" });
+      toast({ title: "Configuration Failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const testMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/ai/test", {});
+      return res.json() as Promise<TestResult>;
+    },
+    onSuccess: (result: TestResult) => {
+      setTestResult(result);
+      if (result.success) {
+        toast({ title: "Connection OK", description: `Model responded in ${result.latencyMs}ms` });
+      } else {
+        toast({ title: "Connection Failed", description: result.error, variant: "destructive" });
+      }
+    },
+    onError: (err: Error) => {
+      setTestResult({ success: false, error: err.message });
+      toast({ title: "Test Failed", description: err.message, variant: "destructive" });
     },
   });
 
@@ -901,14 +956,18 @@ export default function SLMSettings() {
 
                     <div className="flex flex-wrap gap-2">
                       {[
-                        { label: "Ollama", url: "http://localhost:11434" },
-                        { label: "LM Studio", url: "http://localhost:1234" },
-                        { label: "llama.cpp", url: "http://localhost:8080" },
-                        { label: "Replit Default", url: "http://localhost:1106/modelfarm/openai" },
+                        { label: "Ollama", url: "http://localhost:11434/v1", key: "ollama", defaultModel: "qwen2.5-coder:7b" },
+                        { label: "LM Studio", url: "http://localhost:1234/v1", key: "lm-studio", defaultModel: "local-model" },
+                        { label: "llama.cpp", url: "http://localhost:8080/v1", key: "not-needed", defaultModel: "default" },
+                        { label: "OpenAI", url: "https://api.openai.com/v1", key: "", defaultModel: "gpt-4o" },
                       ].map((preset) => (
                         <button
                           key={preset.label}
-                          onClick={() => setEndpoint(preset.url)}
+                          onClick={() => {
+                            setEndpoint(preset.url);
+                            if (preset.key) setApiKey(preset.key);
+                            if (preset.defaultModel) setModel(preset.defaultModel);
+                          }}
                           className={`px-3 py-1 text-xs rounded-full border transition-colors ${
                             endpoint === preset.url
                               ? "bg-emerald-500/20 border-emerald-500 text-emerald-400"
@@ -921,28 +980,95 @@ export default function SLMSettings() {
                       ))}
                     </div>
 
-                    <div className="flex gap-2">
-                      <Input
-                        placeholder="http://localhost:8080"
-                        value={endpoint}
-                        onChange={(e) => setEndpoint(e.target.value)}
-                        data-testid="input-endpoint"
-                      />
-                      <Button
-                        onClick={() => connectMutation.mutate(endpoint)}
-                        disabled={!endpoint || connectMutation.isPending}
-                        data-testid="button-connect"
-                      >
-                        Connect
-                      </Button>
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        <Input
+                          placeholder="http://localhost:11434/v1"
+                          value={endpoint}
+                          onChange={(e) => setEndpoint(e.target.value)}
+                          data-testid="input-endpoint"
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <Input
+                          placeholder="API Key (e.g. 'ollama' for Ollama, 'lm-studio' for LM Studio)"
+                          value={apiKey}
+                          onChange={(e) => setApiKey(e.target.value)}
+                          type="password"
+                          data-testid="input-api-key"
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <Input
+                          placeholder="Model name (e.g. qwen2.5-coder:7b)"
+                          value={model}
+                          onChange={(e) => setModel(e.target.value)}
+                          data-testid="input-model"
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={() => connectMutation.mutate({ baseUrl: endpoint, apiKey, model })}
+                          disabled={!endpoint || !apiKey || connectMutation.isPending}
+                          data-testid="button-connect"
+                        >
+                          {connectMutation.isPending ? (
+                            <RefreshCw className="w-4 h-4 animate-spin mr-2" />
+                          ) : (
+                            <Plug className="w-4 h-4 mr-2" />
+                          )}
+                          Save & Connect
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => testMutation.mutate()}
+                          disabled={testMutation.isPending || !aiStatus?.clientReady}
+                          data-testid="button-test"
+                        >
+                          {testMutation.isPending ? (
+                            <RefreshCw className="w-4 h-4 animate-spin mr-2" />
+                          ) : (
+                            <Activity className="w-4 h-4 mr-2" />
+                          )}
+                          Test Connection
+                        </Button>
+                      </div>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Any OpenAI-compatible <code className="text-[10px] bg-muted px-1 rounded">/v1/chat/completions</code> endpoint
+                      Any OpenAI-compatible <code className="text-[10px] bg-muted px-1 rounded">/v1/chat/completions</code> endpoint. For Ollama/LM Studio, use any string as the API key.
                     </p>
-                    {status?.modelManager.endpointUrl && (
-                      <p className="text-xs text-green-500" data-testid="text-connected-endpoint">
-                        Connected to: {status.modelManager.endpointUrl}
-                      </p>
+
+                    {aiStatus?.clientReady && (
+                      <div className="flex items-center gap-2 text-xs" data-testid="text-connected-endpoint">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
+                        <span className="text-green-500">
+                          Active: {aiStatus.baseUrl || "Default endpoint"} / {aiStatus.model}
+                        </span>
+                      </div>
+                    )}
+                    {aiStatus && !aiStatus.clientReady && (
+                      <div className="flex items-center gap-2 text-xs">
+                        <XCircle className="w-3.5 h-3.5 text-red-500" />
+                        <span className="text-red-400">
+                          No AI configured — enter an endpoint, API key, and model above
+                        </span>
+                      </div>
+                    )}
+
+                    {testResult && (
+                      <div className={`text-xs rounded-lg border p-3 ${testResult.success ? "border-green-500/30 bg-green-500/5" : "border-red-500/30 bg-red-500/5"}`} data-testid="test-result">
+                        {testResult.success ? (
+                          <div className="flex items-center gap-2">
+                            <CheckCircle2 className="w-4 h-4 text-green-500" />
+                            <span className="text-green-500">Model responded: "{testResult.reply}" in {testResult.latencyMs}ms</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-start gap-2">
+                            <XCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                            <span className="text-red-400">{testResult.error}</span>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
 

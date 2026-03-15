@@ -7,20 +7,34 @@ import { Response } from "express";
 import { isLocalLLMAvailable, generateWithLocalLLM, LOCAL_CODE_SYSTEM_PROMPT, extractJSON } from "./local-llm-client";
 import { cleanCodeArtifacts, cleanProjectFiles } from "./code-cleaner";
 
-const AI_API_KEY = process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY || "";
-const AI_BASE_URL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL;
-const AI_MODEL = process.env.OPENAI_MODEL || "llama3.2";
+let generatorAIConfig = {
+  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY || "",
+  baseUrl: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL || "",
+  model: process.env.OPENAI_MODEL || "qwen2.5-coder:7b",
+};
 
 let openai: OpenAI | null = null;
-try {
-  if (AI_API_KEY) {
+function rebuildGeneratorClient() {
+  if (generatorAIConfig.apiKey) {
     openai = new OpenAI({
-      apiKey: AI_API_KEY,
-      ...(AI_BASE_URL ? { baseURL: AI_BASE_URL } : {}),
+      apiKey: generatorAIConfig.apiKey,
+      ...(generatorAIConfig.baseUrl ? { baseURL: generatorAIConfig.baseUrl } : {}),
     });
+  } else {
+    openai = null;
   }
-} catch (e) {
-  console.log('[AI Generator] OpenAI not configured - using local LLM only');
+}
+rebuildGeneratorClient();
+
+export function reconfigureGenerator(cfg: { baseUrl?: string; apiKey?: string; model?: string }) {
+  if (cfg.baseUrl !== undefined) generatorAIConfig.baseUrl = cfg.baseUrl;
+  if (cfg.apiKey !== undefined) generatorAIConfig.apiKey = cfg.apiKey;
+  if (cfg.model !== undefined) generatorAIConfig.model = cfg.model;
+  rebuildGeneratorClient();
+}
+
+function getModel(): string {
+  return generatorAIConfig.model;
 }
 
 // Check if we can use any AI
@@ -318,7 +332,7 @@ export async function generateFullStackAppStream(
     // Fallback to OpenAI or if local failed
     if (!fullContent && useCloud && openai) {
       const planningResponse = await openai.chat.completions.create({
-        model: AI_MODEL,
+        model: getModel(),
         max_completion_tokens: 2000,
         messages: [
           {
@@ -355,7 +369,7 @@ ${JSON.stringify(plan, null, 2)}
 Generate the COMPLETE application with ALL files. Every feature must be fully implemented with working code.`;
 
       const stream = await openai.chat.completions.create({
-        model: AI_MODEL,
+        model: getModel(),
         max_completion_tokens: 16000,
         stream: true,
         messages: [
@@ -487,7 +501,7 @@ Output as JSON only, no markdown.`;
   }
 
   const response = await openai.chat.completions.create({
-    model: AI_MODEL,
+    model: getModel(),
     max_completion_tokens: 16000,
     messages: [
       { role: "system", content: FULLSTACK_SYSTEM_PROMPT },
@@ -623,7 +637,7 @@ export async function generateFile(
   }
 
   const response = await openai.chat.completions.create({
-    model: AI_MODEL,
+    model: getModel(),
     max_completion_tokens: 4000,
     messages: [
       {
@@ -678,7 +692,7 @@ export async function modifyCode(
   }
 
   const response = await openai.chat.completions.create({
-    model: AI_MODEL,
+    model: getModel(),
     max_completion_tokens: 8000,
     messages: [
       {

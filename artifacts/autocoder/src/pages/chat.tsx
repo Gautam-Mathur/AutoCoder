@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Plus, MessageSquare, Trash2, MoreHorizontal, Terminal, PanelRightClose, PanelRight, Pencil, ShieldCheck, AlertTriangle, Sparkles, Bug, ChevronDown, ChevronRight, Wrench, Cpu } from "lucide-react";
+import { Plus, MessageSquare, Trash2, MoreHorizontal, Terminal, PanelRightClose, PanelRight, Pencil, ShieldCheck, AlertTriangle, Sparkles, Bug, ChevronDown, ChevronRight, Wrench, Cpu, Settings, X } from "lucide-react";
 import { isWebContainerSupported, onPreWarmProgress, getPreWarmStatus } from "@/lib/code-runner/webcontainer";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -256,6 +256,12 @@ export default function Chat() {
   const [validationSummary, setValidationSummary] = useState<{passes: number; issuesFound: number; issuesFixed: number; unfixableIssues: string[]} | null>(null);
   const [slmEnhanced, setSlmEnhanced] = useState<boolean>(false);
   const [slmStagesRun, setSlmStagesRun] = useState<string[]>([]);
+  const [noAiBannerDismissed, setNoAiBannerDismissed] = useState(false);
+
+  const { data: aiConfigStatus } = useQuery<{ baseUrl: string | null; model: string; hasApiKey: boolean; clientReady: boolean }>({
+    queryKey: ["/api/ai/connection"],
+    refetchInterval: 15000,
+  });
   const [diagnostics, setDiagnostics] = useState<{
     totalIssues: number;
     bySeverity: { critical: number; error: number; warning: number; info: number };
@@ -704,6 +710,25 @@ export default function Chat() {
                 <ThemeToggle />
               </div>
             </header>
+
+            {aiConfigStatus && !aiConfigStatus.clientReady && !noAiBannerDismissed && (
+              <div className="mx-4 mt-2 rounded-lg border border-yellow-500/30 bg-yellow-500/5 px-4 py-3 flex items-center gap-3" data-testid="no-ai-banner">
+                <AlertTriangle className="w-5 h-5 text-yellow-500 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-yellow-600 dark:text-yellow-400">No AI model connected</p>
+                  <p className="text-xs text-muted-foreground">Code generation requires a model. Connect one in settings.</p>
+                </div>
+                <Link href="/slm">
+                  <Button size="sm" variant="outline" className="gap-1.5 shrink-0 border-yellow-500/30 text-yellow-600 dark:text-yellow-400 hover:bg-yellow-500/10">
+                    <Settings className="w-3.5 h-3.5" />
+                    Configure
+                  </Button>
+                </Link>
+                <button onClick={() => setNoAiBannerDismissed(true)} className="text-muted-foreground hover:text-foreground shrink-0">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
 
             <div className="flex-1 overflow-hidden flex flex-col">
               <div className="flex-1 overflow-auto min-h-0">
