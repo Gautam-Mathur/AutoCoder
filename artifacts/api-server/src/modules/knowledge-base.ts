@@ -1747,6 +1747,716 @@ const ENTITY_ARCHETYPES: Record<string, EntityArchetype> = {
       'DELETE /comments/:id',
     ],
   },
+
+  // ── Messaging & Campaign Domain ─────────────────────────────────────────
+
+  contact: {
+    id: 'contact',
+    name: 'Contact / Subscriber',
+    aliases: ['contact', 'subscriber', 'recipient', 'audience member', 'phone number', 'email contact'],
+    domain: 'messaging',
+    description: 'A person who can receive messages via SMS, email, or push notification.',
+    traits: ['pageable', 'auditable', 'searchable', 'taggable', 'soft-deletable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'externalId', type: 'varchar(100)', nullable: true, description: 'CRM or external system ID' },
+      { name: 'email', type: 'varchar(255)', nullable: true, description: 'Email address' },
+      { name: 'phone', type: 'varchar(30)', nullable: true, description: 'Phone number in E.164 format' },
+      { name: 'firstName', type: 'varchar(100)', nullable: true, description: 'First name' },
+      { name: 'lastName', type: 'varchar(100)', nullable: true, description: 'Last name' },
+      { name: 'status', type: "varchar(20) not null default 'active'", nullable: false, description: 'active|unsubscribed|bounced|complained|suppressed' },
+      { name: 'channel', type: "varchar(20) not null default 'email'", nullable: false, description: 'Preferred channel: email|sms|push' },
+      { name: 'timezone', type: 'varchar(50)', nullable: true, description: 'IANA timezone for send-time optimization' },
+      { name: 'metadata', type: 'jsonb', nullable: true, description: 'Custom attributes / segmentation fields' },
+      { name: 'tags', type: 'text[]', nullable: true, description: 'Segmentation tags' },
+      { name: 'lastContactedAt', type: 'timestamptz', nullable: true, description: 'Last message sent' },
+      { name: 'subscribedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Opt-in timestamp' },
+      { name: 'unsubscribedAt', type: 'timestamptz', nullable: true, description: 'Opt-out timestamp' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Record creation' },
+      { name: 'updatedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Last update' },
+    ],
+    relatedEntities: ['audience', 'message', 'unsubscribe', 'bounce'],
+    suggestedIndexes: ['email', 'phone', 'status', 'tags GIN', '(status, channel)', 'externalId'],
+    typicalEndpoints: [
+      'GET /contacts?status=active&tag=vip&page=1',
+      'GET /contacts/:id',
+      'POST /contacts',
+      'PATCH /contacts/:id',
+      'POST /contacts/import (CSV bulk import)',
+      'POST /contacts/:id/unsubscribe',
+    ],
+  },
+
+  campaign: {
+    id: 'campaign',
+    name: 'Campaign',
+    aliases: ['campaign', 'blast', 'broadcast', 'drip', 'sequence', 'email campaign', 'sms campaign', 'push campaign', 'automation'],
+    domain: 'messaging',
+    description: 'A message campaign — one-time broadcast or multi-step drip sequence.',
+    traits: ['pageable', 'auditable', 'searchable', 'workflowable', 'taggable', 'schedulable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'name', type: 'text not null', nullable: false, description: 'Campaign name' },
+      { name: 'description', type: 'text', nullable: true, description: 'Internal notes' },
+      { name: 'type', type: "varchar(20) not null default 'broadcast'", nullable: false, description: 'broadcast|drip|triggered|transactional' },
+      { name: 'channel', type: "varchar(20) not null default 'email'", nullable: false, description: 'email|sms|push|multi' },
+      { name: 'status', type: "varchar(20) not null default 'draft'", nullable: false, description: 'draft|scheduled|sending|sent|paused|cancelled' },
+      { name: 'audienceId', type: 'integer references audiences(id)', nullable: true, description: 'Target audience segment' },
+      { name: 'templateId', type: 'integer references templates(id)', nullable: true, description: 'Message template' },
+      { name: 'scheduledAt', type: 'timestamptz', nullable: true, description: 'Scheduled send time' },
+      { name: 'sentAt', type: 'timestamptz', nullable: true, description: 'Actual send start time' },
+      { name: 'completedAt', type: 'timestamptz', nullable: true, description: 'When all messages were delivered' },
+      { name: 'totalRecipients', type: 'integer not null default 0', nullable: false, description: 'Total recipients targeted' },
+      { name: 'totalSent', type: 'integer not null default 0', nullable: false, description: 'Successfully sent' },
+      { name: 'totalDelivered', type: 'integer not null default 0', nullable: false, description: 'Confirmed delivered' },
+      { name: 'totalOpened', type: 'integer not null default 0', nullable: false, description: 'Unique opens' },
+      { name: 'totalClicked', type: 'integer not null default 0', nullable: false, description: 'Unique clicks' },
+      { name: 'totalBounced', type: 'integer not null default 0', nullable: false, description: 'Bounced count' },
+      { name: 'totalUnsubscribed', type: 'integer not null default 0', nullable: false, description: 'Unsubscribed from this campaign' },
+      { name: 'createdBy', type: 'integer references users(id)', nullable: false, description: 'Creator' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Creation time' },
+      { name: 'updatedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Last update' },
+    ],
+    relatedEntities: ['audience', 'template', 'message', 'contact', 'user'],
+    suggestedIndexes: ['status', 'type', 'channel', 'scheduledAt', 'audienceId', '(status, scheduledAt)', 'createdBy'],
+    defaultWorkflow: {
+      states: ['draft', 'scheduled', 'sending', 'sent', 'paused', 'cancelled'],
+      transitions: [
+        { from: 'draft', to: 'scheduled', action: 'schedule' },
+        { from: 'draft', to: 'sending', action: 'send_now' },
+        { from: 'scheduled', to: 'sending', action: 'start_sending' },
+        { from: 'scheduled', to: 'cancelled', action: 'cancel' },
+        { from: 'sending', to: 'sent', action: 'complete' },
+        { from: 'sending', to: 'paused', action: 'pause' },
+        { from: 'paused', to: 'sending', action: 'resume' },
+        { from: 'paused', to: 'cancelled', action: 'cancel' },
+      ],
+    },
+    typicalEndpoints: [
+      'GET /campaigns?status=draft&channel=email',
+      'GET /campaigns/:id',
+      'POST /campaigns',
+      'PATCH /campaigns/:id',
+      'POST /campaigns/:id/schedule',
+      'POST /campaigns/:id/send',
+      'POST /campaigns/:id/pause',
+      'GET /campaigns/:id/stats',
+    ],
+  },
+
+  message_record: {
+    id: 'message_record',
+    name: 'Message / SMS / Email Record',
+    aliases: ['message', 'sms', 'email message', 'push notification', 'outbound message', 'sent message'],
+    domain: 'messaging',
+    description: 'An individual message sent to a contact — tracks delivery status and engagement.',
+    traits: ['pageable', 'auditable', 'searchable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'campaignId', type: 'integer references campaigns(id)', nullable: true, description: 'Parent campaign (null for transactional)' },
+      { name: 'contactId', type: 'integer references contacts(id)', nullable: false, description: 'Recipient contact' },
+      { name: 'channel', type: "varchar(20) not null default 'email'", nullable: false, description: 'email|sms|push' },
+      { name: 'subject', type: 'text', nullable: true, description: 'Email subject or SMS header' },
+      { name: 'body', type: 'text not null', nullable: false, description: 'Rendered message body' },
+      { name: 'status', type: "varchar(20) not null default 'queued'", nullable: false, description: 'queued|sending|sent|delivered|opened|clicked|bounced|failed|complained' },
+      { name: 'providerMessageId', type: 'varchar(200)', nullable: true, description: 'External ID from SendGrid/Twilio/etc.' },
+      { name: 'sentAt', type: 'timestamptz', nullable: true, description: 'When sent to provider' },
+      { name: 'deliveredAt', type: 'timestamptz', nullable: true, description: 'Delivery confirmation' },
+      { name: 'openedAt', type: 'timestamptz', nullable: true, description: 'First open' },
+      { name: 'clickedAt', type: 'timestamptz', nullable: true, description: 'First click' },
+      { name: 'bouncedAt', type: 'timestamptz', nullable: true, description: 'Bounce time' },
+      { name: 'bounceType', type: 'varchar(20)', nullable: true, description: 'hard|soft (hard = permanent)' },
+      { name: 'errorMessage', type: 'text', nullable: true, description: 'Delivery failure reason' },
+      { name: 'retryCount', type: 'integer not null default 0', nullable: false, description: 'Send retry attempts' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Record creation' },
+    ],
+    relatedEntities: ['campaign', 'contact', 'template'],
+    suggestedIndexes: ['campaignId', 'contactId', 'status', 'providerMessageId', '(campaignId, status)', '(contactId, createdAt DESC)', 'sentAt'],
+    defaultWorkflow: {
+      states: ['queued', 'sending', 'sent', 'delivered', 'opened', 'clicked', 'bounced', 'failed', 'complained'],
+      transitions: [
+        { from: 'queued', to: 'sending', action: 'pick_up' },
+        { from: 'sending', to: 'sent', action: 'provider_accepted' },
+        { from: 'sent', to: 'delivered', action: 'delivery_confirmed' },
+        { from: 'delivered', to: 'opened', action: 'open_tracked' },
+        { from: 'opened', to: 'clicked', action: 'click_tracked' },
+        { from: 'sending', to: 'failed', action: 'send_failed' },
+        { from: 'sent', to: 'bounced', action: 'bounce_received' },
+        { from: 'delivered', to: 'complained', action: 'spam_complaint' },
+        { from: 'failed', to: 'queued', action: 'retry' },
+      ],
+    },
+    typicalEndpoints: [
+      'GET /messages?campaignId=:id&status=delivered',
+      'GET /messages/:id',
+      'POST /messages (transactional send)',
+      'GET /messages/:id/events (delivery timeline)',
+    ],
+  },
+
+  template: {
+    id: 'template',
+    name: 'Message Template',
+    aliases: ['template', 'email template', 'sms template', 'push template', 'message template', 'layout'],
+    domain: 'messaging',
+    description: 'A reusable message template with variable interpolation.',
+    traits: ['pageable', 'searchable', 'versioned', 'taggable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'name', type: 'text not null', nullable: false, description: 'Template name' },
+      { name: 'channel', type: "varchar(20) not null default 'email'", nullable: false, description: 'email|sms|push' },
+      { name: 'subject', type: 'text', nullable: true, description: 'Email subject with {{variables}}' },
+      { name: 'bodyHtml', type: 'text', nullable: true, description: 'HTML body for email' },
+      { name: 'bodyText', type: 'text not null', nullable: false, description: 'Plain text body / SMS body' },
+      { name: 'variables', type: 'text[]', nullable: true, description: 'Declared variable names e.g. ["firstName","company"]' },
+      { name: 'category', type: 'varchar(50)', nullable: true, description: 'welcome|promotion|transactional|notification|reminder' },
+      { name: 'version', type: 'integer not null default 1', nullable: false, description: 'Template version number' },
+      { name: 'isActive', type: 'boolean not null default true', nullable: false, description: 'Whether template is available for use' },
+      { name: 'createdBy', type: 'integer references users(id)', nullable: false, description: 'Author' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Creation time' },
+      { name: 'updatedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Last update' },
+    ],
+    relatedEntities: ['campaign', 'message_record', 'user'],
+    suggestedIndexes: ['channel', 'category', 'isActive', '(channel, isActive)'],
+    typicalEndpoints: [
+      'GET /templates?channel=email&category=welcome',
+      'GET /templates/:id',
+      'POST /templates',
+      'PATCH /templates/:id',
+      'POST /templates/:id/preview (render with sample data)',
+      'POST /templates/:id/duplicate',
+    ],
+  },
+
+  audience: {
+    id: 'audience',
+    name: 'Audience / Segment',
+    aliases: ['audience', 'segment', 'list', 'mailing list', 'contact list', 'distribution list', 'cohort'],
+    domain: 'messaging',
+    description: 'A dynamic or static segment of contacts for campaign targeting.',
+    traits: ['pageable', 'searchable', 'auditable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'name', type: 'text not null', nullable: false, description: 'Audience name' },
+      { name: 'description', type: 'text', nullable: true, description: 'Audience description' },
+      { name: 'type', type: "varchar(20) not null default 'static'", nullable: false, description: 'static|dynamic' },
+      { name: 'filterRules', type: 'jsonb', nullable: true, description: 'Dynamic filter rules (tags, metadata, etc.)' },
+      { name: 'contactCount', type: 'integer not null default 0', nullable: false, description: 'Cached member count' },
+      { name: 'lastSyncedAt', type: 'timestamptz', nullable: true, description: 'Last dynamic re-evaluation' },
+      { name: 'createdBy', type: 'integer references users(id)', nullable: false, description: 'Creator' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Creation time' },
+      { name: 'updatedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Last update' },
+    ],
+    relatedEntities: ['contact', 'campaign', 'user'],
+    suggestedIndexes: ['type', 'createdBy'],
+    typicalEndpoints: [
+      'GET /audiences',
+      'GET /audiences/:id',
+      'POST /audiences',
+      'PATCH /audiences/:id',
+      'GET /audiences/:id/contacts?page=1',
+      'POST /audiences/:id/contacts (add contacts)',
+      'POST /audiences/:id/sync (re-evaluate dynamic rules)',
+    ],
+  },
+
+  unsubscribe: {
+    id: 'unsubscribe',
+    name: 'Unsubscribe Record',
+    aliases: ['unsubscribe', 'opt-out', 'suppression', 'do not contact'],
+    domain: 'messaging',
+    description: 'An opt-out record tracking when and why a contact unsubscribed.',
+    traits: ['pageable', 'searchable', 'auditable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'contactId', type: 'integer references contacts(id) not null', nullable: false, description: 'Unsubscribed contact' },
+      { name: 'channel', type: "varchar(20) not null default 'email'", nullable: false, description: 'Channel unsubscribed from: email|sms|push|all' },
+      { name: 'reason', type: 'varchar(50)', nullable: true, description: 'too_frequent|not_relevant|never_subscribed|other' },
+      { name: 'campaignId', type: 'integer references campaigns(id)', nullable: true, description: 'Campaign that triggered unsubscribe' },
+      { name: 'ipAddress', type: 'inet', nullable: true, description: 'IP of unsubscribe request (for compliance)' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Unsubscribe timestamp' },
+    ],
+    relatedEntities: ['contact', 'campaign'],
+    suggestedIndexes: ['contactId', 'channel', '(contactId, channel) UNIQUE', 'createdAt'],
+    typicalEndpoints: [
+      'GET /unsubscribes?channel=email',
+      'POST /unsubscribe (public endpoint with token)',
+    ],
+  },
+
+  bounce: {
+    id: 'bounce',
+    name: 'Bounce Record',
+    aliases: ['bounce', 'email bounce', 'hard bounce', 'soft bounce', 'delivery failure'],
+    domain: 'messaging',
+    description: 'A delivery failure record for email/SMS with bounce classification.',
+    traits: ['pageable', 'searchable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'contactId', type: 'integer references contacts(id) not null', nullable: false, description: 'Bounced contact' },
+      { name: 'messageId', type: 'integer references messages(id)', nullable: true, description: 'Related message' },
+      { name: 'type', type: "varchar(10) not null default 'soft'", nullable: false, description: 'hard|soft (hard = permanent address failure)' },
+      { name: 'reason', type: 'text', nullable: true, description: 'Bounce reason from provider' },
+      { name: 'diagnosticCode', type: 'varchar(100)', nullable: true, description: 'SMTP diagnostic code' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Bounce timestamp' },
+    ],
+    relatedEntities: ['contact', 'message_record', 'campaign'],
+    suggestedIndexes: ['contactId', 'type', 'messageId', '(contactId, type)', 'createdAt'],
+    typicalEndpoints: [
+      'GET /bounces?type=hard&page=1',
+      'GET /bounces/stats (hard vs soft counts)',
+    ],
+  },
+
+  // ── Automation & Worker Domain ──────────────────────────────────────────
+
+  scheduler: {
+    id: 'scheduler',
+    name: 'Scheduler / Cron Job',
+    aliases: ['scheduler', 'cron', 'cron job', 'scheduled task', 'recurring job', 'timer', 'periodic task'],
+    domain: 'automation',
+    description: 'A scheduled/recurring job definition with execution history.',
+    traits: ['pageable', 'auditable', 'searchable', 'workflowable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'name', type: 'text not null', nullable: false, description: 'Job name' },
+      { name: 'description', type: 'text', nullable: true, description: 'What this job does' },
+      { name: 'cronExpression', type: 'varchar(100) not null', nullable: false, description: 'Cron schedule e.g. "0 */6 * * *"' },
+      { name: 'timezone', type: "varchar(50) not null default 'UTC'", nullable: false, description: 'IANA timezone for cron evaluation' },
+      { name: 'handler', type: 'varchar(200) not null', nullable: false, description: 'Handler function/module path' },
+      { name: 'payload', type: 'jsonb', nullable: true, description: 'Static payload passed to handler' },
+      { name: 'status', type: "varchar(20) not null default 'active'", nullable: false, description: 'active|paused|disabled|errored' },
+      { name: 'lastRunAt', type: 'timestamptz', nullable: true, description: 'Last execution start' },
+      { name: 'lastRunStatus', type: 'varchar(20)', nullable: true, description: 'success|failure|timeout' },
+      { name: 'lastRunDurationMs', type: 'integer', nullable: true, description: 'Last run duration in ms' },
+      { name: 'nextRunAt', type: 'timestamptz', nullable: true, description: 'Next scheduled run' },
+      { name: 'failureCount', type: 'integer not null default 0', nullable: false, description: 'Consecutive failures' },
+      { name: 'maxRetries', type: 'integer not null default 3', nullable: false, description: 'Max retries before disabling' },
+      { name: 'timeoutMs', type: 'integer not null default 30000', nullable: false, description: 'Execution timeout in ms' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Creation time' },
+      { name: 'updatedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Last update' },
+    ],
+    relatedEntities: ['job_execution', 'retry_policy', 'dead_letter_queue'],
+    suggestedIndexes: ['status', 'nextRunAt', '(status, nextRunAt)', 'handler'],
+    defaultWorkflow: {
+      states: ['active', 'paused', 'disabled', 'errored'],
+      transitions: [
+        { from: 'active', to: 'paused', action: 'pause' },
+        { from: 'paused', to: 'active', action: 'resume' },
+        { from: 'active', to: 'errored', action: 'max_retries_exceeded' },
+        { from: 'errored', to: 'active', action: 'reset_and_resume' },
+        { from: 'active', to: 'disabled', action: 'disable' },
+        { from: 'errored', to: 'disabled', action: 'disable' },
+      ],
+    },
+    typicalEndpoints: [
+      'GET /schedulers?status=active',
+      'GET /schedulers/:id',
+      'POST /schedulers',
+      'PATCH /schedulers/:id',
+      'POST /schedulers/:id/run (manual trigger)',
+      'POST /schedulers/:id/pause',
+      'POST /schedulers/:id/resume',
+      'GET /schedulers/:id/history (execution log)',
+    ],
+  },
+
+  queue_job: {
+    id: 'queue_job',
+    name: 'Queue / Job',
+    aliases: ['queue', 'job', 'worker job', 'background job', 'async job', 'task queue', 'work item'],
+    domain: 'automation',
+    description: 'A job placed on a queue for async processing by a worker.',
+    traits: ['pageable', 'auditable', 'searchable', 'workflowable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'queue', type: "varchar(100) not null default 'default'", nullable: false, description: 'Queue name e.g. "emails", "reports"' },
+      { name: 'type', type: 'varchar(100) not null', nullable: false, description: 'Job type identifier' },
+      { name: 'payload', type: 'jsonb not null', nullable: false, description: 'Job data' },
+      { name: 'status', type: "varchar(20) not null default 'pending'", nullable: false, description: 'pending|processing|completed|failed|dead' },
+      { name: 'priority', type: 'integer not null default 0', nullable: false, description: 'Higher = higher priority' },
+      { name: 'attempts', type: 'integer not null default 0', nullable: false, description: 'Current attempt count' },
+      { name: 'maxAttempts', type: 'integer not null default 3', nullable: false, description: 'Max attempts before dead-lettering' },
+      { name: 'scheduledFor', type: 'timestamptz not null default now()', nullable: false, description: 'Earliest processing time (for delayed jobs)' },
+      { name: 'startedAt', type: 'timestamptz', nullable: true, description: 'Processing start time' },
+      { name: 'completedAt', type: 'timestamptz', nullable: true, description: 'Completion time' },
+      { name: 'failedAt', type: 'timestamptz', nullable: true, description: 'Last failure time' },
+      { name: 'errorMessage', type: 'text', nullable: true, description: 'Last error message' },
+      { name: 'result', type: 'jsonb', nullable: true, description: 'Job result on completion' },
+      { name: 'lockToken', type: 'uuid', nullable: true, description: 'Worker lock to prevent double processing' },
+      { name: 'lockedUntil', type: 'timestamptz', nullable: true, description: 'Lock expiry for crash recovery' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Enqueue time' },
+    ],
+    relatedEntities: ['dead_letter_queue', 'retry_policy', 'scheduler'],
+    suggestedIndexes: ['(queue, status, priority DESC, scheduledFor)', 'status', 'type', 'scheduledFor', 'lockToken', '(status, lockedUntil)'],
+    defaultWorkflow: {
+      states: ['pending', 'processing', 'completed', 'failed', 'dead'],
+      transitions: [
+        { from: 'pending', to: 'processing', action: 'pick_up' },
+        { from: 'processing', to: 'completed', action: 'succeed' },
+        { from: 'processing', to: 'failed', action: 'fail' },
+        { from: 'failed', to: 'pending', action: 'retry' },
+        { from: 'failed', to: 'dead', action: 'max_attempts_exceeded' },
+      ],
+    },
+    typicalEndpoints: [
+      'GET /jobs?queue=emails&status=pending',
+      'POST /jobs (enqueue)',
+      'GET /jobs/:id',
+      'POST /jobs/:id/retry',
+      'DELETE /jobs/:id (cancel pending job)',
+      'GET /jobs/stats (counts by queue × status)',
+    ],
+  },
+
+  webhook_event: {
+    id: 'webhook_event',
+    name: 'Webhook Event',
+    aliases: ['webhook', 'webhook event', 'inbound webhook', 'webhook payload', 'callback', 'webhook handler'],
+    domain: 'automation',
+    description: 'An inbound webhook event with idempotency tracking and processing state.',
+    traits: ['pageable', 'auditable', 'searchable', 'workflowable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'idempotencyKey', type: 'varchar(200) not null', nullable: false, description: 'Unique key for deduplication (provider event ID)' },
+      { name: 'source', type: 'varchar(100) not null', nullable: false, description: 'Provider: stripe|github|sendgrid|twilio|custom' },
+      { name: 'eventType', type: 'varchar(200) not null', nullable: false, description: 'Event type e.g. "payment_intent.succeeded"' },
+      { name: 'payload', type: 'jsonb not null', nullable: false, description: 'Raw webhook payload' },
+      { name: 'headers', type: 'jsonb', nullable: true, description: 'Relevant request headers (signature, content-type)' },
+      { name: 'status', type: "varchar(20) not null default 'received'", nullable: false, description: 'received|processing|processed|failed|ignored' },
+      { name: 'signatureValid', type: 'boolean', nullable: true, description: 'Whether signature verification passed' },
+      { name: 'processedAt', type: 'timestamptz', nullable: true, description: 'Processing completion time' },
+      { name: 'errorMessage', type: 'text', nullable: true, description: 'Processing error' },
+      { name: 'retryCount', type: 'integer not null default 0', nullable: false, description: 'Processing retry count' },
+      { name: 'ipAddress', type: 'inet', nullable: true, description: 'Source IP for security audit' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Receive timestamp' },
+    ],
+    relatedEntities: ['dead_letter_queue', 'queue_job'],
+    suggestedIndexes: ['idempotencyKey UNIQUE', 'source', 'eventType', 'status', '(source, eventType)', '(status, createdAt)', 'createdAt'],
+    defaultWorkflow: {
+      states: ['received', 'processing', 'processed', 'failed', 'ignored'],
+      transitions: [
+        { from: 'received', to: 'processing', action: 'start_processing' },
+        { from: 'received', to: 'ignored', action: 'skip_duplicate_or_irrelevant' },
+        { from: 'processing', to: 'processed', action: 'complete' },
+        { from: 'processing', to: 'failed', action: 'error' },
+        { from: 'failed', to: 'processing', action: 'retry' },
+      ],
+    },
+    typicalEndpoints: [
+      'POST /webhooks/:source (inbound receiver)',
+      'GET /webhooks/events?source=stripe&status=failed',
+      'GET /webhooks/events/:id',
+      'POST /webhooks/events/:id/retry',
+    ],
+  },
+
+  retry_policy: {
+    id: 'retry_policy',
+    name: 'Retry Policy',
+    aliases: ['retry policy', 'retry config', 'backoff policy', 'retry strategy', 'exponential backoff'],
+    domain: 'automation',
+    description: 'Configuration for retry behavior with exponential backoff.',
+    traits: ['pageable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'name', type: 'text not null', nullable: false, description: 'Policy name e.g. "api-calls-default"' },
+      { name: 'maxAttempts', type: 'integer not null default 3', nullable: false, description: 'Max retry attempts' },
+      { name: 'initialDelayMs', type: 'integer not null default 1000', nullable: false, description: 'First retry delay in ms' },
+      { name: 'maxDelayMs', type: 'integer not null default 60000', nullable: false, description: 'Max delay cap in ms' },
+      { name: 'backoffMultiplier', type: 'numeric(3,1) not null default 2.0', nullable: false, description: 'Exponential multiplier' },
+      { name: 'retryableErrors', type: 'text[]', nullable: true, description: 'Error codes/types that are retryable' },
+      { name: 'jitterEnabled', type: 'boolean not null default true', nullable: false, description: 'Add random jitter to prevent thundering herd' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Creation time' },
+    ],
+    relatedEntities: ['scheduler', 'queue_job', 'webhook_event'],
+    suggestedIndexes: ['name UNIQUE'],
+    typicalEndpoints: [
+      'GET /retry-policies',
+      'GET /retry-policies/:id',
+      'POST /retry-policies',
+      'PATCH /retry-policies/:id',
+    ],
+  },
+
+  dead_letter_queue: {
+    id: 'dead_letter_queue',
+    name: 'Dead Letter Queue Entry',
+    aliases: ['dead letter', 'dlq', 'dead letter queue', 'failed job', 'poison message'],
+    domain: 'automation',
+    description: 'A permanently failed job moved to the dead letter queue for manual review.',
+    traits: ['pageable', 'searchable', 'auditable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'sourceQueue', type: 'varchar(100) not null', nullable: false, description: 'Original queue name' },
+      { name: 'sourceJobId', type: 'integer', nullable: true, description: 'Original job ID' },
+      { name: 'jobType', type: 'varchar(100) not null', nullable: false, description: 'Job type' },
+      { name: 'payload', type: 'jsonb not null', nullable: false, description: 'Original payload' },
+      { name: 'errorMessage', type: 'text not null', nullable: false, description: 'Final error that caused dead-lettering' },
+      { name: 'errorStack', type: 'text', nullable: true, description: 'Error stack trace' },
+      { name: 'attemptCount', type: 'integer not null', nullable: false, description: 'Total attempts made' },
+      { name: 'firstAttemptAt', type: 'timestamptz', nullable: true, description: 'First attempt timestamp' },
+      { name: 'lastAttemptAt', type: 'timestamptz', nullable: true, description: 'Final attempt timestamp' },
+      { name: 'resolvedAt', type: 'timestamptz', nullable: true, description: 'When manually resolved' },
+      { name: 'resolvedBy', type: 'integer references users(id)', nullable: true, description: 'Who resolved it' },
+      { name: 'resolution', type: 'varchar(20)', nullable: true, description: 'retried|discarded|fixed_and_retried' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Dead-letter timestamp' },
+    ],
+    relatedEntities: ['queue_job', 'webhook_event', 'user'],
+    suggestedIndexes: ['sourceQueue', 'jobType', 'resolvedAt', '(resolvedAt IS NULL) WHERE resolvedAt IS NULL', 'createdAt'],
+    typicalEndpoints: [
+      'GET /dlq?sourceQueue=emails&resolved=false',
+      'GET /dlq/:id',
+      'POST /dlq/:id/retry',
+      'POST /dlq/:id/discard',
+      'GET /dlq/stats',
+    ],
+  },
+
+  // ── Tool-Builder / Meta Domain ──────────────────────────────────────────
+
+  plugin_system: {
+    id: 'plugin_system',
+    name: 'Plugin / Extension',
+    aliases: ['plugin', 'extension', 'addon', 'module', 'integration', 'connector', 'plugin system'],
+    domain: 'tooling',
+    description: 'A plugin/extension registration system for extensible architectures.',
+    traits: ['pageable', 'searchable', 'auditable', 'workflowable', 'versioned'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'slug', type: 'varchar(100) not null', nullable: false, description: 'Unique plugin identifier' },
+      { name: 'name', type: 'text not null', nullable: false, description: 'Display name' },
+      { name: 'description', type: 'text', nullable: true, description: 'Plugin description' },
+      { name: 'version', type: 'varchar(20) not null', nullable: false, description: 'SemVer version' },
+      { name: 'author', type: 'varchar(200)', nullable: true, description: 'Author name or org' },
+      { name: 'entryPoint', type: 'varchar(500) not null', nullable: false, description: 'Module path or URL' },
+      { name: 'hooks', type: 'text[] not null', nullable: false, description: 'Lifecycle hooks this plugin registers for' },
+      { name: 'configSchema', type: 'jsonb', nullable: true, description: 'JSON Schema for plugin configuration' },
+      { name: 'config', type: 'jsonb', nullable: true, description: 'Current plugin configuration values' },
+      { name: 'permissions', type: 'text[]', nullable: true, description: 'Required permissions' },
+      { name: 'status', type: "varchar(20) not null default 'installed'", nullable: false, description: 'installed|active|disabled|errored' },
+      { name: 'priority', type: 'integer not null default 100', nullable: false, description: 'Execution priority (lower = earlier)' },
+      { name: 'installedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Install time' },
+      { name: 'updatedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Last update' },
+    ],
+    relatedEntities: ['config_schema', 'pipeline_stage'],
+    suggestedIndexes: ['slug UNIQUE', 'status', '(status, priority)'],
+    defaultWorkflow: {
+      states: ['installed', 'active', 'disabled', 'errored'],
+      transitions: [
+        { from: 'installed', to: 'active', action: 'activate' },
+        { from: 'active', to: 'disabled', action: 'disable' },
+        { from: 'disabled', to: 'active', action: 'enable' },
+        { from: 'active', to: 'errored', action: 'runtime_error' },
+        { from: 'errored', to: 'disabled', action: 'disable' },
+        { from: 'errored', to: 'active', action: 'retry' },
+      ],
+    },
+    typicalEndpoints: [
+      'GET /plugins?status=active',
+      'GET /plugins/:slug',
+      'POST /plugins (install)',
+      'PATCH /plugins/:slug/config',
+      'POST /plugins/:slug/activate',
+      'POST /plugins/:slug/disable',
+      'DELETE /plugins/:slug (uninstall)',
+    ],
+  },
+
+  template_engine: {
+    id: 'template_engine',
+    name: 'Template Engine / Code Generator',
+    aliases: ['template engine', 'code generator', 'scaffolder', 'generator', 'codegen', 'boilerplate generator'],
+    domain: 'tooling',
+    description: 'An AST/token-based template engine for generating code or documents.',
+    traits: ['pageable', 'searchable', 'versioned'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'name', type: 'text not null', nullable: false, description: 'Template name' },
+      { name: 'language', type: 'varchar(50) not null', nullable: false, description: 'Target language: typescript|python|html|etc.' },
+      { name: 'templateBody', type: 'text not null', nullable: false, description: 'Template source with AST placeholders' },
+      { name: 'ast', type: 'jsonb', nullable: true, description: 'Parsed AST representation of the template' },
+      { name: 'variables', type: 'jsonb not null', nullable: false, description: 'Variable definitions with types and defaults' },
+      { name: 'outputFormat', type: "varchar(20) not null default 'file'", nullable: false, description: 'file|directory|snippet' },
+      { name: 'helpers', type: 'jsonb', nullable: true, description: 'Registered helper functions (camelCase, pluralize, etc.)' },
+      { name: 'partials', type: 'jsonb', nullable: true, description: 'Sub-templates that can be included' },
+      { name: 'version', type: 'integer not null default 1', nullable: false, description: 'Template version' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Creation time' },
+      { name: 'updatedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Last update' },
+    ],
+    relatedEntities: ['transform_rule', 'pipeline_stage', 'config_schema'],
+    suggestedIndexes: ['language', 'name'],
+    typicalEndpoints: [
+      'GET /templates?language=typescript',
+      'GET /templates/:id',
+      'POST /templates',
+      'PATCH /templates/:id',
+      'POST /templates/:id/render (execute with variables)',
+      'POST /templates/:id/validate (check syntax)',
+    ],
+  },
+
+  pipeline_stage: {
+    id: 'pipeline_stage',
+    name: 'Pipeline Stage',
+    aliases: ['pipeline stage', 'pipeline step', 'stage', 'processing step', 'pipe', 'middleware', 'transform stage'],
+    domain: 'tooling',
+    description: 'A stage in a processing pipeline (input → transform → output).',
+    traits: ['pageable', 'auditable', 'workflowable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'pipelineId', type: 'integer references pipelines(id) not null', nullable: false, description: 'Parent pipeline' },
+      { name: 'name', type: 'text not null', nullable: false, description: 'Stage name' },
+      { name: 'order', type: 'integer not null', nullable: false, description: 'Execution order within pipeline' },
+      { name: 'handler', type: 'varchar(200) not null', nullable: false, description: 'Handler function/module' },
+      { name: 'inputSchema', type: 'jsonb', nullable: true, description: 'Expected input JSON Schema' },
+      { name: 'outputSchema', type: 'jsonb', nullable: true, description: 'Expected output JSON Schema' },
+      { name: 'config', type: 'jsonb', nullable: true, description: 'Stage-specific configuration' },
+      { name: 'isEnabled', type: 'boolean not null default true', nullable: false, description: 'Whether stage is active' },
+      { name: 'timeoutMs', type: 'integer not null default 30000', nullable: false, description: 'Stage execution timeout' },
+      { name: 'onFailure', type: "varchar(20) not null default 'stop'", nullable: false, description: 'stop|skip|fallback' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Creation time' },
+    ],
+    relatedEntities: ['transform_rule', 'plugin_system'],
+    suggestedIndexes: ['(pipelineId, order) UNIQUE', 'handler'],
+    typicalEndpoints: [
+      'GET /pipelines/:id/stages',
+      'POST /pipelines/:id/stages',
+      'PATCH /pipelines/:pipelineId/stages/:stageId',
+      'DELETE /pipelines/:pipelineId/stages/:stageId',
+      'POST /pipelines/:id/stages/reorder',
+    ],
+  },
+
+  transform_rule: {
+    id: 'transform_rule',
+    name: 'Transform Rule',
+    aliases: ['transform', 'transform rule', 'mapping rule', 'data transform', 'transformation', 'mapping'],
+    domain: 'tooling',
+    description: 'A data transformation rule used by pipelines and template engines.',
+    traits: ['pageable', 'searchable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'name', type: 'text not null', nullable: false, description: 'Rule name' },
+      { name: 'inputPath', type: 'varchar(500) not null', nullable: false, description: 'JSONPath or field selector for input' },
+      { name: 'outputPath', type: 'varchar(500) not null', nullable: false, description: 'Output target path' },
+      { name: 'transformType', type: "varchar(30) not null default 'map'", nullable: false, description: 'map|filter|reduce|flatten|rename|cast|format|custom' },
+      { name: 'expression', type: 'text', nullable: true, description: 'Transform expression or function body' },
+      { name: 'conditions', type: 'jsonb', nullable: true, description: 'Conditional application rules' },
+      { name: 'priority', type: 'integer not null default 0', nullable: false, description: 'Application order' },
+      { name: 'isActive', type: 'boolean not null default true', nullable: false, description: 'Whether rule is active' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Creation time' },
+    ],
+    relatedEntities: ['pipeline_stage', 'template_engine'],
+    suggestedIndexes: ['transformType', 'isActive', 'priority'],
+    typicalEndpoints: [
+      'GET /transform-rules',
+      'POST /transform-rules',
+      'PATCH /transform-rules/:id',
+      'DELETE /transform-rules/:id',
+      'POST /transform-rules/test (dry run with sample data)',
+    ],
+  },
+
+  config_schema: {
+    id: 'config_schema',
+    name: 'Config Schema',
+    aliases: ['config', 'configuration', 'settings', 'config schema', 'app config', 'feature flag', 'feature toggle'],
+    domain: 'tooling',
+    description: 'A typed configuration schema with validation, defaults, and environment overrides.',
+    traits: ['pageable', 'searchable', 'versioned', 'auditable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'namespace', type: 'varchar(100) not null', nullable: false, description: 'Config namespace e.g. "app", "email", "payment"' },
+      { name: 'key', type: 'varchar(200) not null', nullable: false, description: 'Configuration key' },
+      { name: 'value', type: 'jsonb not null', nullable: false, description: 'Configuration value' },
+      { name: 'valueType', type: "varchar(20) not null default 'string'", nullable: false, description: 'string|number|boolean|json|secret' },
+      { name: 'defaultValue', type: 'jsonb', nullable: true, description: 'Default value if not set' },
+      { name: 'validationSchema', type: 'jsonb', nullable: true, description: 'JSON Schema for value validation' },
+      { name: 'description', type: 'text', nullable: true, description: 'Human-readable description' },
+      { name: 'isSecret', type: 'boolean not null default false', nullable: false, description: 'Whether value should be masked in UI' },
+      { name: 'environment', type: "varchar(20) not null default 'all'", nullable: false, description: 'all|development|staging|production' },
+      { name: 'updatedBy', type: 'integer references users(id)', nullable: true, description: 'Last modifier' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Creation time' },
+      { name: 'updatedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Last update' },
+    ],
+    relatedEntities: ['plugin_system', 'user'],
+    suggestedIndexes: ['(namespace, key) UNIQUE', 'namespace', 'environment', '(namespace, environment)'],
+    typicalEndpoints: [
+      'GET /config?namespace=email',
+      'GET /config/:namespace/:key',
+      'PUT /config/:namespace/:key',
+      'DELETE /config/:namespace/:key',
+      'POST /config/validate (validate against schema)',
+    ],
+  },
+
+  // ── Integration Service Domain ──────────────────────────────────────────
+
+  credential_vault: {
+    id: 'credential_vault',
+    name: 'Credential / Secret',
+    aliases: ['credential', 'secret', 'api key', 'token', 'vault', 'credential vault', 'key store'],
+    domain: 'integration',
+    description: 'Encrypted credential storage for third-party API keys and tokens.',
+    traits: ['pageable', 'auditable', 'searchable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'name', type: 'text not null', nullable: false, description: 'Credential name e.g. "stripe-live"' },
+      { name: 'service', type: 'varchar(100) not null', nullable: false, description: 'Service: stripe|sendgrid|twilio|github|custom' },
+      { name: 'credentialType', type: "varchar(30) not null default 'api_key'", nullable: false, description: 'api_key|oauth_token|basic_auth|certificate|webhook_secret' },
+      { name: 'encryptedValue', type: 'text not null', nullable: false, description: 'AES-256-GCM encrypted credential' },
+      { name: 'iv', type: 'varchar(32) not null', nullable: false, description: 'Initialization vector' },
+      { name: 'environment', type: "varchar(20) not null default 'development'", nullable: false, description: 'development|staging|production' },
+      { name: 'expiresAt', type: 'timestamptz', nullable: true, description: 'Token expiry (for OAuth tokens)' },
+      { name: 'lastUsedAt', type: 'timestamptz', nullable: true, description: 'Last time credential was retrieved' },
+      { name: 'lastRotatedAt', type: 'timestamptz', nullable: true, description: 'Last rotation time' },
+      { name: 'createdBy', type: 'integer references users(id)', nullable: false, description: 'Who stored it' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Creation time' },
+      { name: 'updatedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Last update' },
+    ],
+    relatedEntities: ['user'],
+    suggestedIndexes: ['(service, environment) UNIQUE', 'service', 'environment', 'expiresAt'],
+    typicalEndpoints: [
+      'GET /credentials?service=stripe (returns metadata, never raw values)',
+      'POST /credentials',
+      'PUT /credentials/:id',
+      'DELETE /credentials/:id',
+      'POST /credentials/:id/rotate',
+      'GET /credentials/:id/value (authorized retrieval, audit logged)',
+    ],
+  },
+
+  rate_limit_rule: {
+    id: 'rate_limit_rule',
+    name: 'Rate Limit Rule',
+    aliases: ['rate limit', 'rate limiter', 'throttle', 'rate limit rule', 'api limit', 'quota'],
+    domain: 'integration',
+    description: 'Rate limiting configuration for outbound or inbound API calls.',
+    traits: ['pageable', 'auditable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'name', type: 'text not null', nullable: false, description: 'Rule name' },
+      { name: 'target', type: 'varchar(200) not null', nullable: false, description: 'API endpoint pattern or service name' },
+      { name: 'windowMs', type: 'integer not null default 60000', nullable: false, description: 'Time window in ms' },
+      { name: 'maxRequests', type: 'integer not null default 100', nullable: false, description: 'Max requests per window' },
+      { name: 'strategy', type: "varchar(20) not null default 'sliding_window'", nullable: false, description: 'fixed_window|sliding_window|token_bucket|leaky_bucket' },
+      { name: 'keyBy', type: "varchar(50) not null default 'ip'", nullable: false, description: 'Rate limit key: ip|user|api_key|global' },
+      { name: 'burstAllowance', type: 'integer not null default 0', nullable: false, description: 'Extra burst requests allowed' },
+      { name: 'retryAfterMs', type: 'integer', nullable: true, description: 'Suggested retry-after value when limited' },
+      { name: 'isActive', type: 'boolean not null default true', nullable: false, description: 'Whether rule is active' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Creation time' },
+    ],
+    relatedEntities: ['credential_vault'],
+    suggestedIndexes: ['target', 'isActive', '(target, isActive)'],
+    typicalEndpoints: [
+      'GET /rate-limits',
+      'POST /rate-limits',
+      'PATCH /rate-limits/:id',
+      'DELETE /rate-limits/:id',
+      'GET /rate-limits/:id/stats (current usage)',
+    ],
+  },
 };
 
 // ============================================
@@ -1984,6 +2694,172 @@ const DOMAIN_MODELS: Record<string, DomainModel> = {
       'orders: (customer_id, created_at DESC) for order history',
       'orders: (status, created_at) for fulfillment queue',
       'Full-text search on products (name, description)',
+    ],
+  },
+
+  'messaging-platform': {
+    id: 'messaging-platform',
+    name: 'Messaging / Campaign Platform',
+    description: 'SMS, email, or push notification automation — like Mailchimp/SendGrid/Twilio.',
+    coreEntities: ['user', 'contact', 'campaign', 'message_record', 'template', 'audience'],
+    optionalEntities: ['unsubscribe', 'bounce', 'webhook_event', 'tag', 'audit_log'],
+    keyRelationships: [
+      'campaign targets one audience (audience_id FK)',
+      'campaign uses one template (template_id FK)',
+      'message belongs to campaign and contact (campaign_id + contact_id FKs)',
+      'contact belongs to many audiences (join table audience_contacts)',
+      'unsubscribe references contact and optionally campaign',
+      'bounce references contact and message',
+    ],
+    typicalFeatures: [
+      'Contact management with import/export (CSV)',
+      'Audience segmentation (static lists + dynamic filters)',
+      'Template builder with variable interpolation',
+      'Campaign scheduling and send-time optimization',
+      'Real-time delivery tracking (sent → delivered → opened → clicked)',
+      'Bounce handling (auto-suppress hard bounces)',
+      'Unsubscribe management (one-click + preferences page)',
+      'Campaign analytics dashboard (open rate, click rate, bounce rate)',
+      'Drip sequence / multi-step automation',
+      'A/B testing for subject lines and content',
+    ],
+    securityConsiderations: [
+      'CAN-SPAM / GDPR compliance: always include unsubscribe link',
+      'Rate limit outbound sends to respect provider limits',
+      'Verify sender domain (SPF, DKIM, DMARC for email)',
+      'Store consent timestamps for all contacts',
+      'Never expose full contact lists via API without pagination + auth',
+      'Webhook signature verification for provider callbacks',
+    ],
+    suggestedIndexStrategy: [
+      'contacts: (status, channel) for active subscriber counts',
+      'contacts: email unique, phone unique for dedup',
+      'messages: (campaign_id, status) for delivery stats',
+      'messages: (contact_id, created_at DESC) for contact timeline',
+      'campaigns: (status, scheduled_at) for send queue',
+      'unsubscribes: (contact_id, channel) unique for dedup',
+    ],
+  },
+
+  'automation-system': {
+    id: 'automation-system',
+    name: 'Automation / Job Processing System',
+    description: 'Background job processing, scheduling, webhooks — like Temporal/BullMQ.',
+    coreEntities: ['scheduler', 'queue_job', 'webhook_event', 'dead_letter_queue', 'retry_policy'],
+    optionalEntities: ['user', 'audit_log', 'notification', 'credential_vault'],
+    keyRelationships: [
+      'scheduler creates queue_jobs on each run',
+      'queue_job may reference a retry_policy',
+      'failed queue_job moves to dead_letter_queue after max attempts',
+      'webhook_event creates queue_job for async processing',
+      'dead_letter_queue entry references original job',
+    ],
+    typicalFeatures: [
+      'Cron-based job scheduling with timezone support',
+      'Priority queue with FIFO fallback',
+      'Exponential backoff with jitter for retries',
+      'Dead letter queue with manual review and replay',
+      'Idempotent webhook processing with dedup',
+      'Job execution dashboard (pending / processing / failed counts)',
+      'Worker health monitoring and auto-restart',
+      'Delayed job scheduling (run at future time)',
+      'Job cancellation and bulk operations',
+      'Webhook signature verification per provider',
+    ],
+    securityConsiderations: [
+      'Verify webhook signatures before processing payloads',
+      'Use idempotency keys to prevent duplicate processing',
+      'Lock jobs with TTL to prevent double-processing on worker crash',
+      'Sanitize job payloads — never eval() or exec() payload data',
+      'Rate limit webhook receiver endpoints',
+      'Log all DLQ resolutions for audit trail',
+    ],
+    suggestedIndexStrategy: [
+      'queue_jobs: (queue, status, priority DESC, scheduled_for) for worker polling',
+      'queue_jobs: (status, locked_until) for stale lock recovery',
+      'webhook_events: idempotency_key unique for dedup',
+      'webhook_events: (source, event_type, status) for monitoring',
+      'schedulers: (status, next_run_at) for scheduler tick',
+      'dead_letter_queue: (resolved_at IS NULL) partial index for unresolved',
+    ],
+  },
+
+  'tool-builder': {
+    id: 'tool-builder',
+    name: 'Tool Builder / Code Generator Platform',
+    description: 'Build software tools, template engines, plugin systems — meta-programming platforms.',
+    coreEntities: ['plugin_system', 'template_engine', 'pipeline_stage', 'transform_rule', 'config_schema'],
+    optionalEntities: ['user', 'audit_log', 'credential_vault'],
+    keyRelationships: [
+      'pipeline has many pipeline_stages (ordered by "order" column)',
+      'pipeline_stage may use transform_rules',
+      'plugin registers for lifecycle hooks and gets config from config_schema',
+      'template_engine uses transform_rules for variable processing',
+      'config_schema provides typed configuration for plugins and stages',
+    ],
+    typicalFeatures: [
+      'Plugin lifecycle management (install, activate, disable, uninstall)',
+      'Hook-based extension points (beforeGenerate, afterGenerate, onError)',
+      'AST-based template parsing (not string replacement)',
+      'Pipeline execution with stage ordering and error handling',
+      'Config schema with JSON Schema validation',
+      'Transform rule builder with dry-run testing',
+      'Plugin sandboxing for security',
+      'Version management for templates and plugins',
+    ],
+    securityConsiderations: [
+      'Sandbox plugin execution — never allow arbitrary code execution',
+      'Validate plugin config against declared JSON Schema before apply',
+      'Rate limit template rendering to prevent DoS via complex templates',
+      'Audit log all plugin state changes',
+      'Restrict file system access for template output',
+    ],
+    suggestedIndexStrategy: [
+      'plugins: slug unique for lookup',
+      'plugins: (status, priority) for execution ordering',
+      'pipeline_stages: (pipeline_id, order) unique for ordering',
+      'config_schema: (namespace, key) unique for lookup',
+      'config_schema: (namespace, environment) for env-specific config',
+    ],
+  },
+
+  'integration-hub': {
+    id: 'integration-hub',
+    name: 'Integration Hub / API Gateway',
+    description: 'Third-party API integration with credential management and rate limiting.',
+    coreEntities: ['credential_vault', 'webhook_event', 'rate_limit_rule', 'retry_policy', 'audit_log'],
+    optionalEntities: ['user', 'queue_job', 'dead_letter_queue', 'notification'],
+    keyRelationships: [
+      'credential_vault stores keys per service per environment',
+      'rate_limit_rule applies to outbound API calls per service',
+      'retry_policy configures backoff for each service integration',
+      'webhook_event records inbound callbacks from services',
+      'audit_log tracks all credential access and rotations',
+    ],
+    typicalFeatures: [
+      'Encrypted credential storage with rotation support',
+      'Per-service rate limiting (sliding window / token bucket)',
+      'Webhook receiver with signature verification per provider',
+      'Retry-with-backoff for outbound calls',
+      'Health dashboard for all integrated services',
+      'Credential expiry alerts',
+      'Request/response logging for debugging',
+      'Circuit breaker for failing services',
+    ],
+    securityConsiderations: [
+      'Encrypt all credentials at rest (AES-256-GCM)',
+      'Never log credential values — only metadata',
+      'Rotate credentials on schedule and on suspected breach',
+      'Verify webhook signatures using provider-specific algorithms (HMAC-SHA256, etc.)',
+      'Use idempotency keys for all outbound mutating API calls',
+      'IP allowlist inbound webhooks to provider IP ranges when available',
+    ],
+    suggestedIndexStrategy: [
+      'credential_vault: (service, environment) unique for lookup',
+      'credential_vault: expires_at for rotation alerts',
+      'rate_limit_rules: (target, is_active) for rule matching',
+      'webhook_events: idempotency_key unique',
+      'webhook_events: (source, created_at DESC) for monitoring',
     ],
   },
 };
@@ -3607,6 +4483,292 @@ export function TimeSeriesChart({ endpoint, title, color = '#6366f1', yAxisLabel
   );
 }`,
   },
+
+  // ── Automation & Integration Patterns ─────────────────────────────────
+
+  {
+    id: 'webhook-signature-verification',
+    title: 'Webhook Signature Verification (HMAC-SHA256)',
+    description: 'Verify inbound webhook payloads using provider-specific HMAC signatures. Prevents spoofed requests.',
+    tech: ['express', 'typescript', 'crypto'],
+    tags: ['webhook', 'security', 'integration', 'hmac'],
+    code: `import crypto from 'crypto';
+import type { Request, Response, NextFunction } from 'express';
+
+interface WebhookVerifierConfig {
+  headerName: string;
+  secret: string;
+  algorithm?: string;
+  encoding?: 'hex' | 'base64';
+  prefix?: string;
+}
+
+function createWebhookVerifier(config: WebhookVerifierConfig) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const signature = req.headers[config.headerName.toLowerCase()] as string;
+    if (!signature) {
+      return res.status(401).json({ error: 'Missing webhook signature' });
+    }
+
+    const rawBody = (req as any).rawBody as Buffer;
+    if (!rawBody) {
+      return res.status(400).json({ error: 'Raw body not available' });
+    }
+
+    const expected = crypto
+      .createHmac(config.algorithm || 'sha256', config.secret)
+      .update(rawBody)
+      .digest(config.encoding || 'hex');
+
+    const expectedStr = config.prefix ? \`\${config.prefix}\${expected}\` : expected;
+
+    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedStr))) {
+      return res.status(403).json({ error: 'Invalid webhook signature' });
+    }
+
+    next();
+  };
+}
+
+// Provider-specific verifiers:
+const verifyStripe = createWebhookVerifier({
+  headerName: 'stripe-signature',
+  secret: process.env.STRIPE_WEBHOOK_SECRET!,
+  prefix: 'sha256=',
+});
+
+const verifyGitHub = createWebhookVerifier({
+  headerName: 'x-hub-signature-256',
+  secret: process.env.GITHUB_WEBHOOK_SECRET!,
+  prefix: 'sha256=',
+});
+
+// IMPORTANT: Use express.raw() for webhook routes to preserve raw body
+// app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), verifyStripe, handler);`,
+  },
+
+  {
+    id: 'idempotency-key-pattern',
+    title: 'Idempotency Key Pattern',
+    description: 'Prevent duplicate processing of webhook events and API requests using idempotency keys.',
+    tech: ['drizzle', 'typescript', 'postgresql'],
+    tags: ['idempotency', 'webhook', 'dedup', 'reliability'],
+    code: `import { pgTable, serial, varchar, timestamptz, jsonb, boolean } from 'drizzle-orm/pg-core';
+import { eq } from 'drizzle-orm';
+import { db } from './db';
+
+export const idempotencyKeys = pgTable('idempotency_keys', {
+  id: serial('id').primaryKey(),
+  key: varchar('key', { length: 200 }).notNull().unique(),
+  source: varchar('source', { length: 100 }).notNull(),
+  processed: boolean('processed').notNull().default(false),
+  result: jsonb('result'),
+  expiresAt: timestamptz('expires_at').notNull(),
+  createdAt: timestamptz('created_at').notNull().defaultNow(),
+});
+
+export async function withIdempotency<T>(
+  key: string,
+  source: string,
+  handler: () => Promise<T>,
+  ttlHours = 24
+): Promise<{ result: T; wasProcessed: boolean }> {
+  const existing = await db
+    .select()
+    .from(idempotencyKeys)
+    .where(eq(idempotencyKeys.key, key))
+    .limit(1);
+
+  if (existing[0]?.processed) {
+    return { result: existing[0].result as T, wasProcessed: true };
+  }
+
+  const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000);
+
+  await db
+    .insert(idempotencyKeys)
+    .values({ key, source, expiresAt })
+    .onConflictDoNothing();
+
+  const result = await handler();
+
+  await db
+    .update(idempotencyKeys)
+    .set({ processed: true, result: result as any })
+    .where(eq(idempotencyKeys.key, key));
+
+  return { result, wasProcessed: false };
+}
+
+// Usage:
+// app.post('/webhooks/stripe', async (req, res) => {
+//   const eventId = req.body.id; // Stripe event ID is naturally idempotent
+//   const { result, wasProcessed } = await withIdempotency(
+//     eventId, 'stripe',
+//     () => processStripeEvent(req.body)
+//   );
+//   res.json({ ok: true, duplicate: wasProcessed });
+// });`,
+  },
+
+  {
+    id: 'retry-with-backoff',
+    title: 'Retry with Exponential Backoff + Jitter',
+    description: 'Robust retry logic for outbound API calls with configurable backoff and jitter to prevent thundering herd.',
+    tech: ['typescript'],
+    tags: ['retry', 'backoff', 'reliability', 'integration', 'api'],
+    code: `interface RetryOptions {
+  maxAttempts?: number;
+  initialDelayMs?: number;
+  maxDelayMs?: number;
+  backoffMultiplier?: number;
+  jitter?: boolean;
+  retryableErrors?: string[];
+  onRetry?: (attempt: number, error: Error, delayMs: number) => void;
+}
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  options: RetryOptions = {}
+): Promise<T> {
+  const {
+    maxAttempts = 3,
+    initialDelayMs = 1000,
+    maxDelayMs = 30000,
+    backoffMultiplier = 2,
+    jitter = true,
+    retryableErrors,
+    onRetry,
+  } = options;
+
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+
+      if (retryableErrors && !retryableErrors.some(code => lastError!.message.includes(code))) {
+        throw lastError;
+      }
+
+      if (attempt === maxAttempts) break;
+
+      let delay = Math.min(initialDelayMs * Math.pow(backoffMultiplier, attempt - 1), maxDelayMs);
+      if (jitter) {
+        delay = delay * (0.5 + Math.random() * 0.5);
+      }
+
+      onRetry?.(attempt, lastError, delay);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+
+  throw lastError!;
+}
+
+// Usage:
+// const result = await withRetry(
+//   () => fetch('https://api.example.com/data').then(r => {
+//     if (!r.ok) throw new Error(\`HTTP \${r.status}\`);
+//     return r.json();
+//   }),
+//   {
+//     maxAttempts: 3,
+//     initialDelayMs: 500,
+//     retryableErrors: ['HTTP 429', 'HTTP 502', 'HTTP 503', 'ECONNRESET'],
+//     onRetry: (attempt, error, delay) =>
+//       console.warn(\`Retry \${attempt}: \${error.message}, waiting \${delay}ms\`),
+//   }
+// );`,
+  },
+
+  {
+    id: 'queue-worker-pattern',
+    title: 'PostgreSQL-Based Job Queue Worker',
+    description: 'A lightweight job queue using PostgreSQL with FOR UPDATE SKIP LOCKED for reliable worker polling.',
+    tech: ['drizzle', 'typescript', 'postgresql'],
+    tags: ['queue', 'worker', 'background-jobs', 'automation'],
+    code: `import { pgTable, serial, varchar, integer, timestamptz, jsonb, uuid } from 'drizzle-orm/pg-core';
+import { sql, eq, and, lte, isNull, or } from 'drizzle-orm';
+import { db } from './db';
+import { randomUUID } from 'crypto';
+
+export const jobs = pgTable('jobs', {
+  id: serial('id').primaryKey(),
+  queue: varchar('queue', { length: 100 }).notNull().default('default'),
+  type: varchar('type', { length: 100 }).notNull(),
+  payload: jsonb('payload').notNull(),
+  status: varchar('status', { length: 20 }).notNull().default('pending'),
+  priority: integer('priority').notNull().default(0),
+  attempts: integer('attempts').notNull().default(0),
+  maxAttempts: integer('max_attempts').notNull().default(3),
+  scheduledFor: timestamptz('scheduled_for').notNull().defaultNow(),
+  lockToken: uuid('lock_token'),
+  lockedUntil: timestamptz('locked_until'),
+  errorMessage: varchar('error_message', { length: 1000 }),
+  completedAt: timestamptz('completed_at'),
+  createdAt: timestamptz('created_at').notNull().defaultNow(),
+});
+
+type JobHandler = (payload: unknown) => Promise<void>;
+const handlers = new Map<string, JobHandler>();
+
+export function registerJobHandler(type: string, handler: JobHandler) {
+  handlers.set(type, handler);
+}
+
+export async function enqueue(queue: string, type: string, payload: unknown, options?: { priority?: number; delayMs?: number }) {
+  const scheduledFor = options?.delayMs ? new Date(Date.now() + options.delayMs) : new Date();
+  await db.insert(jobs).values({ queue, type, payload: payload as any, priority: options?.priority ?? 0, scheduledFor });
+}
+
+export async function pollAndProcess(queue: string, lockDurationMs = 30000): Promise<boolean> {
+  const token = randomUUID();
+  const now = new Date();
+  const lockUntil = new Date(Date.now() + lockDurationMs);
+
+  const [job] = await db.execute(sql\`
+    UPDATE jobs SET status = 'processing', lock_token = \${token}, locked_until = \${lockUntil}, attempts = attempts + 1
+    WHERE id = (
+      SELECT id FROM jobs
+      WHERE queue = \${queue} AND status = 'pending' AND scheduled_for <= \${now}
+      ORDER BY priority DESC, scheduled_for ASC
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+    )
+    RETURNING *
+  \`);
+
+  if (!job) return false;
+
+  const handler = handlers.get(job.type as string);
+  if (!handler) {
+    await db.update(jobs).set({ status: 'failed', errorMessage: \`No handler for type: \${job.type}\` }).where(eq(jobs.id, job.id as number));
+    return true;
+  }
+
+  try {
+    await handler(job.payload);
+    await db.update(jobs).set({ status: 'completed', completedAt: new Date(), lockToken: null }).where(eq(jobs.id, job.id as number));
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    const newStatus = (job.attempts as number) >= (job.max_attempts as number) ? 'dead' : 'pending';
+    await db.update(jobs).set({ status: newStatus, errorMessage: errorMsg, lockToken: null, lockedUntil: null }).where(eq(jobs.id, job.id as number));
+  }
+
+  return true;
+}
+
+// Start worker loop:
+// async function startWorker(queue: string, intervalMs = 1000) {
+//   while (true) {
+//     const processed = await pollAndProcess(queue);
+//     if (!processed) await new Promise(r => setTimeout(r, intervalMs));
+//   }
+// }`,
+  },
 ];
 
 // ============================================
@@ -4135,6 +5297,21 @@ export function getContextForGeneration(ctx: GenerationContext): string {
   if (ctx.fileRole === 'schema') {
     relevantSnippets.push(CODE_SNIPPETS.find(s => s.id === 'drizzle-crud')!);
     relevantSnippets.push(CODE_SNIPPETS.find(s => s.id === 'ts-type-safe-env')!);
+  }
+
+  if (ctx.features?.some(f => /webhook|callback|inbound/.test(f.toLowerCase()))) {
+    relevantSnippets.push(CODE_SNIPPETS.find(s => s.id === 'webhook-signature-verification')!);
+    relevantSnippets.push(CODE_SNIPPETS.find(s => s.id === 'idempotency-key-pattern')!);
+  }
+  if (ctx.features?.some(f => /queue|worker|background|async job|cron|scheduler/.test(f.toLowerCase()))) {
+    relevantSnippets.push(CODE_SNIPPETS.find(s => s.id === 'queue-worker-pattern')!);
+    relevantSnippets.push(CODE_SNIPPETS.find(s => s.id === 'retry-with-backoff')!);
+  }
+  if (ctx.features?.some(f => /retry|backoff|resilient|outbound api/.test(f.toLowerCase()))) {
+    relevantSnippets.push(CODE_SNIPPETS.find(s => s.id === 'retry-with-backoff')!);
+  }
+  if (ctx.features?.some(f => /idempoten|dedup|duplicate/.test(f.toLowerCase()))) {
+    relevantSnippets.push(CODE_SNIPPETS.find(s => s.id === 'idempotency-key-pattern')!);
   }
 
   const uniqueSnippets = Array.from(new Map(relevantSnippets.filter(Boolean).map(s => [s.id, s])).values()).slice(0, 4);
