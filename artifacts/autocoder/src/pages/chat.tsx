@@ -459,10 +459,8 @@ export default function Chat() {
                 if (data.validationSummary) {
                   setValidationSummary(data.validationSummary);
                 }
-                if (data.slmEnhanced) {
-                  setSlmEnhanced(true);
-                  setSlmStagesRun(data.slmStagesRun || []);
-                }
+                setSlmEnhanced(data.slmEnhanced || false);
+                setSlmStagesRun(data.slmStagesRun || []);
                 if (data.fileEdits && data.fileEdits.length > 0) {
                   setRecentEdits(data.fileEdits);
                   setTimeout(() => setRecentEdits([]), 10000);

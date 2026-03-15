@@ -148,60 +148,57 @@ export function mergeUnderstandingResults(ruleResult: any, slmResult: any): any 
 
   if (slmResult.implicitRequirements?.length > 0) {
     if (!merged.level1_intent) merged.level1_intent = {};
-    if (!merged.level1_intent.secondaryGoals) merged.level1_intent.secondaryGoals = [];
+    if (!merged.level1_intent.impliedFeatures) merged.level1_intent.impliedFeatures = [];
 
     for (const req of slmResult.implicitRequirements) {
-      if (!merged.level1_intent.secondaryGoals.includes(req)) {
-        merged.level1_intent.secondaryGoals.push(req);
+      if (!merged.level1_intent.impliedFeatures.includes(req)) {
+        merged.level1_intent.impliedFeatures.push(req);
       }
     }
   }
 
   if (slmResult.entities?.length > 0) {
-    if (!merged.level3_entities) merged.level3_entities = { entities: [] };
-    const existingNames = new Set(merged.level3_entities.entities.map((e: any) => e.name.toLowerCase()));
+    if (!merged.level3_entities) merged.level3_entities = { mentionedEntities: [], inferredEntities: [], relationships: [], domainEntities: [] };
+    if (!merged.level3_entities.inferredEntities) merged.level3_entities.inferredEntities = [];
+
+    const existingInferred = new Set(merged.level3_entities.inferredEntities.map((e: string) => e.toLowerCase()));
+    const existingMentioned = new Set((merged.level3_entities.mentionedEntities || []).map((e: string) => e.toLowerCase()));
 
     for (const entity of slmResult.entities) {
-      if (entity.isImplied && !existingNames.has(entity.name.toLowerCase())) {
-        merged.level3_entities.entities.push({
-          name: entity.name,
-          type: 'primary',
-          confidence: 0.7,
-          source: 'slm-inferred',
-          description: entity.description,
-        });
-        existingNames.add(entity.name.toLowerCase());
+      if (entity.isImplied && !existingInferred.has(entity.name.toLowerCase()) && !existingMentioned.has(entity.name.toLowerCase())) {
+        merged.level3_entities.inferredEntities.push(entity.name);
+        existingInferred.add(entity.name.toLowerCase());
       }
     }
   }
 
   if (slmResult.workflows?.length > 0) {
-    if (!merged.level4_workflows) merged.level4_workflows = { workflows: [] };
-    const existingWorkflows = new Set(merged.level4_workflows.workflows.map((w: any) => w.name.toLowerCase()));
+    if (!merged.level4_workflows) merged.level4_workflows = { mentionedWorkflows: [], inferredWorkflows: [], approvalFlows: [], statusTrackingNeeded: [] };
+    if (!merged.level4_workflows.inferredWorkflows) merged.level4_workflows.inferredWorkflows = [];
+
+    const existingWorkflows = new Set(merged.level4_workflows.inferredWorkflows.map((w: any) => (w.name || '').toLowerCase()));
 
     for (const workflow of slmResult.workflows) {
       if (!existingWorkflows.has(workflow.name.toLowerCase())) {
-        merged.level4_workflows.workflows.push({
+        merged.level4_workflows.inferredWorkflows.push({
           name: workflow.name,
-          steps: workflow.steps || [],
-          trigger: workflow.trigger || 'user-action',
-          source: 'slm-inferred',
+          entity: workflow.name,
+          states: workflow.steps || [],
+          transitions: [],
         });
+        existingWorkflows.add(workflow.name.toLowerCase());
       }
     }
   }
 
   if (slmResult.roles?.length > 0) {
-    if (!merged.level5_roles) merged.level5_roles = { roles: [] };
-    const existingRoles = new Set(merged.level5_roles.roles.map((r: any) => r.name.toLowerCase()));
+    if (!merged.level5_clarification) merged.level5_clarification = {};
+    if (!merged.level5_clarification.assumptions) merged.level5_clarification.assumptions = [];
 
     for (const role of slmResult.roles) {
-      if (!existingRoles.has(role.name.toLowerCase())) {
-        merged.level5_roles.roles.push({
-          name: role.name,
-          permissions: role.permissions || [],
-          source: 'slm-inferred',
-        });
+      const assumption = `User role "${role.name}" with permissions: ${(role.permissions || []).join(', ')}`;
+      if (!merged.level5_clarification.assumptions.includes(assumption)) {
+        merged.level5_clarification.assumptions.push(assumption);
       }
     }
   }
