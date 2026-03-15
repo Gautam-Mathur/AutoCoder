@@ -472,7 +472,23 @@ export default function Chat() {
               if (data.type === 'thinking' && data.step) {
                 setStreamingThinkingSteps(prev => [...prev, data.step]);
                 if (data.step.label) {
-                  setGenerationStage(data.step.label);
+                  const stageMap: Record<string, string> = {
+                    'understanding': 'Understanding',
+                    'analyzing': 'Understanding',
+                    'planning': 'Schema',
+                    'schema': 'Schema',
+                    'designing': 'Architecture',
+                    'architecture': 'Architecture',
+                    'generating': 'Code',
+                    'coding': 'Code',
+                    'writing': 'Code',
+                    'reviewing': 'Quality',
+                    'quality': 'Quality',
+                    'validating': 'Quality',
+                  };
+                  const raw = data.step.label.toLowerCase();
+                  const canonical = Object.entries(stageMap).find(([k]) => raw.includes(k))?.[1] || data.step.label;
+                  setGenerationStage(canonical);
                 }
                 continue;
               }
@@ -1105,8 +1121,22 @@ export default function Chat() {
               <PreviewPanel
                 conversationId={activeConversationId}
                 onRequestFix={handleRequestFix}
-                onRegenerateFile={(filePath) => {
+                onRegenerateFile={async (filePath) => {
                   if (!activeConversationId) return;
+                  try {
+                    const res = await fetch(`/api/conversations/${activeConversationId}/regenerate-file`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ filePath }),
+                    });
+                    if (res.ok) {
+                      const data = await res.json();
+                      if (data.prompt) {
+                        handleSendMessage(data.prompt);
+                        return;
+                      }
+                    }
+                  } catch {}
                   const prompt = `Please regenerate the file "${filePath}" while keeping all other project files intact. Maintain the same interfaces, exports, and integration points. Improve the implementation quality.`;
                   handleSendMessage(prompt);
                 }}
