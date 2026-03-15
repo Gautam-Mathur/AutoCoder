@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "exportedAt": "2026-03-15T16:48:56.004Z",
+  "exportedAt": "2026-03-15T18:47:52.706Z",
   "patterns": [
     {
       "patternType": "entity-structure",
@@ -197,38 +197,38 @@
       "reliability": 1
     },
     {
-      "id": 7,
+      "id": 2,
       "patternType": "entity-structure",
-      "domainId": "portfolio",
+      "domainId": "project-management",
       "entityType": "Project",
       "patternKey": "entity-project",
       "patternValue": {
         "fieldTypes": {
           "id": "serial (auto-increment)",
           "name": "text",
+          "slug": "text",
           "tags": "string[]",
+          "title": "text",
           "budget": "number",
           "status": "enum(published,draft)",
           "endDate": "date",
+          "liveUrl": "text",
           "ownerId": "integer",
+          "category": "text",
           "duration": "text",
+          "featured": "boolean",
+          "imageUrl": "text",
           "priority": "enum:low,medium,high,critical",
           "progress": "number",
           "createdAt": "datetime",
+          "githubUrl": "text",
+          "sortOrder": "integer",
           "startDate": "date",
           "taskCount": "text",
+          "techStack": "text[]",
           "description": "text",
           "milestoneCount": "text",
-          "title": "text",
-          "slug": "text",
-          "longDescription": "text",
-          "imageUrl": "text",
-          "liveUrl": "text",
-          "githubUrl": "text",
-          "techStack": "text[]",
-          "category": "text",
-          "featured": "boolean",
-          "sortOrder": "integer"
+          "longDescription": "text"
         },
         "recommended": [
           "id",
@@ -573,7 +573,7 @@
           "upcoming-deadlines"
         ]
       },
-      "successCount": 9,
+      "successCount": 10,
       "failureCount": 0,
       "reliability": 1
     },
@@ -642,7 +642,7 @@
       "patternType": "tech-choice",
       "patternKey": "file-structure-general",
       "patternValue": {
-        "fileCount": 63,
+        "fileCount": 75,
         "recentPaths": [
           "src/lib/utils.ts",
           "src/lib/queryClient.ts",
@@ -664,6 +664,7 @@
           "src/components/search-bar.tsx",
           "src/components/empty-state.tsx",
           "src/components/status-badge.tsx",
+          "src/components/kpi-card.tsx",
           "package.json",
           "index.html",
           "src/main.tsx",
@@ -672,12 +673,11 @@
           "postcss.config.js",
           "tsconfig.json",
           "tsconfig.node.json",
-          "src/index.css",
-          "shared/schema.ts"
+          "src/index.css"
         ],
         "qualityScore": 90
       },
-      "successCount": 10,
+      "successCount": 11,
       "failureCount": 0,
       "reliability": 1
     },
@@ -2620,7 +2620,7 @@
           "paySlipCount"
         ]
       },
-      "successCount": 2,
+      "successCount": 4,
       "failureCount": 0,
       "reliability": 1
     },
@@ -2648,7 +2648,7 @@
           "jobPostingCount"
         ]
       },
-      "successCount": 2,
+      "successCount": 4,
       "failureCount": 0,
       "reliability": 1
     },
@@ -2682,7 +2682,7 @@
           "duration"
         ]
       },
-      "successCount": 2,
+      "successCount": 4,
       "failureCount": 0,
       "reliability": 1
     },
@@ -2710,7 +2710,7 @@
           "remaining"
         ]
       },
-      "successCount": 2,
+      "successCount": 4,
       "failureCount": 0,
       "reliability": 1
     },
@@ -2742,7 +2742,7 @@
           "paySlipCount"
         ]
       },
-      "successCount": 2,
+      "successCount": 4,
       "failureCount": 0,
       "reliability": 1
     },
@@ -2772,7 +2772,7 @@
           "netPay"
         ]
       },
-      "successCount": 2,
+      "successCount": 4,
       "failureCount": 0,
       "reliability": 1
     },
@@ -2884,7 +2884,7 @@
           }
         ]
       },
-      "successCount": 2,
+      "successCount": 4,
       "failureCount": 0,
       "reliability": 1
     },
@@ -2960,7 +2960,7 @@
           "dashboard-widget view"
         ]
       },
-      "successCount": 1,
+      "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
@@ -2978,7 +2978,7 @@
           "performance"
         ]
       },
-      "successCount": 1,
+      "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
@@ -2997,7 +2997,7 @@
           "form-wizard view"
         ]
       },
-      "successCount": 1,
+      "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
@@ -3013,7 +3013,7 @@
           "comment"
         ]
       },
-      "successCount": 1,
+      "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
@@ -3031,7 +3031,7 @@
           "dashboard-widget view"
         ]
       },
-      "successCount": 1,
+      "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
@@ -3047,7 +3047,7 @@
           "download-pdf"
         ]
       },
-      "successCount": 1,
+      "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
@@ -3109,7 +3109,9 @@
           "Leave Management",
           "Payroll",
           "Recruitment",
-          "Dashboard"
+          "Dashboard",
+          "Inventory",
+          "Purchase Orders"
         ],
         "entities": [
           "Employee",
@@ -3119,9 +3121,13 @@
           "PayrollRun",
           "PaySlip",
           "JobPosting",
-          "Applicant"
+          "Applicant",
+          "Item",
+          "StockMovement",
+          "PurchaseOrder",
+          "Supplier"
         ],
-        "pageCount": 9,
+        "pageCount": 12,
         "relationships": {
           "PaySlip": [
             "belongsTo PayrollRun",
@@ -3145,34 +3151,16 @@
           ],
           "LeaveRequest": [
             "belongsTo Employee"
+          ],
+          "Item": [
+            "belongsTo Supplier"
+          ],
+          "StockMovement": [
+            "belongsTo Item"
+          ],
+          "PurchaseOrder": [
+            "belongsTo Supplier"
           ]
-        }
-      },
-      "successCount": 1,
-      "failureCount": 0,
-      "reliability": 1
-    },
-    {
-      "patternType": "entity-structure",
-      "entityType": "Skill",
-      "domainId": "portfolio",
-      "patternKey": "entity-skill",
-      "patternValue": {
-        "recommended": [
-          "id",
-          "name",
-          "category",
-          "proficiency",
-          "iconUrl",
-          "sortOrder"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "name": "text",
-          "category": "enum(frontend,backend,database,devops,design,other)",
-          "proficiency": "integer",
-          "iconUrl": "text",
-          "sortOrder": "integer"
         }
       },
       "successCount": 2,
@@ -3180,11 +3168,51 @@
       "reliability": 1
     },
     {
+      "id": 140,
       "patternType": "entity-structure",
-      "entityType": "Experience",
       "domainId": "portfolio",
+      "entityType": "Skill",
+      "patternKey": "entity-skill",
+      "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "iconUrl": "text",
+          "category": "enum(frontend,backend,database,devops,design,other)",
+          "sortOrder": "integer",
+          "proficiency": "integer"
+        },
+        "recommended": [
+          "id",
+          "name",
+          "category",
+          "proficiency",
+          "iconUrl",
+          "sortOrder"
+        ]
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "id": 143,
+      "patternType": "entity-structure",
+      "domainId": "portfolio",
+      "entityType": "Experience",
       "patternKey": "entity-experience",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "role": "text",
+          "company": "text",
+          "current": "boolean",
+          "endDate": "date",
+          "duration": "text",
+          "location": "text",
+          "startDate": "date",
+          "description": "text"
+        },
         "recommended": [
           "id",
           "company",
@@ -3195,29 +3223,34 @@
           "current",
           "location",
           "duration"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "company": "text",
-          "role": "text",
-          "description": "text",
-          "startDate": "date",
-          "endDate": "date",
-          "current": "boolean",
-          "location": "text",
-          "duration": "text"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 142,
       "patternType": "entity-structure",
-      "entityType": "ContactMessage",
       "domainId": "portfolio",
+      "entityType": "ContactMessage",
       "patternKey": "entity-contactmessage",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "read": "boolean",
+          "tags": "string[]",
+          "email": "text",
+          "phone": "string",
+          "source": "enum:website,referral,social,event,cold-call,other",
+          "status": "enum:new,contacted,qualified,unqualified",
+          "company": "string",
+          "message": "text",
+          "subject": "text",
+          "createdAt": "datetime",
+          "lastContactedAt": "datetime"
+        },
         "recommended": [
           "id",
           "name",
@@ -3232,28 +3265,14 @@
           "lastContactedAt",
           "status",
           "createdAt"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "name": "text",
-          "email": "text",
-          "subject": "text",
-          "message": "text",
-          "read": "boolean",
-          "phone": "string",
-          "company": "string",
-          "source": "enum:website,referral,social,event,cold-call,other",
-          "tags": "string[]",
-          "lastContactedAt": "datetime",
-          "status": "enum:new,contacted,qualified,unqualified",
-          "createdAt": "datetime"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 139,
       "patternType": "page-structure",
       "patternKey": "page-layout-about",
       "patternValue": {
@@ -3272,6 +3291,7 @@
       "reliability": 1
     },
     {
+      "id": 146,
       "patternType": "page-structure",
       "patternKey": "page-layout-contact",
       "patternValue": {
@@ -3289,6 +3309,7 @@
       "reliability": 1
     },
     {
+      "id": 145,
       "patternType": "page-structure",
       "patternKey": "page-layout-blog",
       "patternValue": {
@@ -3305,6 +3326,7 @@
       "reliability": 1
     },
     {
+      "id": 136,
       "patternType": "page-structure",
       "patternKey": "page-layout-home",
       "patternValue": {
@@ -3321,23 +3343,11 @@
       "reliability": 1
     },
     {
+      "id": 144,
       "patternType": "domain-mapping",
       "domainId": "portfolio",
       "patternKey": "domain-portfolio",
       "patternValue": {
-        "entities": [
-          "Project",
-          "Skill",
-          "Experience",
-          "ContactMessage"
-        ],
-        "modules": [
-          "Projects Showcase",
-          "About & Skills",
-          "Contact",
-          "Blog",
-          "Home"
-        ],
         "kpis": [
           "Projects Showcased",
           "Contact Messages",
@@ -3347,6 +3357,19 @@
           "Skills Listed",
           "Years Experience",
           "Messages Received"
+        ],
+        "modules": [
+          "Projects Showcase",
+          "About & Skills",
+          "Contact",
+          "Blog",
+          "Home"
+        ],
+        "entities": [
+          "Project",
+          "Skill",
+          "Experience",
+          "ContactMessage"
         ],
         "pageCount": 6,
         "relationships": {
@@ -3358,6 +3381,310 @@
       "successCount": 1,
       "failureCount": 0,
       "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "Item",
+      "domainId": "hr",
+      "patternKey": "entity-item",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "name",
+          "sku",
+          "category",
+          "quantity",
+          "unit",
+          "minStock",
+          "maxStock",
+          "unitCost",
+          "location",
+          "supplierId",
+          "description",
+          "price",
+          "compareAtPrice",
+          "cost",
+          "imageUrl",
+          "weight",
+          "tags",
+          "status",
+          "createdAt",
+          "stockMovementCount"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "sku": "text",
+          "category": "text",
+          "quantity": "integer",
+          "unit": "text",
+          "minStock": "integer",
+          "maxStock": "integer",
+          "unitCost": "integer",
+          "location": "text",
+          "supplierId": "integer",
+          "description": "string",
+          "price": "number",
+          "compareAtPrice": "number",
+          "cost": "number",
+          "imageUrl": "string",
+          "weight": "number",
+          "tags": "string[]",
+          "status": "enum:active,draft,archived,out-of-stock",
+          "createdAt": "datetime",
+          "stockMovementCount": "text"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "StockMovement",
+      "domainId": "hr",
+      "patternKey": "entity-stockmovement",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "itemId",
+          "type",
+          "quantity",
+          "reference",
+          "date",
+          "notes"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "itemId": "integer",
+          "type": "enum(inbound,outbound,transfer,adjustment)",
+          "quantity": "integer",
+          "reference": "text",
+          "date": "date",
+          "notes": "text"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "PurchaseOrder",
+      "domainId": "hr",
+      "patternKey": "entity-purchaseorder",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "poNumber",
+          "supplierId",
+          "status",
+          "totalAmount",
+          "orderDate",
+          "expectedDate",
+          "orderNumber",
+          "subtotal",
+          "taxAmount",
+          "shippingCost",
+          "total",
+          "currency",
+          "shippingAddress",
+          "trackingNumber",
+          "notes",
+          "createdAt",
+          "grandTotal"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "poNumber": "text",
+          "supplierId": "integer",
+          "status": "enum(draft,ordered,shipped,received,cancelled)",
+          "totalAmount": "integer",
+          "orderDate": "date",
+          "expectedDate": "date",
+          "orderNumber": "string",
+          "subtotal": "number",
+          "taxAmount": "number",
+          "shippingCost": "number",
+          "total": "number",
+          "currency": "string",
+          "shippingAddress": "string",
+          "trackingNumber": "string",
+          "notes": "string",
+          "createdAt": "datetime",
+          "grandTotal": "text"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "Supplier",
+      "domainId": "hr",
+      "patternKey": "entity-supplier",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "name",
+          "contactName",
+          "email",
+          "phone",
+          "address",
+          "status",
+          "website",
+          "category",
+          "rating",
+          "paymentTerms",
+          "createdAt",
+          "itemCount",
+          "purchaseOrderCount"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "contactName": "text",
+          "email": "text",
+          "phone": "text",
+          "address": "text",
+          "status": "enum(active,inactive)",
+          "website": "string",
+          "category": "string",
+          "rating": "number",
+          "paymentTerms": "string",
+          "createdAt": "datetime",
+          "itemCount": "text",
+          "purchaseOrderCount": "text"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "workflow-design",
+      "patternKey": "workflow-purchaseorder",
+      "patternValue": {
+        "states": [
+          "draft",
+          "pending",
+          "approved",
+          "in-progress",
+          "completed",
+          "cancelled"
+        ],
+        "commonTransitions": [
+          {
+            "to": "pending",
+            "from": "draft",
+            "action": "Submit"
+          },
+          {
+            "to": "approved",
+            "from": "pending",
+            "action": "Approve"
+          },
+          {
+            "to": "in-progress",
+            "from": "approved",
+            "action": "Start"
+          },
+          {
+            "to": "completed",
+            "from": "in-progress",
+            "action": "Complete"
+          }
+        ]
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-items",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "search",
+          "category-filter",
+          "low-stock-alert",
+          "add-item",
+          "barcode-scan",
+          "card-grid view",
+          "form-wizard view",
+          "dashboard-widget view"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-item-detail",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "stock-chart",
+          "movement-history",
+          "supplier-info",
+          "reorder-settings"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-stock-movements",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "date-filter",
+          "type-filter",
+          "record-movement"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-purchase-orders",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "search",
+          "status-filter",
+          "supplier-filter",
+          "create-po",
+          "kanban view",
+          "form-wizard view",
+          "dashboard-widget view"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-suppliers",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "search",
+          "add-supplier",
+          "order-history"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
     }
   ],
   "preferences": [
@@ -3365,12 +3692,12 @@
       "key": "quality-score-general",
       "value": "91",
       "category": "architecture",
-      "frequency": 10
+      "frequency": 11
     }
   ],
   "stats": {
-    "totalPatterns": 115,
-    "reliablePatterns": 115,
+    "totalPatterns": 125,
+    "reliablePatterns": 125,
     "totalPreferences": 1
   }
 }

@@ -5,6 +5,7 @@
  * and getContextForGeneration() — the key function that injects relevant
  * knowledge into LLM prompts to dramatically improve output quality.
  */
+import { STACK_CONCEPTS, STACK_CODE_SNIPPETS, STACK_BEST_PRACTICES, STACK_ANTI_PATTERNS } from './stack-knowledge-base.js';
 
 
 
@@ -5515,6 +5516,11 @@ export function getContextForGeneration(ctx: GenerationContext): string {
     'personal-finance': ['drizzle-schema-personal-finance', 'react-data-table'],
     'hr': ['drizzle-schema-hr-management', 'react-data-table', 'api-error-handling'],
     'hr-management': ['drizzle-schema-hr-management', 'react-data-table'],
+    'mern': ['mern-mongoose-schema', 'mern-express-crud', 'mern-jwt-auth-middleware', 'mern-react-query-hooks'],
+    'django': ['django-model-advanced', 'django-drf-serializer', 'django-drf-viewset', 'django-settings-split'],
+    'spring-boot': ['spring-jpa-entity', 'spring-service-transactional', 'spring-rest-controller', 'spring-security-jwt-config'],
+    'dotnet': ['dotnet-controller-crud', 'dotnet-ef-core-dbcontext', 'dotnet-service-repository', 'dotnet-program-setup'],
+    'go-react': ['go-gin-crud', 'go-gorm-model-repo', 'go-jwt-middleware', 'go-app-setup'],
   };
 
   if (ctx.domain) {
@@ -30095,3 +30101,12 @@ BEST_PRACTICES.push(...EXPANDED_BEST_PRACTICES_7);
 BEST_PRACTICES.push(...EXPANDED_BEST_PRACTICES_8);
 BEST_PRACTICES.push(...EXPANDED_BEST_PRACTICES_9);
 BEST_PRACTICES.push(...EXPANDED_BEST_PRACTICES_10);
+
+// ============================================
+// Merge stack knowledge base content
+// ============================================
+
+Object.assign(CONCEPTS, STACK_CONCEPTS);
+CODE_SNIPPETS.push(...STACK_CODE_SNIPPETS);
+BEST_PRACTICES.push(...STACK_BEST_PRACTICES);
+ANTI_PATTERNS.push(...STACK_ANTI_PATTERNS);

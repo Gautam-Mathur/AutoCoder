@@ -9944,3 +9944,120 @@ func (r *UserRepository) ExistsByEmail(ctx context.Context, email string) (bool,
 ];
 
 STACK_CODE_SNIPPETS.push(...EXTENDED_STACK_SNIPPETS_3);
+
+// ============================================
+// Final Go+React supplemental best practices
+// ============================================
+
+const FINAL_GO_REACT_PRACTICES: BestPractice[] = [
+  {
+    id: 'go-react-bp-table-driven',
+    title: 'Table-Driven Tests in Go',
+    category: 'testing',
+    description: 'Use table-driven tests to cover multiple cases concisely and reduce repetition.',
+    do: [
+      'Define a slice of structs containing inputs and expected outputs',
+      'Loop over cases with t.Run() for named subtests',
+      'Use t.Parallel() in subtests when tests are independent',
+      'Name each case descriptively for clear failure messages',
+    ],
+    dont: [
+      'Write one test function per input — table-driven is more maintainable',
+      'Ignore subtests — t.Run gives better failure context',
+      'Share mutable state across table cases',
+    ],
+    languages: ['go'],
+  },
+  {
+    id: 'go-react-bp-embed-migrations',
+    title: 'Embed SQL Migrations with go:embed',
+    category: 'database',
+    description: 'Use go:embed to ship SQL migration files inside the binary for zero-dependency deployments.',
+    do: [
+      'Place migration files in a migrations/ subdirectory',
+      'Use //go:embed migrations/*.sql to embed all files',
+      'Run migrations at startup before accepting HTTP traffic',
+      'Use a migration library (golang-migrate) with the embedded FS',
+    ],
+    dont: [
+      'Rely on external files at runtime — they may not exist in containerised environments',
+      'Run migrations in parallel — execute them sequentially',
+      'Skip idempotency — every migration must be safe to re-run or use version tracking',
+    ],
+    languages: ['go'],
+  },
+  {
+    id: 'go-react-bp-signal-shutdown',
+    title: 'Graceful Shutdown on OS Signal',
+    category: 'deployment',
+    description: 'Listen for SIGINT/SIGTERM to drain in-flight requests before the process exits.',
+    do: [
+      'Use signal.NotifyContext or signal.Notify with a buffered channel',
+      'Give in-flight requests a deadline (e.g. 10s) via context.WithTimeout',
+      'Close database connections and flush caches after the HTTP server shuts down',
+      'Log the shutdown reason so operators know whether it was graceful',
+    ],
+    dont: [
+      'Call os.Exit(0) directly — it skips all deferred cleanup',
+      'Set an infinite shutdown timeout — set a hard ceiling',
+      'Ignore the error returned by server.Shutdown()',
+    ],
+    languages: ['go'],
+  },
+];
+
+STACK_BEST_PRACTICES.push(...FINAL_GO_REACT_PRACTICES);
+
+// ============================================
+// Final anti-pattern entries
+// ============================================
+
+const FINAL_ANTI_PATTERNS_END: AntiPattern[] = [
+  {
+    id: 'go-naked-panic',
+    name: 'Naked Panic in HTTP Handlers',
+    description: 'Calling panic() inside an HTTP handler to signal errors.',
+    whyBad: 'A panic propagates up the call stack and, without a recovery middleware, crashes the entire server process — dropping all in-flight requests.',
+    fix: 'Return an error from the handler and write an appropriate HTTP error response. Add a recovery middleware (e.g. gin.Recovery()) that catches panics at the router level and returns 500.',
+    severity: 'critical',
+    badExample: `func handler(w http.ResponseWriter, r *http.Request) {
+  data, err := getUser(r.Context(), 1)
+  if err != nil { panic(err) }
+  json.NewEncoder(w).Encode(data)
+}`,
+    goodExample: `func handler(w http.ResponseWriter, r *http.Request) {
+  data, err := getUser(r.Context(), 1)
+  if err != nil {
+    http.Error(w, "internal server error", http.StatusInternalServerError)
+    return
+  }
+  json.NewEncoder(w).Encode(data)
+}`,
+    tags: ['go', 'panic', 'reliability', 'http'],
+  },
+  {
+    id: 'go-goroutine-leak',
+    name: 'Goroutine Leak from Abandoned Channels',
+    description: 'Spawning goroutines that block on a channel no receiver will ever read.',
+    whyBad: 'Leaked goroutines hold memory and open resources (DB connections, file handles) for the lifetime of the process, causing steady memory growth and eventual OOM.',
+    fix: 'Always pair every goroutine with a cancel mechanism (context cancellation, a done channel, or a timeout). Use goleak in tests to detect leaks.',
+    severity: 'high',
+    badExample: `func process(items []int) {
+  ch := make(chan int)
+  go func() { ch <- heavyWork(items) }() // nobody reads ch
+}`,
+    goodExample: `func process(ctx context.Context, items []int) (int, error) {
+  ch := make(chan int, 1)
+  go func() { ch <- heavyWork(items) }()
+  select {
+  case result := <-ch:
+    return result, nil
+  case <-ctx.Done():
+    return 0, ctx.Err()
+  }
+}`,
+    tags: ['go', 'goroutine', 'memory', 'concurrency'],
+  },
+];
+
+STACK_ANTI_PATTERNS.push(...FINAL_ANTI_PATTERNS_END);
