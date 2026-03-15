@@ -749,6 +749,1246 @@ function withCache<T>(key: string, ttlMs: number, fn: () => Promise<T>): Promise
 };
 
 // ============================================
+// Entity Archetype Registry
+// Maps real-world entity names → structured field/relationship guidance
+// Used by NLU, schema generation, and code-gen stages
+// ============================================
+
+export interface EntityArchetype {
+  id: string;
+  name: string;
+  /** Other names this entity might be called */
+  aliases: string[];
+  domain: string;
+  description: string;
+  /** Canonical traits this entity has */
+  traits: Array<'pageable' | 'auditable' | 'searchable' | 'workflowable' | 'taggable' | 'attachable' | 'commentable' | 'assignable' | 'schedulable' | 'hierarchical' | 'versioned' | 'soft-deletable'>;
+  /** Suggested DB columns */
+  suggestedFields: Array<{ name: string; type: string; nullable: boolean; description: string }>;
+  /** Suggested FK relationships */
+  relatedEntities: string[];
+  /** Recommended DB indexes */
+  suggestedIndexes: string[];
+  /** State machine definition if applicable */
+  defaultWorkflow?: { states: string[]; transitions: Array<{ from: string; to: string; action: string }> };
+  /** Typical API endpoints for this entity */
+  typicalEndpoints: string[];
+}
+
+const ENTITY_ARCHETYPES: Record<string, EntityArchetype> = {
+
+  // ── Security Domain ──────────────────────────────────────────────────────
+
+  vulnerability: {
+    id: 'vulnerability',
+    name: 'Vulnerability / CVE',
+    aliases: ['cve', 'vuln', 'security finding', 'finding', 'weakness', 'flaw', 'advisory'],
+    domain: 'security',
+    description: 'A security vulnerability or CVE record tracked in a security program.',
+    traits: ['pageable', 'auditable', 'searchable', 'workflowable', 'taggable', 'assignable', 'soft-deletable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'cveId', type: 'varchar(20)', nullable: true, description: 'CVE identifier e.g. CVE-2024-1234' },
+      { name: 'title', type: 'text not null', nullable: false, description: 'Short vulnerability title' },
+      { name: 'description', type: 'text not null', nullable: false, description: 'Detailed description' },
+      { name: 'severity', type: "varchar(10) not null default 'medium'", nullable: false, description: 'critical|high|medium|low|info' },
+      { name: 'cvssScore', type: 'numeric(4,1)', nullable: true, description: 'CVSS v3 base score 0.0-10.0' },
+      { name: 'cvssVector', type: 'varchar(100)', nullable: true, description: 'CVSS vector string' },
+      { name: 'status', type: "varchar(20) not null default 'open'", nullable: false, description: 'open|in_progress|remediated|accepted|false_positive' },
+      { name: 'affectedAsset', type: 'text', nullable: true, description: 'System/component affected' },
+      { name: 'affectedVersion', type: 'varchar(50)', nullable: true, description: 'Version range affected' },
+      { name: 'fixedVersion', type: 'varchar(50)', nullable: true, description: 'Version that fixes it' },
+      { name: 'discoveredAt', type: 'timestamptz', nullable: true, description: 'When discovered' },
+      { name: 'dueAt', type: 'timestamptz', nullable: true, description: 'Remediation deadline based on severity SLA' },
+      { name: 'remediatedAt', type: 'timestamptz', nullable: true, description: 'When fixed' },
+      { name: 'assigneeId', type: 'integer references users(id)', nullable: true, description: 'Assigned engineer' },
+      { name: 'reporterId', type: 'integer references users(id)', nullable: true, description: 'Who reported/found it' },
+      { name: 'source', type: "varchar(50) not null default 'manual'", nullable: false, description: 'scanner|manual|pen-test|bug-bounty' },
+      { name: 'references', type: 'jsonb', nullable: true, description: 'Array of reference URLs' },
+      { name: 'tags', type: 'text[]', nullable: true, description: 'e.g. ["sqli","web","authentication"]' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Record creation' },
+      { name: 'updatedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Last update' },
+    ],
+    relatedEntities: ['user', 'asset', 'remediation', 'comment', 'attachment'],
+    suggestedIndexes: ['status', 'severity', 'cveId', 'assigneeId', 'dueAt', '(status, severity)', '(status, dueAt)'],
+    defaultWorkflow: {
+      states: ['open', 'in_progress', 'awaiting_verification', 'remediated', 'accepted', 'false_positive'],
+      transitions: [
+        { from: 'open', to: 'in_progress', action: 'assign' },
+        { from: 'in_progress', to: 'awaiting_verification', action: 'submit_fix' },
+        { from: 'awaiting_verification', to: 'remediated', action: 'verify' },
+        { from: 'awaiting_verification', to: 'in_progress', action: 'reject_fix' },
+        { from: 'open', to: 'accepted', action: 'accept_risk' },
+        { from: 'open', to: 'false_positive', action: 'mark_false_positive' },
+      ],
+    },
+    typicalEndpoints: [
+      'GET /vulnerabilities?status=open&severity=critical&page=1',
+      'GET /vulnerabilities/:id',
+      'POST /vulnerabilities',
+      'PATCH /vulnerabilities/:id',
+      'PATCH /vulnerabilities/:id/status',
+      'GET /vulnerabilities/stats (counts by severity/status)',
+    ],
+  },
+
+  risk: {
+    id: 'risk',
+    name: 'Risk',
+    aliases: ['risk', 'risk item', 'threat', 'exposure', 'hazard'],
+    domain: 'risk-management',
+    description: 'A tracked risk that could impact a project, system, or organization.',
+    traits: ['pageable', 'auditable', 'searchable', 'workflowable', 'assignable', 'soft-deletable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'title', type: 'text not null', nullable: false, description: 'Risk title' },
+      { name: 'description', type: 'text not null', nullable: false, description: 'Detailed description' },
+      { name: 'category', type: 'varchar(50)', nullable: true, description: 'technical|financial|operational|compliance|reputational' },
+      { name: 'likelihood', type: "varchar(10) not null default 'medium'", nullable: false, description: 'low|medium|high' },
+      { name: 'impact', type: "varchar(10) not null default 'medium'", nullable: false, description: 'low|medium|high|critical' },
+      { name: 'riskScore', type: 'integer', nullable: true, description: 'Computed: likelihood * impact (1-9)' },
+      { name: 'status', type: "varchar(20) not null default 'identified'", nullable: false, description: 'identified|assessing|mitigating|accepted|closed' },
+      { name: 'mitigation', type: 'text', nullable: true, description: 'Mitigation plan' },
+      { name: 'contingency', type: 'text', nullable: true, description: 'Contingency plan if risk materializes' },
+      { name: 'ownerId', type: 'integer references users(id)', nullable: true, description: 'Risk owner' },
+      { name: 'reviewDate', type: 'date', nullable: true, description: 'Next scheduled review' },
+      { name: 'closedAt', type: 'timestamptz', nullable: true, description: 'When risk was closed' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Creation time' },
+      { name: 'updatedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Last update' },
+    ],
+    relatedEntities: ['user', 'project', 'vulnerability', 'audit'],
+    suggestedIndexes: ['status', 'category', 'ownerId', 'riskScore DESC', '(status, riskScore)'],
+    defaultWorkflow: {
+      states: ['identified', 'assessing', 'mitigating', 'accepted', 'closed'],
+      transitions: [
+        { from: 'identified', to: 'assessing', action: 'begin_assessment' },
+        { from: 'assessing', to: 'mitigating', action: 'approve_mitigation' },
+        { from: 'assessing', to: 'accepted', action: 'accept_risk' },
+        { from: 'mitigating', to: 'closed', action: 'close' },
+        { from: 'accepted', to: 'closed', action: 'close' },
+      ],
+    },
+    typicalEndpoints: [
+      'GET /risks?status=identified&category=technical',
+      'GET /risks/:id',
+      'POST /risks',
+      'PATCH /risks/:id',
+      'GET /risks/heatmap (matrix view)',
+    ],
+  },
+
+  // ── Project Management Domain ────────────────────────────────────────────
+
+  deadline: {
+    id: 'deadline',
+    name: 'Deadline / Milestone',
+    aliases: ['deadline', 'milestone', 'due date', 'target date', 'delivery date', 'go-live'],
+    domain: 'project-management',
+    description: 'A time-bound project milestone or hard deadline.',
+    traits: ['pageable', 'auditable', 'searchable', 'workflowable', 'assignable', 'soft-deletable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'title', type: 'text not null', nullable: false, description: 'Milestone title' },
+      { name: 'description', type: 'text', nullable: true, description: 'Scope/deliverables description' },
+      { name: 'type', type: "varchar(20) not null default 'milestone'", nullable: false, description: 'deadline|milestone|sprint|release|phase' },
+      { name: 'dueAt', type: 'timestamptz not null', nullable: false, description: 'Deadline datetime' },
+      { name: 'status', type: "varchar(20) not null default 'upcoming'", nullable: false, description: 'upcoming|at_risk|overdue|complete|cancelled' },
+      { name: 'completedAt', type: 'timestamptz', nullable: true, description: 'Actual completion time' },
+      { name: 'projectId', type: 'integer references projects(id) on delete cascade', nullable: true, description: 'Parent project' },
+      { name: 'ownerId', type: 'integer references users(id)', nullable: true, description: 'Responsible person' },
+      { name: 'progress', type: 'integer not null default 0', nullable: false, description: 'Completion percentage 0-100' },
+      { name: 'isPublic', type: 'boolean not null default false', nullable: false, description: 'Visible to stakeholders' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Creation time' },
+      { name: 'updatedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Last update' },
+    ],
+    relatedEntities: ['project', 'user', 'task', 'sprint'],
+    suggestedIndexes: ['projectId', 'ownerId', 'dueAt', 'status', '(projectId, dueAt)', '(status, dueAt)'],
+    defaultWorkflow: {
+      states: ['upcoming', 'at_risk', 'overdue', 'complete', 'cancelled'],
+      transitions: [
+        { from: 'upcoming', to: 'at_risk', action: 'flag_at_risk' },
+        { from: 'upcoming', to: 'complete', action: 'mark_complete' },
+        { from: 'at_risk', to: 'overdue', action: 'pass_deadline' },
+        { from: 'at_risk', to: 'complete', action: 'mark_complete' },
+        { from: 'overdue', to: 'complete', action: 'mark_complete' },
+        { from: 'upcoming', to: 'cancelled', action: 'cancel' },
+      ],
+    },
+    typicalEndpoints: [
+      'GET /milestones?projectId=:id&status=upcoming',
+      'GET /milestones/:id',
+      'POST /milestones',
+      'PATCH /milestones/:id',
+      'PATCH /milestones/:id/complete',
+    ],
+  },
+
+  task: {
+    id: 'task',
+    name: 'Task / Ticket',
+    aliases: ['task', 'ticket', 'issue', 'work item', 'story', 'to-do', 'todo', 'action item'],
+    domain: 'project-management',
+    description: 'A unit of work tracked in a project management system.',
+    traits: ['pageable', 'auditable', 'searchable', 'workflowable', 'taggable', 'assignable', 'commentable', 'attachable', 'soft-deletable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'number', type: 'integer not null', nullable: false, description: 'Human-readable ticket number per project' },
+      { name: 'title', type: 'text not null', nullable: false, description: 'Task title' },
+      { name: 'description', type: 'text', nullable: true, description: 'Detailed description (markdown)' },
+      { name: 'type', type: "varchar(20) not null default 'task'", nullable: false, description: 'task|bug|feature|story|epic|spike' },
+      { name: 'status', type: "varchar(20) not null default 'todo'", nullable: false, description: 'todo|in_progress|in_review|done|cancelled' },
+      { name: 'priority', type: "varchar(10) not null default 'medium'", nullable: false, description: 'low|medium|high|urgent' },
+      { name: 'storyPoints', type: 'integer', nullable: true, description: 'Effort estimate in story points' },
+      { name: 'dueAt', type: 'date', nullable: true, description: 'Due date' },
+      { name: 'completedAt', type: 'timestamptz', nullable: true, description: 'Completion time' },
+      { name: 'projectId', type: 'integer references projects(id) on delete cascade', nullable: false, description: 'Parent project' },
+      { name: 'milestoneId', type: 'integer references milestones(id)', nullable: true, description: 'Linked milestone' },
+      { name: 'sprintId', type: 'integer references sprints(id)', nullable: true, description: 'Current sprint' },
+      { name: 'assigneeId', type: 'integer references users(id)', nullable: true, description: 'Assigned to' },
+      { name: 'reporterId', type: 'integer references users(id)', nullable: false, description: 'Created by' },
+      { name: 'parentId', type: 'integer references tasks(id)', nullable: true, description: 'Parent task (for subtasks)' },
+      { name: 'labels', type: 'text[]', nullable: true, description: 'Labels/tags' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Creation time' },
+      { name: 'updatedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Last update' },
+    ],
+    relatedEntities: ['project', 'user', 'milestone', 'sprint', 'comment', 'attachment'],
+    suggestedIndexes: ['(projectId, number)', 'assigneeId', 'sprintId', 'milestoneId', 'status', '(projectId, status)', '(assigneeId, status)'],
+    defaultWorkflow: {
+      states: ['todo', 'in_progress', 'in_review', 'done', 'cancelled'],
+      transitions: [
+        { from: 'todo', to: 'in_progress', action: 'start' },
+        { from: 'in_progress', to: 'in_review', action: 'submit_review' },
+        { from: 'in_review', to: 'done', action: 'approve' },
+        { from: 'in_review', to: 'in_progress', action: 'request_changes' },
+        { from: 'todo', to: 'cancelled', action: 'cancel' },
+        { from: 'in_progress', to: 'cancelled', action: 'cancel' },
+      ],
+    },
+    typicalEndpoints: [
+      'GET /projects/:id/tasks?status=in_progress&assigneeId=me',
+      'POST /projects/:id/tasks',
+      'PATCH /tasks/:id',
+      'PATCH /tasks/:id/assign',
+      'GET /tasks/:id/comments',
+    ],
+  },
+
+  sprint: {
+    id: 'sprint',
+    name: 'Sprint / Iteration',
+    aliases: ['sprint', 'iteration', 'cycle', 'period'],
+    domain: 'project-management',
+    description: 'A time-boxed development iteration (Scrum/Agile).',
+    traits: ['pageable', 'auditable', 'searchable', 'workflowable', 'soft-deletable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'name', type: 'varchar(100) not null', nullable: false, description: 'Sprint name e.g. Sprint 12' },
+      { name: 'goal', type: 'text', nullable: true, description: 'Sprint goal statement' },
+      { name: 'startDate', type: 'date not null', nullable: false, description: 'Start date' },
+      { name: 'endDate', type: 'date not null', nullable: false, description: 'End date' },
+      { name: 'status', type: "varchar(20) not null default 'planning'", nullable: false, description: 'planning|active|completed|cancelled' },
+      { name: 'velocity', type: 'integer', nullable: true, description: 'Story points completed' },
+      { name: 'plannedPoints', type: 'integer', nullable: true, description: 'Story points planned' },
+      { name: 'projectId', type: 'integer references projects(id) on delete cascade', nullable: false, description: 'Parent project' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Creation time' },
+    ],
+    relatedEntities: ['project', 'task'],
+    suggestedIndexes: ['projectId', 'status', '(projectId, status)', 'startDate', 'endDate'],
+    defaultWorkflow: {
+      states: ['planning', 'active', 'completed', 'cancelled'],
+      transitions: [
+        { from: 'planning', to: 'active', action: 'start_sprint' },
+        { from: 'active', to: 'completed', action: 'complete_sprint' },
+        { from: 'planning', to: 'cancelled', action: 'cancel' },
+      ],
+    },
+    typicalEndpoints: [
+      'GET /projects/:id/sprints',
+      'POST /projects/:id/sprints',
+      'PATCH /sprints/:id/start',
+      'PATCH /sprints/:id/complete',
+    ],
+  },
+
+  // ── Finance Domain ───────────────────────────────────────────────────────
+
+  invoice: {
+    id: 'invoice',
+    name: 'Invoice',
+    aliases: ['invoice', 'bill', 'statement', 'receipt'],
+    domain: 'finance',
+    description: 'A financial invoice sent to a customer for goods or services.',
+    traits: ['pageable', 'auditable', 'searchable', 'workflowable', 'soft-deletable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'invoiceNumber', type: 'varchar(50) not null unique', nullable: false, description: 'Human-readable number e.g. INV-2024-0001' },
+      { name: 'status', type: "varchar(20) not null default 'draft'", nullable: false, description: 'draft|sent|viewed|paid|overdue|cancelled|refunded' },
+      { name: 'customerId', type: 'integer references customers(id)', nullable: false, description: 'Bill-to customer' },
+      { name: 'subtotalCents', type: 'integer not null default 0', nullable: false, description: 'Subtotal in smallest currency unit' },
+      { name: 'taxCents', type: 'integer not null default 0', nullable: false, description: 'Tax amount' },
+      { name: 'discountCents', type: 'integer not null default 0', nullable: false, description: 'Discount applied' },
+      { name: 'totalCents', type: 'integer not null default 0', nullable: false, description: 'Final total' },
+      { name: 'currency', type: "char(3) not null default 'USD'", nullable: false, description: 'ISO 4217 currency code' },
+      { name: 'issuedAt', type: 'date not null', nullable: false, description: 'Invoice date' },
+      { name: 'dueAt', type: 'date not null', nullable: false, description: 'Payment due date' },
+      { name: 'paidAt', type: 'timestamptz', nullable: true, description: 'When payment was received' },
+      { name: 'notes', type: 'text', nullable: true, description: 'Internal notes' },
+      { name: 'terms', type: 'text', nullable: true, description: 'Payment terms' },
+      { name: 'createdByUserId', type: 'integer references users(id)', nullable: true, description: 'Who created it' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Creation time' },
+      { name: 'updatedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Last update' },
+    ],
+    relatedEntities: ['customer', 'user', 'payment', 'line_item'],
+    suggestedIndexes: ['customerId', 'status', 'dueAt', '(status, dueAt)', 'invoiceNumber'],
+    defaultWorkflow: {
+      states: ['draft', 'sent', 'viewed', 'paid', 'overdue', 'cancelled', 'refunded'],
+      transitions: [
+        { from: 'draft', to: 'sent', action: 'send' },
+        { from: 'sent', to: 'viewed', action: 'customer_viewed' },
+        { from: 'viewed', to: 'paid', action: 'mark_paid' },
+        { from: 'sent', to: 'paid', action: 'mark_paid' },
+        { from: 'sent', to: 'overdue', action: 'pass_due_date' },
+        { from: 'overdue', to: 'paid', action: 'mark_paid' },
+        { from: 'paid', to: 'refunded', action: 'refund' },
+        { from: 'draft', to: 'cancelled', action: 'cancel' },
+        { from: 'sent', to: 'cancelled', action: 'cancel' },
+      ],
+    },
+    typicalEndpoints: [
+      'GET /invoices?status=overdue&customerId=:id',
+      'GET /invoices/:id',
+      'POST /invoices',
+      'PATCH /invoices/:id',
+      'POST /invoices/:id/send',
+      'POST /invoices/:id/mark-paid',
+    ],
+  },
+
+  payment: {
+    id: 'payment',
+    name: 'Payment / Transaction',
+    aliases: ['payment', 'transaction', 'charge', 'transfer', 'payout'],
+    domain: 'finance',
+    description: 'A financial payment or transaction record.',
+    traits: ['pageable', 'auditable', 'searchable', 'soft-deletable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'type', type: "varchar(20) not null default 'payment'", nullable: false, description: 'payment|refund|adjustment|fee' },
+      { name: 'status', type: "varchar(20) not null default 'pending'", nullable: false, description: 'pending|processing|completed|failed|cancelled|refunded' },
+      { name: 'amountCents', type: 'integer not null', nullable: false, description: 'Amount in smallest currency unit (avoid floats!)' },
+      { name: 'currency', type: "char(3) not null default 'USD'", nullable: false, description: 'ISO 4217' },
+      { name: 'method', type: "varchar(30) not null default 'card'", nullable: false, description: 'card|ach|wire|crypto|check' },
+      { name: 'invoiceId', type: 'integer references invoices(id)', nullable: true, description: 'Associated invoice' },
+      { name: 'customerId', type: 'integer references customers(id)', nullable: false, description: 'Payer' },
+      { name: 'externalId', type: 'varchar(255)', nullable: true, description: 'Stripe/payment processor transaction ID' },
+      { name: 'reference', type: 'varchar(255)', nullable: true, description: 'Bank reference / check number' },
+      { name: 'processedAt', type: 'timestamptz', nullable: true, description: 'Processing completion time' },
+      { name: 'failureReason', type: 'text', nullable: true, description: 'Error message if failed' },
+      { name: 'metadata', type: 'jsonb', nullable: true, description: 'Processor-specific metadata' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Record creation' },
+    ],
+    relatedEntities: ['customer', 'invoice'],
+    suggestedIndexes: ['customerId', 'invoiceId', 'status', 'externalId', 'processedAt DESC'],
+    typicalEndpoints: [
+      'GET /payments?customerId=:id&status=completed',
+      'GET /payments/:id',
+      'POST /payments',
+      'POST /payments/:id/refund',
+    ],
+  },
+
+  expense: {
+    id: 'expense',
+    name: 'Expense',
+    aliases: ['expense', 'expenditure', 'cost', 'reimbursement'],
+    domain: 'finance',
+    description: 'An employee expense or reimbursement request.',
+    traits: ['pageable', 'auditable', 'searchable', 'workflowable', 'attachable', 'soft-deletable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'title', type: 'varchar(200) not null', nullable: false, description: 'Expense title' },
+      { name: 'category', type: 'varchar(50) not null', nullable: false, description: 'travel|meals|software|equipment|other' },
+      { name: 'amountCents', type: 'integer not null', nullable: false, description: 'Amount in cents' },
+      { name: 'currency', type: "char(3) not null default 'USD'", nullable: false, description: 'Currency' },
+      { name: 'status', type: "varchar(20) not null default 'draft'", nullable: false, description: 'draft|submitted|approved|rejected|reimbursed' },
+      { name: 'expenseDate', type: 'date not null', nullable: false, description: 'When the expense occurred' },
+      { name: 'merchant', type: 'varchar(200)', nullable: true, description: 'Vendor/merchant name' },
+      { name: 'notes', type: 'text', nullable: true, description: 'Justification/notes' },
+      { name: 'receiptUrl', type: 'text', nullable: true, description: 'Uploaded receipt file URL' },
+      { name: 'submittedById', type: 'integer references users(id)', nullable: false, description: 'Employee submitting' },
+      { name: 'reviewedById', type: 'integer references users(id)', nullable: true, description: 'Manager who approved/rejected' },
+      { name: 'reviewedAt', type: 'timestamptz', nullable: true, description: 'Approval/rejection time' },
+      { name: 'rejectionReason', type: 'text', nullable: true, description: 'Reason if rejected' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Creation time' },
+    ],
+    relatedEntities: ['user', 'attachment'],
+    suggestedIndexes: ['submittedById', 'status', 'expenseDate', 'category', '(status, submittedById)'],
+    defaultWorkflow: {
+      states: ['draft', 'submitted', 'approved', 'rejected', 'reimbursed'],
+      transitions: [
+        { from: 'draft', to: 'submitted', action: 'submit' },
+        { from: 'submitted', to: 'approved', action: 'approve' },
+        { from: 'submitted', to: 'rejected', action: 'reject' },
+        { from: 'approved', to: 'reimbursed', action: 'mark_reimbursed' },
+        { from: 'rejected', to: 'draft', action: 'revise' },
+      ],
+    },
+    typicalEndpoints: [
+      'GET /expenses?status=submitted&submittedById=:id',
+      'POST /expenses',
+      'PATCH /expenses/:id',
+      'POST /expenses/:id/submit',
+      'POST /expenses/:id/approve',
+      'POST /expenses/:id/reject',
+    ],
+  },
+
+  // ── HR Domain ────────────────────────────────────────────────────────────
+
+  employee: {
+    id: 'employee',
+    name: 'Employee',
+    aliases: ['employee', 'staff', 'worker', 'member', 'teammate', 'personnel', 'hr record'],
+    domain: 'hr',
+    description: 'An employee or staff member record in an HR system.',
+    traits: ['pageable', 'auditable', 'searchable', 'hierarchical', 'soft-deletable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'userId', type: 'integer references users(id)', nullable: true, description: 'Linked user account' },
+      { name: 'employeeNumber', type: 'varchar(50) unique', nullable: true, description: 'HR employee ID/badge number' },
+      { name: 'firstName', type: 'varchar(100) not null', nullable: false, description: 'First name' },
+      { name: 'lastName', type: 'varchar(100) not null', nullable: false, description: 'Last name' },
+      { name: 'email', type: 'varchar(255) not null unique', nullable: false, description: 'Work email' },
+      { name: 'phone', type: 'varchar(30)', nullable: true, description: 'Work phone' },
+      { name: 'jobTitle', type: 'varchar(200)', nullable: true, description: 'Job title' },
+      { name: 'department', type: 'varchar(100)', nullable: true, description: 'Department' },
+      { name: 'departmentId', type: 'integer references departments(id)', nullable: true, description: 'FK to department' },
+      { name: 'managerId', type: 'integer references employees(id)', nullable: true, description: 'Direct manager (self-ref)' },
+      { name: 'employmentType', type: "varchar(20) not null default 'full_time'", nullable: false, description: 'full_time|part_time|contractor|intern' },
+      { name: 'status', type: "varchar(20) not null default 'active'", nullable: false, description: 'active|on_leave|suspended|terminated' },
+      { name: 'hireDate', type: 'date not null', nullable: false, description: 'Employment start date' },
+      { name: 'terminationDate', type: 'date', nullable: true, description: 'End date if applicable' },
+      { name: 'salary', type: 'integer', nullable: true, description: 'Annual salary in cents (encrypted at rest ideally)' },
+      { name: 'avatarUrl', type: 'text', nullable: true, description: 'Profile photo URL' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Record creation' },
+      { name: 'updatedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Last update' },
+    ],
+    relatedEntities: ['user', 'department', 'leave', 'expense'],
+    suggestedIndexes: ['email', 'departmentId', 'managerId', 'status', 'employeeNumber', '(status, departmentId)'],
+    typicalEndpoints: [
+      'GET /employees?departmentId=:id&status=active',
+      'GET /employees/:id',
+      'POST /employees',
+      'PATCH /employees/:id',
+      'GET /employees/:id/direct-reports',
+    ],
+  },
+
+  leave: {
+    id: 'leave',
+    name: 'Leave / Time Off',
+    aliases: ['leave', 'time off', 'pto', 'vacation', 'sick leave', 'absence', 'holiday'],
+    domain: 'hr',
+    description: 'An employee leave or time-off request.',
+    traits: ['pageable', 'auditable', 'searchable', 'workflowable', 'soft-deletable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'employeeId', type: 'integer references employees(id)', nullable: false, description: 'Requesting employee' },
+      { name: 'type', type: 'varchar(30) not null', nullable: false, description: 'annual|sick|maternity|paternity|unpaid|bereavement|other' },
+      { name: 'status', type: "varchar(20) not null default 'pending'", nullable: false, description: 'pending|approved|rejected|cancelled' },
+      { name: 'startDate', type: 'date not null', nullable: false, description: 'Leave start date' },
+      { name: 'endDate', type: 'date not null', nullable: false, description: 'Leave end date (inclusive)' },
+      { name: 'daysCount', type: 'numeric(4,1) not null', nullable: false, description: 'Number of working days' },
+      { name: 'reason', type: 'text', nullable: true, description: 'Reason/notes' },
+      { name: 'approverId', type: 'integer references users(id)', nullable: true, description: 'Manager who acted on request' },
+      { name: 'approvedAt', type: 'timestamptz', nullable: true, description: 'Approval/rejection timestamp' },
+      { name: 'rejectionReason', type: 'text', nullable: true, description: 'Reason if rejected' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Request creation time' },
+    ],
+    relatedEntities: ['employee', 'user'],
+    suggestedIndexes: ['employeeId', 'status', 'startDate', '(employeeId, startDate)', '(status, startDate)'],
+    defaultWorkflow: {
+      states: ['pending', 'approved', 'rejected', 'cancelled'],
+      transitions: [
+        { from: 'pending', to: 'approved', action: 'approve' },
+        { from: 'pending', to: 'rejected', action: 'reject' },
+        { from: 'pending', to: 'cancelled', action: 'cancel' },
+        { from: 'approved', to: 'cancelled', action: 'cancel' },
+      ],
+    },
+    typicalEndpoints: [
+      'GET /leave-requests?employeeId=:id&status=pending',
+      'POST /leave-requests',
+      'PATCH /leave-requests/:id',
+      'POST /leave-requests/:id/approve',
+      'POST /leave-requests/:id/reject',
+    ],
+  },
+
+  // ── Support / Ticketing Domain ───────────────────────────────────────────
+
+  support_ticket: {
+    id: 'support_ticket',
+    name: 'Support Ticket',
+    aliases: ['ticket', 'support ticket', 'support request', 'help desk ticket', 'service request', 'case'],
+    domain: 'support',
+    description: 'A customer support ticket or help desk request.',
+    traits: ['pageable', 'auditable', 'searchable', 'workflowable', 'taggable', 'assignable', 'commentable', 'attachable', 'soft-deletable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'ticketNumber', type: 'varchar(20) not null unique', nullable: false, description: 'Human-readable e.g. TKT-10042' },
+      { name: 'subject', type: 'text not null', nullable: false, description: 'Ticket subject' },
+      { name: 'description', type: 'text not null', nullable: false, description: 'Full description' },
+      { name: 'status', type: "varchar(20) not null default 'open'", nullable: false, description: 'open|in_progress|waiting_customer|resolved|closed' },
+      { name: 'priority', type: "varchar(10) not null default 'normal'", nullable: false, description: 'low|normal|high|urgent|critical' },
+      { name: 'channel', type: "varchar(20) not null default 'web'", nullable: false, description: 'web|email|phone|chat|api' },
+      { name: 'category', type: 'varchar(50)', nullable: true, description: 'billing|technical|account|other' },
+      { name: 'customerId', type: 'integer references customers(id)', nullable: true, description: 'Customer who opened' },
+      { name: 'contactEmail', type: 'varchar(255) not null', nullable: false, description: 'Requester email' },
+      { name: 'assigneeId', type: 'integer references users(id)', nullable: true, description: 'Support agent assigned' },
+      { name: 'teamId', type: 'integer references teams(id)', nullable: true, description: 'Support team assigned' },
+      { name: 'firstResponseAt', type: 'timestamptz', nullable: true, description: 'Time of first agent reply' },
+      { name: 'resolvedAt', type: 'timestamptz', nullable: true, description: 'Resolution time' },
+      { name: 'satisfactionScore', type: 'integer', nullable: true, description: 'CSAT score 1-5' },
+      { name: 'tags', type: 'text[]', nullable: true, description: 'Tags for routing/reporting' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Ticket creation time' },
+      { name: 'updatedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Last update' },
+    ],
+    relatedEntities: ['customer', 'user', 'comment', 'attachment'],
+    suggestedIndexes: ['contactEmail', 'assigneeId', 'status', 'priority', '(status, priority)', '(status, assigneeId)', 'createdAt DESC'],
+    defaultWorkflow: {
+      states: ['open', 'in_progress', 'waiting_customer', 'resolved', 'closed'],
+      transitions: [
+        { from: 'open', to: 'in_progress', action: 'assign' },
+        { from: 'in_progress', to: 'waiting_customer', action: 'reply' },
+        { from: 'waiting_customer', to: 'in_progress', action: 'customer_reply' },
+        { from: 'in_progress', to: 'resolved', action: 'resolve' },
+        { from: 'waiting_customer', to: 'resolved', action: 'auto_close' },
+        { from: 'resolved', to: 'open', action: 'reopen' },
+        { from: 'resolved', to: 'closed', action: 'close' },
+      ],
+    },
+    typicalEndpoints: [
+      'GET /tickets?status=open&assigneeId=me',
+      'GET /tickets/:id',
+      'POST /tickets',
+      'PATCH /tickets/:id',
+      'POST /tickets/:id/assign',
+      'POST /tickets/:id/resolve',
+      'POST /tickets/:id/reply',
+    ],
+  },
+
+  // ── CRM Domain ───────────────────────────────────────────────────────────
+
+  lead: {
+    id: 'lead',
+    name: 'Lead / Prospect',
+    aliases: ['lead', 'prospect', 'opportunity', 'contact lead', 'sales lead'],
+    domain: 'crm',
+    description: 'A sales lead or prospect in a CRM pipeline.',
+    traits: ['pageable', 'auditable', 'searchable', 'workflowable', 'taggable', 'assignable', 'commentable', 'soft-deletable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'firstName', type: 'varchar(100)', nullable: true, description: 'First name' },
+      { name: 'lastName', type: 'varchar(100)', nullable: true, description: 'Last name' },
+      { name: 'email', type: 'varchar(255)', nullable: true, description: 'Email address' },
+      { name: 'phone', type: 'varchar(30)', nullable: true, description: 'Phone number' },
+      { name: 'company', type: 'varchar(200)', nullable: true, description: 'Company name' },
+      { name: 'jobTitle', type: 'varchar(200)', nullable: true, description: 'Job title' },
+      { name: 'status', type: "varchar(20) not null default 'new'", nullable: false, description: 'new|contacted|qualified|unqualified|converted|lost' },
+      { name: 'source', type: 'varchar(50)', nullable: true, description: 'organic|paid|referral|cold|event' },
+      { name: 'score', type: 'integer not null default 0', nullable: false, description: 'Lead score 0-100' },
+      { name: 'estimatedValue', type: 'integer', nullable: true, description: 'Estimated deal value in cents' },
+      { name: 'notes', type: 'text', nullable: true, description: 'Notes about the lead' },
+      { name: 'ownerId', type: 'integer references users(id)', nullable: true, description: 'Sales rep owner' },
+      { name: 'convertedAt', type: 'timestamptz', nullable: true, description: 'When converted to customer' },
+      { name: 'customerId', type: 'integer references customers(id)', nullable: true, description: 'Linked customer after conversion' },
+      { name: 'lastContactedAt', type: 'timestamptz', nullable: true, description: 'Most recent outreach' },
+      { name: 'nextFollowUpAt', type: 'timestamptz', nullable: true, description: 'Scheduled follow-up' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Record creation' },
+      { name: 'updatedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Last update' },
+    ],
+    relatedEntities: ['user', 'customer', 'activity', 'campaign'],
+    suggestedIndexes: ['email', 'status', 'ownerId', 'score DESC', '(status, ownerId)', 'nextFollowUpAt'],
+    defaultWorkflow: {
+      states: ['new', 'contacted', 'qualified', 'unqualified', 'converted', 'lost'],
+      transitions: [
+        { from: 'new', to: 'contacted', action: 'reach_out' },
+        { from: 'contacted', to: 'qualified', action: 'qualify' },
+        { from: 'contacted', to: 'unqualified', action: 'disqualify' },
+        { from: 'qualified', to: 'converted', action: 'convert' },
+        { from: 'qualified', to: 'lost', action: 'mark_lost' },
+      ],
+    },
+    typicalEndpoints: [
+      'GET /leads?status=qualified&ownerId=me',
+      'POST /leads',
+      'PATCH /leads/:id',
+      'POST /leads/:id/convert',
+      'GET /leads/pipeline (grouped by status)',
+    ],
+  },
+
+  // ── Healthcare Domain ────────────────────────────────────────────────────
+
+  patient: {
+    id: 'patient',
+    name: 'Patient',
+    aliases: ['patient', 'client', 'resident', 'beneficiary'],
+    domain: 'healthcare',
+    description: 'A patient record in a healthcare or clinical system.',
+    traits: ['pageable', 'auditable', 'searchable', 'attachable', 'soft-deletable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'mrn', type: 'varchar(50) unique', nullable: true, description: 'Medical Record Number' },
+      { name: 'firstName', type: 'varchar(100) not null', nullable: false, description: 'First name' },
+      { name: 'lastName', type: 'varchar(100) not null', nullable: false, description: 'Last name' },
+      { name: 'dateOfBirth', type: 'date not null', nullable: false, description: 'Date of birth' },
+      { name: 'sex', type: 'varchar(10)', nullable: true, description: 'male|female|other|unknown' },
+      { name: 'bloodType', type: 'varchar(5)', nullable: true, description: 'A+|A-|B+|B-|O+|O-|AB+|AB-' },
+      { name: 'email', type: 'varchar(255)', nullable: true, description: 'Contact email' },
+      { name: 'phone', type: 'varchar(30)', nullable: true, description: 'Contact phone' },
+      { name: 'address', type: 'text', nullable: true, description: 'Home address' },
+      { name: 'emergencyContact', type: 'jsonb', nullable: true, description: '{ name, phone, relationship }' },
+      { name: 'allergies', type: 'text[]', nullable: true, description: 'Known allergies' },
+      { name: 'insuranceProvider', type: 'varchar(200)', nullable: true, description: 'Insurance company' },
+      { name: 'insurancePolicyNumber', type: 'varchar(100)', nullable: true, description: 'Policy number' },
+      { name: 'status', type: "varchar(20) not null default 'active'", nullable: false, description: 'active|inactive|deceased' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Record creation' },
+      { name: 'updatedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Last update' },
+    ],
+    relatedEntities: ['appointment', 'prescription', 'doctor'],
+    suggestedIndexes: ['email', 'mrn', 'lastName', '(lastName, firstName)', 'dateOfBirth', 'status'],
+    typicalEndpoints: [
+      'GET /patients?search=:name',
+      'GET /patients/:id',
+      'POST /patients',
+      'PATCH /patients/:id',
+      'GET /patients/:id/appointments',
+      'GET /patients/:id/prescriptions',
+    ],
+  },
+
+  appointment: {
+    id: 'appointment',
+    name: 'Appointment',
+    aliases: ['appointment', 'booking', 'visit', 'consultation', 'reservation', 'schedule slot'],
+    domain: 'healthcare',
+    description: 'A scheduled appointment or booking.',
+    traits: ['pageable', 'auditable', 'searchable', 'workflowable', 'schedulable', 'soft-deletable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'patientId', type: 'integer references patients(id)', nullable: true, description: 'Patient or customer' },
+      { name: 'providerId', type: 'integer references users(id)', nullable: true, description: 'Doctor/provider' },
+      { name: 'type', type: 'varchar(50)', nullable: true, description: 'Appointment type/reason' },
+      { name: 'status', type: "varchar(20) not null default 'scheduled'", nullable: false, description: 'scheduled|confirmed|in_progress|completed|cancelled|no_show' },
+      { name: 'startAt', type: 'timestamptz not null', nullable: false, description: 'Start datetime' },
+      { name: 'endAt', type: 'timestamptz not null', nullable: false, description: 'End datetime' },
+      { name: 'durationMinutes', type: 'integer not null default 30', nullable: false, description: 'Duration in minutes' },
+      { name: 'location', type: 'varchar(200)', nullable: true, description: 'Room/address/virtual link' },
+      { name: 'notes', type: 'text', nullable: true, description: 'Pre-appointment notes' },
+      { name: 'cancelledAt', type: 'timestamptz', nullable: true, description: 'Cancellation time' },
+      { name: 'cancellationReason', type: 'text', nullable: true, description: 'Why cancelled' },
+      { name: 'remindedAt', type: 'timestamptz', nullable: true, description: 'When reminder was sent' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Creation time' },
+    ],
+    relatedEntities: ['patient', 'user'],
+    suggestedIndexes: ['patientId', 'providerId', 'startAt', 'status', '(providerId, startAt)', '(status, startAt)'],
+    defaultWorkflow: {
+      states: ['scheduled', 'confirmed', 'in_progress', 'completed', 'cancelled', 'no_show'],
+      transitions: [
+        { from: 'scheduled', to: 'confirmed', action: 'confirm' },
+        { from: 'confirmed', to: 'in_progress', action: 'check_in' },
+        { from: 'in_progress', to: 'completed', action: 'complete' },
+        { from: 'scheduled', to: 'cancelled', action: 'cancel' },
+        { from: 'confirmed', to: 'cancelled', action: 'cancel' },
+        { from: 'confirmed', to: 'no_show', action: 'mark_no_show' },
+      ],
+    },
+    typicalEndpoints: [
+      'GET /appointments?providerId=:id&date=today',
+      'POST /appointments',
+      'PATCH /appointments/:id',
+      'POST /appointments/:id/cancel',
+      'GET /appointments/availability?providerId=:id&date=:date',
+    ],
+  },
+
+  // ── E-Commerce Domain ────────────────────────────────────────────────────
+
+  product: {
+    id: 'product',
+    name: 'Product',
+    aliases: ['product', 'item', 'sku', 'good', 'article', 'listing'],
+    domain: 'ecommerce',
+    description: 'A product or SKU in an e-commerce catalog.',
+    traits: ['pageable', 'auditable', 'searchable', 'taggable', 'versioned', 'soft-deletable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'sku', type: 'varchar(100) unique', nullable: true, description: 'Stock Keeping Unit identifier' },
+      { name: 'name', type: 'varchar(255) not null', nullable: false, description: 'Product name' },
+      { name: 'slug', type: 'varchar(255) not null unique', nullable: false, description: 'URL-safe slug' },
+      { name: 'description', type: 'text', nullable: true, description: 'Full description (markdown)' },
+      { name: 'shortDescription', type: 'text', nullable: true, description: 'Brief description for listings' },
+      { name: 'priceInCents', type: 'integer not null default 0', nullable: false, description: 'Price in cents (never use float for money!)' },
+      { name: 'comparePriceInCents', type: 'integer', nullable: true, description: 'Original/compare-at price' },
+      { name: 'costInCents', type: 'integer', nullable: true, description: 'Cost/COGS in cents' },
+      { name: 'currency', type: "char(3) not null default 'USD'", nullable: false, description: 'ISO 4217' },
+      { name: 'stockQuantity', type: 'integer not null default 0', nullable: false, description: 'Available stock' },
+      { name: 'trackInventory', type: 'boolean not null default true', nullable: false, description: 'Whether to track stock' },
+      { name: 'weight', type: 'numeric(8,2)', nullable: true, description: 'Weight for shipping' },
+      { name: 'status', type: "varchar(20) not null default 'draft'", nullable: false, description: 'draft|active|archived' },
+      { name: 'categoryId', type: 'integer references product_categories(id)', nullable: true, description: 'Primary category' },
+      { name: 'images', type: 'jsonb', nullable: true, description: 'Array of { url, alt, position }' },
+      { name: 'attributes', type: 'jsonb', nullable: true, description: 'Flexible attributes (size, color, etc.)' },
+      { name: 'tags', type: 'text[]', nullable: true, description: 'Search/filter tags' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Creation time' },
+      { name: 'updatedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Last update' },
+    ],
+    relatedEntities: ['category', 'order_item', 'review'],
+    suggestedIndexes: ['slug', 'sku', 'status', 'categoryId', 'priceInCents', '(status, categoryId)', 'tags GIN'],
+    typicalEndpoints: [
+      'GET /products?status=active&categoryId=:id&page=1',
+      'GET /products/:idOrSlug',
+      'POST /products',
+      'PATCH /products/:id',
+      'DELETE /products/:id',
+    ],
+  },
+
+  order: {
+    id: 'order',
+    name: 'Order',
+    aliases: ['order', 'purchase', 'purchase order', 'sales order', 'checkout'],
+    domain: 'ecommerce',
+    description: 'A customer purchase order in an e-commerce system.',
+    traits: ['pageable', 'auditable', 'searchable', 'workflowable', 'soft-deletable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'orderNumber', type: 'varchar(50) not null unique', nullable: false, description: 'Human-readable order number' },
+      { name: 'status', type: "varchar(20) not null default 'pending'", nullable: false, description: 'pending|confirmed|processing|shipped|delivered|cancelled|refunded' },
+      { name: 'customerId', type: 'integer references customers(id)', nullable: false, description: 'Ordering customer' },
+      { name: 'subtotalCents', type: 'integer not null', nullable: false, description: 'Items total' },
+      { name: 'shippingCents', type: 'integer not null default 0', nullable: false, description: 'Shipping cost' },
+      { name: 'taxCents', type: 'integer not null default 0', nullable: false, description: 'Tax' },
+      { name: 'discountCents', type: 'integer not null default 0', nullable: false, description: 'Discount applied' },
+      { name: 'totalCents', type: 'integer not null', nullable: false, description: 'Grand total' },
+      { name: 'currency', type: "char(3) not null default 'USD'", nullable: false, description: 'Currency' },
+      { name: 'shippingAddress', type: 'jsonb not null', nullable: false, description: '{ name, line1, line2, city, state, postalCode, country }' },
+      { name: 'billingAddress', type: 'jsonb', nullable: true, description: 'Billing address if different' },
+      { name: 'paymentMethod', type: 'varchar(30)', nullable: true, description: 'Payment method used' },
+      { name: 'paymentIntentId', type: 'varchar(255)', nullable: true, description: 'Stripe PaymentIntent ID' },
+      { name: 'trackingNumber', type: 'varchar(100)', nullable: true, description: 'Shipping tracking number' },
+      { name: 'carrier', type: 'varchar(50)', nullable: true, description: 'Shipping carrier' },
+      { name: 'shippedAt', type: 'timestamptz', nullable: true, description: 'When shipped' },
+      { name: 'deliveredAt', type: 'timestamptz', nullable: true, description: 'When delivered' },
+      { name: 'notes', type: 'text', nullable: true, description: 'Customer order notes' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Order placement time' },
+      { name: 'updatedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Last update' },
+    ],
+    relatedEntities: ['customer', 'order_item', 'payment', 'shipment'],
+    suggestedIndexes: ['customerId', 'status', 'orderNumber', 'paymentIntentId', '(status, createdAt DESC)', 'createdAt DESC'],
+    defaultWorkflow: {
+      states: ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded'],
+      transitions: [
+        { from: 'pending', to: 'confirmed', action: 'payment_received' },
+        { from: 'confirmed', to: 'processing', action: 'start_fulfillment' },
+        { from: 'processing', to: 'shipped', action: 'mark_shipped' },
+        { from: 'shipped', to: 'delivered', action: 'mark_delivered' },
+        { from: 'pending', to: 'cancelled', action: 'cancel' },
+        { from: 'confirmed', to: 'cancelled', action: 'cancel' },
+        { from: 'delivered', to: 'refunded', action: 'refund' },
+      ],
+    },
+    typicalEndpoints: [
+      'GET /orders?customerId=:id&status=processing',
+      'GET /orders/:id',
+      'POST /orders',
+      'PATCH /orders/:id/status',
+      'POST /orders/:id/cancel',
+      'POST /orders/:id/refund',
+    ],
+  },
+
+  // ── Notifications Domain ─────────────────────────────────────────────────
+
+  notification: {
+    id: 'notification',
+    name: 'Notification',
+    aliases: ['notification', 'alert', 'message', 'in-app notification', 'push notification', 'toast'],
+    domain: 'platform',
+    description: 'A user notification record (in-app, email, or push).',
+    traits: ['pageable', 'searchable', 'soft-deletable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'userId', type: 'integer references users(id) on delete cascade', nullable: false, description: 'Recipient user' },
+      { name: 'type', type: 'varchar(50) not null', nullable: false, description: 'Notification type/event name' },
+      { name: 'channel', type: "varchar(20) not null default 'in_app'", nullable: false, description: 'in_app|email|push|sms' },
+      { name: 'title', type: 'varchar(255) not null', nullable: false, description: 'Notification title' },
+      { name: 'body', type: 'text', nullable: true, description: 'Full notification body' },
+      { name: 'actionUrl', type: 'text', nullable: true, description: 'Deep link/action URL' },
+      { name: 'isRead', type: 'boolean not null default false', nullable: false, description: 'Whether user has read it' },
+      { name: 'readAt', type: 'timestamptz', nullable: true, description: 'When user marked as read' },
+      { name: 'entityType', type: 'varchar(50)', nullable: true, description: 'Related entity type (polymorphic ref)' },
+      { name: 'entityId', type: 'integer', nullable: true, description: 'Related entity ID' },
+      { name: 'metadata', type: 'jsonb', nullable: true, description: 'Extra data for rendering' },
+      { name: 'sentAt', type: 'timestamptz', nullable: true, description: 'External delivery time (for email/push)' },
+      { name: 'failedAt', type: 'timestamptz', nullable: true, description: 'Delivery failure time' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Creation time' },
+    ],
+    relatedEntities: ['user'],
+    suggestedIndexes: ['userId', '(userId, isRead)', '(userId, createdAt DESC)', 'entityType', '(entityType, entityId)'],
+    typicalEndpoints: [
+      'GET /notifications?unreadOnly=true (paginated)',
+      'PATCH /notifications/:id/read',
+      'PATCH /notifications/read-all',
+      'DELETE /notifications/:id',
+      'GET /notifications/unread-count',
+    ],
+  },
+
+  // ── Content / CMS Domain ─────────────────────────────────────────────────
+
+  article: {
+    id: 'article',
+    name: 'Article / Post',
+    aliases: ['article', 'post', 'blog post', 'content', 'document', 'page', 'entry'],
+    domain: 'cms',
+    description: 'A content article or blog post in a CMS.',
+    traits: ['pageable', 'auditable', 'searchable', 'taggable', 'workflowable', 'versioned', 'soft-deletable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'title', type: 'varchar(500) not null', nullable: false, description: 'Article title' },
+      { name: 'slug', type: 'varchar(500) not null unique', nullable: false, description: 'URL slug' },
+      { name: 'excerpt', type: 'text', nullable: true, description: 'Short summary' },
+      { name: 'content', type: 'text not null', nullable: false, description: 'Full content (markdown or HTML)' },
+      { name: 'status', type: "varchar(20) not null default 'draft'", nullable: false, description: 'draft|review|scheduled|published|archived' },
+      { name: 'authorId', type: 'integer references users(id)', nullable: false, description: 'Author user' },
+      { name: 'coverImageUrl', type: 'text', nullable: true, description: 'Cover image' },
+      { name: 'publishedAt', type: 'timestamptz', nullable: true, description: 'Publication time' },
+      { name: 'scheduledAt', type: 'timestamptz', nullable: true, description: 'Scheduled publish time' },
+      { name: 'tags', type: 'text[]', nullable: true, description: 'Topic tags' },
+      { name: 'categories', type: 'text[]', nullable: true, description: 'Categories' },
+      { name: 'readTimeMinutes', type: 'integer', nullable: true, description: 'Estimated read time' },
+      { name: 'viewCount', type: 'integer not null default 0', nullable: false, description: 'Page view counter' },
+      { name: 'seoTitle', type: 'varchar(255)', nullable: true, description: 'SEO meta title' },
+      { name: 'seoDescription', type: 'varchar(500)', nullable: true, description: 'SEO meta description' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Creation time' },
+      { name: 'updatedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Last update' },
+    ],
+    relatedEntities: ['user', 'category'],
+    suggestedIndexes: ['slug', 'authorId', 'status', 'publishedAt DESC', '(status, publishedAt)', 'tags GIN'],
+    defaultWorkflow: {
+      states: ['draft', 'review', 'scheduled', 'published', 'archived'],
+      transitions: [
+        { from: 'draft', to: 'review', action: 'submit_review' },
+        { from: 'review', to: 'scheduled', action: 'schedule' },
+        { from: 'review', to: 'published', action: 'publish' },
+        { from: 'scheduled', to: 'published', action: 'auto_publish' },
+        { from: 'published', to: 'archived', action: 'archive' },
+        { from: 'review', to: 'draft', action: 'request_edits' },
+      ],
+    },
+    typicalEndpoints: [
+      'GET /articles?status=published&tag=:tag',
+      'GET /articles/:slug',
+      'POST /articles',
+      'PATCH /articles/:id',
+      'POST /articles/:id/publish',
+    ],
+  },
+
+  // ── Audit / Platform Domain ──────────────────────────────────────────────
+
+  audit_log: {
+    id: 'audit_log',
+    name: 'Audit Log',
+    aliases: ['audit log', 'audit trail', 'activity log', 'history', 'event log', 'change log'],
+    domain: 'platform',
+    description: 'Immutable audit trail of all system actions (who did what and when).',
+    traits: ['pageable', 'searchable'],
+    suggestedFields: [
+      { name: 'id', type: 'bigserial primary key', nullable: false, description: 'Immutable ID (bigserial for high volume)' },
+      { name: 'action', type: 'varchar(100) not null', nullable: false, description: 'Action name: user.created, invoice.paid, settings.updated' },
+      { name: 'actorId', type: 'integer references users(id) on delete set null', nullable: true, description: 'User who performed action (null for system)' },
+      { name: 'actorEmail', type: 'varchar(255)', nullable: true, description: 'Snapshot of actor email at time of action' },
+      { name: 'entityType', type: 'varchar(50) not null', nullable: false, description: 'Entity type: user|invoice|order|etc.' },
+      { name: 'entityId', type: 'integer', nullable: true, description: 'Entity ID' },
+      { name: 'changes', type: 'jsonb', nullable: true, description: '{ before: {...}, after: {...} }' },
+      { name: 'metadata', type: 'jsonb', nullable: true, description: 'Extra context (IP, user agent, request ID)' },
+      { name: 'ipAddress', type: 'inet', nullable: true, description: 'Actor IP address' },
+      { name: 'userAgent', type: 'text', nullable: true, description: 'Browser/client info' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Immutable timestamp' },
+    ],
+    relatedEntities: ['user'],
+    suggestedIndexes: ['actorId', 'entityType', '(entityType, entityId)', 'action', 'createdAt DESC', '(actorId, createdAt DESC)'],
+    typicalEndpoints: [
+      'GET /audit-logs?entityType=invoice&entityId=:id',
+      'GET /audit-logs?actorId=:id',
+      'GET /audit-logs (admin only, paginated)',
+    ],
+  },
+
+  // ── Generic Platform Entities ────────────────────────────────────────────
+
+  user: {
+    id: 'user',
+    name: 'User / Account',
+    aliases: ['user', 'account', 'member', 'profile', 'person'],
+    domain: 'platform',
+    description: 'An authenticated user account.',
+    traits: ['pageable', 'auditable', 'searchable', 'soft-deletable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'email', type: 'varchar(255) not null unique', nullable: false, description: 'Unique email (lowercase)' },
+      { name: 'username', type: 'varchar(50) unique', nullable: true, description: 'Optional username (lowercase)' },
+      { name: 'passwordHash', type: 'varchar(255)', nullable: true, description: 'bcrypt hash (null for OAuth-only accounts)' },
+      { name: 'role', type: "varchar(20) not null default 'user'", nullable: false, description: 'user|admin|moderator|etc.' },
+      { name: 'status', type: "varchar(20) not null default 'active'", nullable: false, description: 'active|suspended|pending_verification|deleted' },
+      { name: 'firstName', type: 'varchar(100)', nullable: true, description: 'First name' },
+      { name: 'lastName', type: 'varchar(100)', nullable: true, description: 'Last name' },
+      { name: 'avatarUrl', type: 'text', nullable: true, description: 'Profile picture URL' },
+      { name: 'emailVerified', type: 'boolean not null default false', nullable: false, description: 'Email verification status' },
+      { name: 'emailVerifiedAt', type: 'timestamptz', nullable: true, description: 'When email was verified' },
+      { name: 'lastLoginAt', type: 'timestamptz', nullable: true, description: 'Most recent login time' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Account creation' },
+      { name: 'updatedAt', type: 'timestamptz not null default now()', nullable: false, description: 'Last update' },
+    ],
+    relatedEntities: ['session', 'audit_log', 'notification'],
+    suggestedIndexes: ['email', 'username', 'status', 'role', '(status, role)'],
+    typicalEndpoints: [
+      'POST /auth/register',
+      'POST /auth/login',
+      'GET /users/me',
+      'PATCH /users/me',
+      'GET /users (admin)',
+    ],
+  },
+
+  tag: {
+    id: 'tag',
+    name: 'Tag / Label',
+    aliases: ['tag', 'label', 'category tag', 'keyword'],
+    domain: 'platform',
+    description: 'A user-defined tag for organizing and filtering content.',
+    traits: ['pageable', 'searchable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'name', type: 'varchar(100) not null', nullable: false, description: 'Tag name' },
+      { name: 'slug', type: 'varchar(100) not null unique', nullable: false, description: 'URL-safe slug' },
+      { name: 'color', type: 'char(7)', nullable: true, description: 'Hex color e.g. #FF5733' },
+      { name: 'description', type: 'text', nullable: true, description: 'Optional description' },
+      { name: 'createdByUserId', type: 'integer references users(id)', nullable: true, description: 'Creator' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Creation time' },
+    ],
+    relatedEntities: ['user'],
+    suggestedIndexes: ['slug', 'name'],
+    typicalEndpoints: [
+      'GET /tags?search=:q',
+      'POST /tags',
+      'PATCH /tags/:id',
+      'DELETE /tags/:id',
+    ],
+  },
+
+  attachment: {
+    id: 'attachment',
+    name: 'Attachment / File',
+    aliases: ['attachment', 'file', 'upload', 'document', 'asset', 'media'],
+    domain: 'platform',
+    description: 'A file attachment linked to any entity (polymorphic).',
+    traits: ['pageable', 'soft-deletable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'filename', type: 'varchar(255) not null', nullable: false, description: 'Original filename' },
+      { name: 'storedKey', type: 'text not null', nullable: false, description: 'Object storage key/path' },
+      { name: 'url', type: 'text not null', nullable: false, description: 'Public or signed access URL' },
+      { name: 'mimeType', type: 'varchar(100) not null', nullable: false, description: 'MIME type e.g. application/pdf' },
+      { name: 'sizeBytes', type: 'bigint not null', nullable: false, description: 'File size in bytes' },
+      { name: 'entityType', type: 'varchar(50)', nullable: true, description: 'Polymorphic: ticket|expense|task|etc.' },
+      { name: 'entityId', type: 'integer', nullable: true, description: 'Polymorphic entity ID' },
+      { name: 'uploadedById', type: 'integer references users(id)', nullable: false, description: 'Uploader' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Upload time' },
+    ],
+    relatedEntities: ['user'],
+    suggestedIndexes: ['uploadedById', '(entityType, entityId)', 'createdAt DESC'],
+    typicalEndpoints: [
+      'POST /attachments (multipart upload)',
+      'GET /attachments/:id/download',
+      'DELETE /attachments/:id',
+    ],
+  },
+
+  comment: {
+    id: 'comment',
+    name: 'Comment / Note',
+    aliases: ['comment', 'note', 'reply', 'message', 'annotation', 'remark'],
+    domain: 'platform',
+    description: 'A comment or note on any entity (polymorphic).',
+    traits: ['pageable', 'searchable', 'soft-deletable'],
+    suggestedFields: [
+      { name: 'id', type: 'serial primary key', nullable: false, description: 'Internal ID' },
+      { name: 'body', type: 'text not null', nullable: false, description: 'Comment body (markdown)' },
+      { name: 'entityType', type: 'varchar(50) not null', nullable: false, description: 'Polymorphic ref: task|ticket|lead|etc.' },
+      { name: 'entityId', type: 'integer not null', nullable: false, description: 'Entity ID' },
+      { name: 'authorId', type: 'integer references users(id)', nullable: false, description: 'Comment author' },
+      { name: 'parentId', type: 'integer references comments(id)', nullable: true, description: 'Parent comment (for threads)' },
+      { name: 'isInternal', type: 'boolean not null default false', nullable: false, description: 'Internal-only note (hidden from customer)' },
+      { name: 'editedAt', type: 'timestamptz', nullable: true, description: 'When last edited' },
+      { name: 'createdAt', type: 'timestamptz not null default now()', nullable: false, description: 'Post time' },
+    ],
+    relatedEntities: ['user'],
+    suggestedIndexes: ['(entityType, entityId)', 'authorId', 'parentId', 'createdAt'],
+    typicalEndpoints: [
+      'GET /comments?entityType=task&entityId=:id',
+      'POST /comments',
+      'PATCH /comments/:id',
+      'DELETE /comments/:id',
+    ],
+  },
+};
+
+// ============================================
+// Domain Model Registry
+// Pre-built schema blueprints for full application domains
+// ============================================
+
+export interface DomainModel {
+  id: string;
+  name: string;
+  description: string;
+  coreEntities: string[];
+  optionalEntities: string[];
+  keyRelationships: string[];
+  typicalFeatures: string[];
+  securityConsiderations: string[];
+  suggestedIndexStrategy: string[];
+}
+
+const DOMAIN_MODELS: Record<string, DomainModel> = {
+  'project-management': {
+    id: 'project-management',
+    name: 'Project Management',
+    description: 'Task/ticket tracking, sprint planning, milestones — like Jira/Linear.',
+    coreEntities: ['user', 'project', 'task', 'sprint', 'milestone', 'comment', 'attachment'],
+    optionalEntities: ['team', 'label', 'notification', 'audit_log', 'time_entry'],
+    keyRelationships: [
+      'project has many tasks (with project_id FK + cascade delete)',
+      'project has many sprints (with project_id FK)',
+      'task belongs to sprint (nullable sprint_id)',
+      'task has optional parent task (self-ref parent_id for subtasks)',
+      'task has many comments (polymorphic entity_type=task)',
+      'milestone has many tasks (nullable milestone_id on task)',
+    ],
+    typicalFeatures: [
+      'Kanban board view (group tasks by status)',
+      'Sprint planning with drag-and-drop assignment',
+      'Burndown chart (story points remaining per day)',
+      'Milestone progress tracking',
+      'Notification on task assignment / comment mention',
+      'Activity feed per task',
+      'File attachments',
+      'Due date reminders',
+    ],
+    securityConsiderations: [
+      'Row-level security: users can only see projects they are members of',
+      'Role-based project membership: owner|admin|member|viewer',
+      'Audit log all task status changes',
+      'Attachment scanning for malware before storage',
+    ],
+    suggestedIndexStrategy: [
+      'tasks: (project_id, status) for board views',
+      'tasks: (assignee_id, status) for "my tasks"',
+      'tasks: (sprint_id) for sprint board',
+      'tasks: (project_id, created_at DESC) for activity feed',
+      'Full-text search index on tasks (title, description)',
+    ],
+  },
+
+  'security-dashboard': {
+    id: 'security-dashboard',
+    name: 'Security Vulnerability Dashboard',
+    description: 'Track CVEs, vulnerabilities, risks, and remediation — like Snyk/Tenable.',
+    coreEntities: ['user', 'vulnerability', 'risk', 'asset', 'audit_log'],
+    optionalEntities: ['team', 'scan', 'remediation', 'comment', 'attachment', 'notification'],
+    keyRelationships: [
+      'vulnerability belongs to asset (asset_id FK)',
+      'vulnerability has one assignee (user_id FK)',
+      'vulnerability has many comments (polymorphic)',
+      'risk is associated with multiple vulnerabilities (join table)',
+      'audit_log records all vulnerability status changes',
+    ],
+    typicalFeatures: [
+      'Severity heatmap (critical/high/medium/low counts)',
+      'SLA breach tracking (days overdue by severity)',
+      'Remediation workflow (open → in_progress → verified → closed)',
+      'CVE lookup integration',
+      'Risk matrix (likelihood × impact)',
+      'Executive summary dashboard',
+      'Trend charts (new vs closed over time)',
+      'Export to PDF/CSV',
+    ],
+    securityConsiderations: [
+      'Role-based access: analyst|engineer|manager|admin',
+      'Sensitive vulnerability data encrypted at rest',
+      'Rate limit vulnerability API endpoints',
+      'Audit every status change with actor + timestamp',
+      'IP allowlist for admin operations',
+    ],
+    suggestedIndexStrategy: [
+      'vulnerabilities: (status, severity) for dashboard counts',
+      'vulnerabilities: (status, due_at) for SLA breach alerts',
+      'vulnerabilities: (assignee_id, status) for team workload',
+      'risks: (status, risk_score DESC) for risk register',
+    ],
+  },
+
+  'crm': {
+    id: 'crm',
+    name: 'CRM / Sales Pipeline',
+    description: 'Customer relationship management with leads, deals, contacts — like Salesforce/HubSpot.',
+    coreEntities: ['user', 'lead', 'customer', 'deal', 'activity', 'contact'],
+    optionalEntities: ['campaign', 'product', 'quote', 'task', 'email_thread', 'note'],
+    keyRelationships: [
+      'lead converts to customer (customer_id on lead)',
+      'customer has many contacts (contacts are people at the company)',
+      'customer has many deals (opportunities)',
+      'deal belongs to pipeline stage (pipeline_id + stage FK)',
+      'activity links to lead/customer/deal polymorphically',
+    ],
+    typicalFeatures: [
+      'Pipeline view (Kanban by deal stage)',
+      'Lead scoring based on activity',
+      'Email integration (log sent/received emails)',
+      'Activity timeline per lead/customer',
+      'Sales forecast by close probability',
+      'Contact import from CSV',
+      'Duplicate detection on email',
+    ],
+    securityConsiderations: [
+      'Data ownership: sales reps can only see their leads unless admin',
+      'PII data (email, phone) stored with encryption consideration',
+      'GDPR: soft-delete only, export/delete on request',
+      'Audit log on deal value changes',
+    ],
+    suggestedIndexStrategy: [
+      'leads: (status, owner_id) for pipeline',
+      'leads: (email) unique for deduplication',
+      'deals: (stage_id, close_date) for pipeline/forecast',
+      'activities: (entity_type, entity_id, created_at DESC) for timeline',
+    ],
+  },
+
+  'support-desk': {
+    id: 'support-desk',
+    name: 'Help Desk / Support',
+    description: 'Customer support ticket management — like Zendesk/Freshdesk.',
+    coreEntities: ['user', 'support_ticket', 'comment', 'customer', 'attachment'],
+    optionalEntities: ['team', 'tag', 'canned_response', 'sla_policy', 'satisfaction_survey'],
+    keyRelationships: [
+      'ticket belongs to customer (customer_id)',
+      'ticket has many comments (threaded)',
+      'ticket assigned to agent (assignee_id)',
+      'ticket tagged with multiple tags (join table)',
+      'first_response_at and resolution_at tracked for SLA',
+    ],
+    typicalFeatures: [
+      'Shared team inbox',
+      'SLA tracking with breach alerts',
+      'Canned responses library',
+      'Customer satisfaction survey (CSAT)',
+      'Ticket routing rules (by keyword, category, source)',
+      'Agent workload view',
+      'Reports: resolution time, CSAT, volume trends',
+    ],
+    securityConsiderations: [
+      'Tickets visible to assigned agent + admins only',
+      'Internal notes not sent to customer',
+      'Customer portal access via email token (no password needed)',
+    ],
+    suggestedIndexStrategy: [
+      'tickets: (status, assignee_id) for agent queue',
+      'tickets: (status, priority) for triage view',
+      'tickets: (customer_id, created_at DESC) for customer history',
+      'tickets: (status, created_at) for SLA calculation',
+    ],
+  },
+
+  'hr-system': {
+    id: 'hr-system',
+    name: 'HR Management System',
+    description: 'Employee records, leave management, org chart — like BambooHR.',
+    coreEntities: ['user', 'employee', 'department', 'leave', 'expense'],
+    optionalEntities: ['payroll', 'performance_review', 'document', 'onboarding', 'training'],
+    keyRelationships: [
+      'employee links to user (user_id FK, 1:1)',
+      'employee has manager (self-ref manager_id)',
+      'employee belongs to department (department_id)',
+      'leave request belongs to employee (employee_id)',
+      'department has manager (manager_id → employee)',
+    ],
+    typicalFeatures: [
+      'Org chart view (hierarchical tree)',
+      'Leave calendar (team view showing who is out)',
+      'Leave balance tracker by type',
+      'Expense approval workflow',
+      'Employee directory with search',
+      'Headcount reporting by department',
+    ],
+    securityConsiderations: [
+      'Salary data visible to HR admin + direct manager only',
+      'Role hierarchy: employee can see own data, manager sees reports, HR sees all',
+      'Audit log on salary/role changes',
+      'PII fields encrypted at rest',
+    ],
+    suggestedIndexStrategy: [
+      'employees: (department_id, status)',
+      'employees: (manager_id) for org chart',
+      'leave_requests: (employee_id, start_date)',
+      'leave_requests: (status, start_date) for manager view',
+    ],
+  },
+
+  'ecommerce': {
+    id: 'ecommerce',
+    name: 'E-Commerce Platform',
+    description: 'Product catalog, cart, checkout, orders — like Shopify.',
+    coreEntities: ['user', 'product', 'order', 'order_item', 'customer', 'payment'],
+    optionalEntities: ['cart', 'discount', 'review', 'category', 'inventory_log', 'shipment', 'wishlist'],
+    keyRelationships: [
+      'order has many order_items (order_id FK)',
+      'order_item references product (product_id FK, price snapshot)',
+      'customer has many orders (customer_id FK)',
+      'order has one payment (payment_id FK or payment records order_id)',
+      'product belongs to category (category_id FK, nested categories possible)',
+    ],
+    typicalFeatures: [
+      'Product catalog with search and filtering',
+      'Shopping cart (guest + logged-in with merge)',
+      'Checkout with Stripe integration',
+      'Order history and tracking',
+      'Inventory management with low-stock alerts',
+      'Discount codes / promotions',
+      'Product reviews and ratings',
+    ],
+    securityConsiderations: [
+      'PCI DSS: never store raw card data — use Stripe tokens',
+      'Order total always calculated server-side (never trust client)',
+      'Rate limit checkout endpoint to prevent inventory reservation abuse',
+      'Idempotency keys for payment requests',
+    ],
+    suggestedIndexStrategy: [
+      'products: (status, category_id) for catalog pages',
+      'products: slug unique for product detail',
+      'orders: (customer_id, created_at DESC) for order history',
+      'orders: (status, created_at) for fulfillment queue',
+      'Full-text search on products (name, description)',
+    ],
+  },
+};
+
+// ============================================
 // Anti-Pattern Registry — LLM bad habits
 // ============================================
 
@@ -929,6 +2169,116 @@ const ANTI_PATTERNS: AntiPattern[] = [
     badExample: 'if (user.status === 3) { setTimeout(cleanup, 86400000); }',
     goodExample: 'const UserStatus = { ACTIVE: 1, SUSPENDED: 2, DELETED: 3 } as const; const ONE_DAY_MS = 24 * 60 * 60 * 1000; if (user.status === UserStatus.DELETED) { setTimeout(cleanup, ONE_DAY_MS); }',
     tags: ['code-quality', 'maintainability'],
+  },
+  {
+    id: 'floating-promise',
+    name: 'Unhandled floating promises',
+    description: 'Calling an async function without awaiting or catching it, leaving the Promise floating.',
+    whyBad: 'Errors in floating promises are swallowed silently in Node.js (unless you have unhandledRejection handlers). The operation may also run after the function returns, causing race conditions and unexpected state.',
+    fix: 'Always await async calls or explicitly discard with void operator + a comment. Add process.on("unhandledRejection") for global coverage.',
+    severity: 'critical',
+    badExample: 'function processOrder(id: string) { sendConfirmationEmail(id); /* not awaited! */ return { success: true }; }',
+    goodExample: 'async function processOrder(id: string) { await sendConfirmationEmail(id); return { success: true }; }\n// OR if intentionally fire-and-forget:\nvoid sendConfirmationEmail(id).catch(err => logger.error(err, "Email send failed"));',
+    tags: ['async', 'error-handling', 'nodejs'],
+  },
+  {
+    id: 'no-rate-limiting',
+    name: 'No rate limiting on auth/sensitive endpoints',
+    description: 'Login, registration, password-reset, and API endpoints lack rate limiting.',
+    whyBad: 'Attackers can brute-force passwords, enumerate usernames, exhaust SMS credits (OTP), or DoS your server. Auth endpoints without rate limiting are the #1 cause of account takeover.',
+    fix: 'Use express-rate-limit: strict limits on /auth/* (5 req/15min by IP+email), moderate limits on API endpoints (100 req/min per user). Return 429 with Retry-After header.',
+    severity: 'critical',
+    badExample: 'app.post("/auth/login", async (req, res) => { const user = await checkPassword(email, password); ... }); // No rate limit',
+    goodExample: 'const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, message: "Too many login attempts", standardHeaders: true }); app.post("/auth/login", loginLimiter, async (req, res) => { ... });',
+    tags: ['security', 'api', 'authentication'],
+  },
+  {
+    id: 'plain-text-password',
+    name: 'Storing or logging plain-text passwords',
+    description: 'Passwords stored as plain text in DB, included in logs, or returned in API responses.',
+    whyBad: 'A single DB breach exposes every user\'s password. Users often reuse passwords — so your breach becomes a breach everywhere. Logging passwords violates compliance (PCI, GDPR).',
+    fix: 'Always hash with bcrypt (cost 12+) or argon2 before storing. Never log request bodies on auth routes. Always exclude passwordHash from SELECT and API responses.',
+    severity: 'critical',
+    badExample: 'await db.insert(users).values({ email, password: req.body.password }); // Plain text!',
+    goodExample: 'const passwordHash = await bcrypt.hash(req.body.password, 12); await db.insert(users).values({ email, passwordHash }); // Never return passwordHash in responses',
+    tags: ['security', 'authentication', 'database'],
+  },
+  {
+    id: 'overfetching',
+    name: 'Overfetching — returning more data than needed',
+    description: 'API returns entire DB rows including sensitive fields, or sends large nested objects when only IDs are needed.',
+    whyBad: 'Exposes sensitive fields (passwordHash, internalNotes, costPrice). Wastes bandwidth. Leaks internal data model. One slip includes a secret field in a public endpoint.',
+    fix: 'Always use explicit .select({ id, name, email }) in Drizzle — never db.select().from(table) on user-facing endpoints. Create separate DTO types for public vs internal representation.',
+    severity: 'high',
+    badExample: 'const users = await db.select().from(usersTable); // Returns passwordHash!',
+    goodExample: 'const users = await db.select({ id: usersTable.id, name: usersTable.name, email: usersTable.email, role: usersTable.role }).from(usersTable);',
+    tags: ['security', 'api', 'database'],
+  },
+  {
+    id: 'xss-dangerous-html',
+    name: 'XSS via dangerouslySetInnerHTML or unsafe DOM injection',
+    description: 'Rendering user-generated HTML directly into the DOM without sanitization.',
+    whyBad: 'Any user-provided content rendered as HTML can execute scripts. An attacker stores `<script>document.cookie</script>` and it runs for every viewer. Leads to session hijacking and credential theft.',
+    fix: 'Never use dangerouslySetInnerHTML with unsanitized input. Use DOMPurify.sanitize() if you must render HTML. For markdown, use a sanitizing markdown renderer. Prefer rendering as plain text.',
+    severity: 'critical',
+    badExample: '<div dangerouslySetInnerHTML={{ __html: userPost.content }} />',
+    goodExample: 'import DOMPurify from "dompurify"; <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(userPost.content) }} />\n// Or better: render as plain text or use react-markdown with rehype-sanitize',
+    tags: ['security', 'react', 'xss'],
+  },
+  {
+    id: 'missing-fk-index',
+    name: 'Missing index on foreign key columns',
+    description: 'Foreign key columns lack indexes, making JOIN and WHERE queries slow.',
+    whyBad: 'Every JOIN and WHERE clause on a FK column does a full table scan without an index. A tasks table with 100k rows filtered by project_id takes 50ms+ instead of <1ms. Gets dramatically worse at scale.',
+    fix: 'Always create an index on every FK column. In Drizzle: export const projectIdIdx = index("tasks_project_id_idx").on(tasks.projectId). Composite indexes for common multi-column queries.',
+    severity: 'high',
+    badExample: 'export const tasks = pgTable("tasks", { id: serial("id").primaryKey(), projectId: integer("project_id").references(() => projects.id) }); // No index!',
+    goodExample: 'export const tasks = pgTable("tasks", { id: serial("id").primaryKey(), projectId: integer("project_id").notNull().references(() => projects.id) }, (t) => ({ projectIdIdx: index("tasks_project_id_idx").on(t.projectId), statusIdx: index("tasks_status_idx").on(t.status) }));',
+    tags: ['database', 'performance', 'drizzle'],
+  },
+  {
+    id: 'god-component',
+    name: 'God component — one component doing everything',
+    description: 'A single React component that fetches data, handles business logic, manages complex state, AND renders everything.',
+    whyBad: 'Components with 500+ lines are impossible to test, reuse, or reason about. Adding a feature requires understanding the entire thing. State bugs cascade unpredictably.',
+    fix: 'Split by responsibility: data-fetching hook, business logic hook, presentation component. A component over 150 lines is a signal to extract. Extract repeated JSX into sub-components.',
+    severity: 'medium',
+    badExample: 'function Dashboard() { const [users, setUsers] = useState([]); const [orders, setOrders] = useState([]); /* 8 more useState */ /* 5 useEffects */ /* 400 lines of JSX */ }',
+    goodExample: 'function Dashboard() { return <DashboardLayout><UserStatsPanel /><RecentOrdersPanel /><RevenueChart /></DashboardLayout>; }\n// Each sub-component owns its own data fetching and state',
+    tags: ['react', 'architecture', 'maintainability'],
+  },
+  {
+    id: 'missing-zod-validation',
+    name: 'No input validation on API routes',
+    description: 'API route handlers use req.body values directly without parsing or validating them.',
+    whyBad: 'Malformed input crashes handlers. Missing fields cause confusing "Cannot read property of undefined" errors. SQL injection if values are interpolated into queries. Type confusion when the frontend sends unexpected types.',
+    fix: 'Parse and validate every request with Zod. On validation failure, return 422 with field-level error details. Use the same Zod schema for both validation and TypeScript types.',
+    severity: 'critical',
+    badExample: 'app.post("/users", async (req, res) => { await db.insert(users).values({ email: req.body.email, name: req.body.name }); res.json({ success: true }); });',
+    goodExample: 'const createUserSchema = z.object({ email: z.string().email(), name: z.string().min(1).max(100) }); app.post("/users", async (req, res) => { const result = createUserSchema.safeParse(req.body); if (!result.success) return res.status(422).json({ errors: result.error.flatten() }); await db.insert(users).values(result.data); res.status(201).json({ success: true }); });',
+    tags: ['api', 'validation', 'security', 'express'],
+  },
+  {
+    id: 'money-float',
+    name: 'Using floating point for money/currency',
+    description: 'Storing money amounts as JavaScript floats (0.1 + 0.2 = 0.30000000000000004).',
+    whyBad: 'Float arithmetic is imprecise for decimal values. Currency rounding errors compound across transactions. Users may see incorrect totals. Can lead to fraud and reconciliation failures.',
+    fix: 'Store all monetary values as integers in the smallest unit (cents). 1234 = $12.34. Only convert to decimal for display. Never do: price * qty with floats.',
+    severity: 'critical',
+    badExample: 'const total = order.items.reduce((sum, item) => sum + item.price * item.quantity, 0); // Float errors!',
+    goodExample: 'const totalCents = order.items.reduce((sum, item) => sum + item.priceInCents * item.quantity, 0); const displayTotal = (totalCents / 100).toFixed(2); // $12.34',
+    tags: ['finance', 'database', 'precision'],
+  },
+  {
+    id: 'no-soft-delete',
+    name: 'Hard deleting records that should be preserved',
+    description: 'Using DELETE statements on records that have foreign key relationships or audit requirements.',
+    whyBad: 'Hard deletes orphan related records, break audit trails, and lose data permanently. If an order references a deleted product, the order history becomes meaningless. Regulators (GDPR, SOX) often require data retention.',
+    fix: 'Add deletedAt timestamptz column. Set it on "delete" instead of removing the row. Filter WHERE deletedAt IS NULL in all queries. Add a composite index on (active_column, deleted_at).',
+    severity: 'high',
+    badExample: 'await db.delete(users).where(eq(users.id, userId)); // Gone forever, breaks audit trails',
+    goodExample: 'await db.update(users).set({ deletedAt: new Date(), status: "deleted" }).where(eq(users.id, userId)); // Soft delete — preserved for audit, can be restored',
+    tags: ['database', 'data-integrity', 'audit'],
   },
 ];
 
@@ -1540,6 +2890,723 @@ function loadEnv(): Env {
 
 export const env = loadEnv(); // Call once at startup`,
   },
+
+  {
+    id: 'express-rate-limiter',
+    title: 'Express Rate Limiting (Auth + API)',
+    description: 'Strict rate limits on auth endpoints, moderate on API. Prevents brute-force and DoS.',
+    tech: ['express', 'typescript'],
+    tags: ['security', 'rate-limiting', 'authentication'],
+    code: `import rateLimit from 'express-rate-limit';
+
+// Strict: 5 attempts per 15 minutes per IP (auth endpoints)
+export const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5,
+  message: { error: 'Too many attempts. Please try again in 15 minutes.' },
+  standardHeaders: true,  // Return rate limit info in RateLimit-* headers
+  legacyHeaders: false,
+  skipSuccessfulRequests: true, // Only count failed requests
+});
+
+// Moderate: 100 req/min per authenticated user
+export const apiLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 100,
+  keyGenerator: (req) => (req as any).userId?.toString() || req.ip || 'anonymous',
+  message: { error: 'Rate limit exceeded. Please slow down.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Usage in routes:
+// app.post('/auth/login', authLimiter, loginHandler);
+// app.post('/auth/register', authLimiter, registerHandler);
+// app.use('/api', apiLimiter);`,
+  },
+
+  {
+    id: 'drizzle-soft-delete',
+    title: 'Soft Delete Pattern (Drizzle)',
+    description: 'Implement soft deletes with deletedAt column. All queries automatically filter soft-deleted rows.',
+    tech: ['drizzle', 'typescript', 'postgresql'],
+    tags: ['database', 'soft-delete', 'data-integrity'],
+    code: `import { pgTable, serial, text, timestamptz, boolean } from 'drizzle-orm/pg-core';
+import { and, eq, isNull } from 'drizzle-orm';
+import { db } from './db';
+
+// Schema: add deletedAt to any table
+export const items = pgTable('items', {
+  id: serial('id').primaryKey(),
+  name: text('name').notNull(),
+  deletedAt: timestamptz('deleted_at'), // null = active, set = soft-deleted
+  createdAt: timestamptz('created_at').notNull().defaultNow(),
+  updatedAt: timestamptz('updated_at').notNull().defaultNow(),
+});
+
+// Soft delete — never use db.delete() on these tables
+export async function softDelete(id: number): Promise<boolean> {
+  const result = await db
+    .update(items)
+    .set({ deletedAt: new Date(), updatedAt: new Date() })
+    .where(and(eq(items.id, id), isNull(items.deletedAt)))
+    .returning({ id: items.id });
+  return result.length > 0;
+}
+
+// All queries MUST include this filter
+export async function findActive(userId?: number) {
+  return db
+    .select()
+    .from(items)
+    .where(isNull(items.deletedAt)); // Always filter soft-deleted rows
+}
+
+// Restore a soft-deleted record
+export async function restore(id: number): Promise<boolean> {
+  const result = await db
+    .update(items)
+    .set({ deletedAt: null, updatedAt: new Date() })
+    .where(eq(items.id, id))
+    .returning({ id: items.id });
+  return result.length > 0;
+}`,
+  },
+
+  {
+    id: 'drizzle-audit-log',
+    title: 'Audit Log Pattern (Drizzle)',
+    description: 'Append-only audit trail recording who did what to which entity and when.',
+    tech: ['drizzle', 'typescript', 'postgresql'],
+    tags: ['audit', 'security', 'database', 'compliance'],
+    code: `import { pgTable, bigserial, varchar, text, integer, timestamptz, jsonb, inet } from 'drizzle-orm/pg-core';
+import { db } from './db';
+
+export const auditLogs = pgTable('audit_logs', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(), // bigserial for high volume
+  action: varchar('action', { length: 100 }).notNull(),    // 'user.updated', 'invoice.paid'
+  actorId: integer('actor_id'),                            // null for system actions
+  actorEmail: varchar('actor_email', { length: 255 }),     // snapshot at time of action
+  entityType: varchar('entity_type', { length: 50 }).notNull(),
+  entityId: integer('entity_id'),
+  changes: jsonb('changes'),    // { before: {...}, after: {...} }
+  metadata: jsonb('metadata'),  // { ip, userAgent, requestId }
+  createdAt: timestamptz('created_at').notNull().defaultNow(),
+});
+
+export interface AuditContext {
+  actorId?: number;
+  actorEmail?: string;
+  ipAddress?: string;
+  userAgent?: string;
+}
+
+// Call this helper whenever a significant action occurs
+export async function logAudit(
+  action: string,
+  entityType: string,
+  entityId: number | null,
+  context: AuditContext,
+  changes?: { before?: Record<string, unknown>; after?: Record<string, unknown> }
+): Promise<void> {
+  await db.insert(auditLogs).values({
+    action,
+    actorId: context.actorId ?? null,
+    actorEmail: context.actorEmail ?? null,
+    entityType,
+    entityId: entityId ?? null,
+    changes: changes ?? null,
+    metadata: { ip: context.ipAddress, userAgent: context.userAgent },
+  });
+}
+
+// Usage:
+// await logAudit('invoice.paid', 'invoice', invoice.id, { actorId: req.userId, actorEmail: req.userEmail },
+//   { before: { status: 'sent' }, after: { status: 'paid' } });`,
+  },
+
+  {
+    id: 'express-file-upload',
+    title: 'File Upload Handler (multer + S3)',
+    description: 'Secure multipart file upload with type/size validation and object storage.',
+    tech: ['express', 'typescript', 'multer'],
+    tags: ['file-upload', 'api', 'security'],
+    code: `import multer from 'multer';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { randomUUID } from 'crypto';
+import path from 'path';
+
+const ALLOWED_MIME_TYPES = new Set([
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+  'application/pdf', 'text/plain',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+]);
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+
+// Memory storage — never write to disk in production
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_FILE_SIZE, files: 5 },
+  fileFilter: (_req, file, cb) => {
+    if (ALLOWED_MIME_TYPES.has(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error(\`File type \${file.mimetype} not allowed\`));
+    }
+  },
+});
+
+const s3 = new S3Client({ region: process.env.AWS_REGION });
+
+export async function uploadToS3(
+  buffer: Buffer,
+  originalName: string,
+  mimeType: string,
+  prefix = 'uploads'
+): Promise<{ key: string; url: string }> {
+  const ext = path.extname(originalName).toLowerCase();
+  const key = \`\${prefix}/\${randomUUID()}\${ext}\`;
+
+  await s3.send(new PutObjectCommand({
+    Bucket: process.env.S3_BUCKET!,
+    Key: key,
+    Body: buffer,
+    ContentType: mimeType,
+    // Never set ACL: 'public-read' — use signed URLs instead
+  }));
+
+  const url = \`https://\${process.env.S3_BUCKET}.s3.\${process.env.AWS_REGION}.amazonaws.com/\${key}\`;
+  return { key, url };
+}
+
+// Route: POST /attachments
+// app.post('/attachments', authenticate, upload.single('file'), async (req, res) => {
+//   if (!req.file) return res.status(400).json({ error: 'No file provided' });
+//   const { key, url } = await uploadToS3(req.file.buffer, req.file.originalname, req.file.mimetype);
+//   const attachment = await db.insert(attachments).values({ filename: req.file.originalname, storedKey: key, url, mimeType: req.file.mimetype, sizeBytes: req.file.size, uploadedById: req.userId }).returning();
+//   res.status(201).json({ attachment: attachment[0] });
+// });`,
+  },
+
+  {
+    id: 'react-infinite-scroll',
+    title: 'Cursor-Based Infinite Scroll (React Query)',
+    description: 'Infinite scroll with cursor pagination using useInfiniteQuery. Efficient for large lists.',
+    tech: ['react', 'typescript', 'react-query'],
+    tags: ['pagination', 'infinite-scroll', 'react', 'performance'],
+    code: `import { useInfiniteQuery } from '@tanstack/react-query';
+import { useRef, useCallback, useEffect } from 'react';
+import { apiRequest } from '@/lib/queryClient';
+
+interface PageResult<T> {
+  data: T[];
+  nextCursor: string | null;
+  total: number;
+}
+
+function useCursorPagination<T>(
+  queryKey: string,
+  endpoint: string,
+  pageSize = 20
+) {
+  const { data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading, error } =
+    useInfiniteQuery<PageResult<T>>({
+      queryKey: [queryKey],
+      queryFn: async ({ pageParam }) => {
+        const cursor = pageParam as string | undefined;
+        const url = cursor
+          ? \`\${endpoint}?cursor=\${cursor}&limit=\${pageSize}\`
+          : \`\${endpoint}?limit=\${pageSize}\`;
+        const res = await apiRequest('GET', url);
+        return res.json();
+      },
+      initialPageParam: undefined,
+      getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    });
+
+  // Intersection Observer for auto-load
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const loadMoreRef = useCallback((node: HTMLDivElement | null) => {
+    if (isFetchingNextPage) return;
+    observerRef.current?.disconnect();
+    if (node) {
+      observerRef.current = new IntersectionObserver(([entry]) => {
+        if (entry.isIntersecting && hasNextPage) fetchNextPage();
+      });
+      observerRef.current.observe(node);
+    }
+  }, [isFetchingNextPage, hasNextPage, fetchNextPage]);
+
+  const items = data?.pages.flatMap(p => p.data) ?? [];
+  return { items, isLoading, error, isFetchingNextPage, hasNextPage, loadMoreRef };
+}
+
+// Usage:
+// const { items, isLoading, loadMoreRef } = useCursorPagination<Task>('tasks', '/api/tasks');
+// return (
+//   <div>
+//     {items.map(item => <TaskCard key={item.id} task={item} />)}
+//     <div ref={loadMoreRef} className="h-4" /> {/* Sentinel element */}
+//     {isFetchingNextPage && <Spinner />}
+//   </div>
+// );`,
+  },
+
+  {
+    id: 'react-optimistic-update',
+    title: 'Optimistic Updates (React Query)',
+    description: 'Update UI instantly on user action, roll back if server rejects. Zero-latency UX.',
+    tech: ['react', 'typescript', 'react-query'],
+    tags: ['react', 'optimistic-ui', 'ux', 'react-query'],
+    code: `import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { apiRequest } from '@/lib/queryClient';
+
+interface Task { id: number; title: string; status: string; }
+
+function useToggleTaskStatus() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ id, status }: { id: number; status: string }) => {
+      const res = await apiRequest('PATCH', \`/api/tasks/\${id}\`, { status });
+      return res.json() as Promise<Task>;
+    },
+
+    // 1. Snapshot current state before mutation
+    onMutate: async ({ id, status }) => {
+      await queryClient.cancelQueries({ queryKey: ['tasks'] });
+      const previousTasks = queryClient.getQueryData<Task[]>(['tasks']);
+
+      // 2. Apply optimistic update immediately
+      queryClient.setQueryData<Task[]>(['tasks'], (old) =>
+        old?.map(task => task.id === id ? { ...task, status } : task) ?? []
+      );
+
+      return { previousTasks }; // Return snapshot for rollback
+    },
+
+    // 3. On error: roll back to snapshot
+    onError: (_err, _vars, context) => {
+      if (context?.previousTasks) {
+        queryClient.setQueryData(['tasks'], context.previousTasks);
+      }
+    },
+
+    // 4. After success or error: sync with server truth
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    },
+  });
+}`,
+  },
+
+  {
+    id: 'drizzle-full-text-search',
+    title: 'Full-Text Search (PostgreSQL + Drizzle)',
+    description: 'Efficient full-text search with tsvector, ranking, and pagination.',
+    tech: ['drizzle', 'typescript', 'postgresql'],
+    tags: ['search', 'database', 'postgresql', 'performance'],
+    code: `import { sql, desc, and, isNull } from 'drizzle-orm';
+import { db } from './db';
+import { tasks } from './schema';
+
+// In your schema, add a search vector column:
+// searchVector: customType<{ data: string }>({ dataType: () => 'tsvector' })
+
+// Create a GIN index on the vector column (run once):
+// CREATE INDEX tasks_search_idx ON tasks USING GIN(search_vector);
+// Keep it updated via trigger or manually on insert/update
+
+export async function searchTasks(
+  query: string,
+  projectId: number,
+  limit = 20,
+  offset = 0
+): Promise<{ results: typeof tasks.$inferSelect[]; total: number }> {
+  if (!query.trim()) {
+    return { results: [], total: 0 };
+  }
+
+  // Sanitize and build tsquery (prefix search with :*)
+  const tsQuery = query
+    .trim()
+    .split(/\s+/)
+    .map(word => word.replace(/[^a-zA-Z0-9]/g, '') + ':*')
+    .join(' & ');
+
+  const [results, countResult] = await Promise.all([
+    db.execute(sql\`
+      SELECT *, ts_rank(search_vector, to_tsquery('english', \${tsQuery})) AS rank
+      FROM tasks
+      WHERE project_id = \${projectId}
+        AND deleted_at IS NULL
+        AND search_vector @@ to_tsquery('english', \${tsQuery})
+      ORDER BY rank DESC, created_at DESC
+      LIMIT \${limit} OFFSET \${offset}
+    \`),
+    db.execute(sql\`
+      SELECT COUNT(*) as total
+      FROM tasks
+      WHERE project_id = \${projectId}
+        AND deleted_at IS NULL
+        AND search_vector @@ to_tsquery('english', \${tsQuery})
+    \`),
+  ]);
+
+  return {
+    results: results.rows as typeof tasks.$inferSelect[],
+    total: Number((countResult.rows[0] as any).total),
+  };
+}
+
+// For simple ILIKE search (no tsvector setup needed, good for <100k rows):
+export async function simpleSearch(query: string, limit = 20) {
+  return db
+    .select()
+    .from(tasks)
+    .where(and(
+      isNull(tasks.deletedAt),
+      sql\`(title ILIKE \${'%' + query + '%'} OR description ILIKE \${'%' + query + '%'})\`
+    ))
+    .orderBy(desc(tasks.createdAt))
+    .limit(limit);
+}`,
+  },
+
+  {
+    id: 'react-table-with-filter-sort',
+    title: 'Data Table with Filter, Sort, and Pagination',
+    description: 'Production-quality data table with server-side filtering, sorting, and URL-synced state.',
+    tech: ['react', 'typescript', 'react-query'],
+    tags: ['react', 'table', 'filtering', 'sorting', 'pagination'],
+    code: `import { useState, useCallback } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useSearchParams } from 'wouter';
+import { apiRequest } from '@/lib/queryClient';
+
+interface TableState {
+  page: number;
+  pageSize: number;
+  sortBy: string;
+  sortDir: 'asc' | 'desc';
+  search: string;
+  filters: Record<string, string>;
+}
+
+function useTableState(defaultSortBy: string) {
+  const [state, setState] = useState<TableState>({
+    page: 1, pageSize: 20, sortBy: defaultSortBy, sortDir: 'desc', search: '', filters: {}
+  });
+
+  const setPage = useCallback((page: number) => setState(s => ({ ...s, page })), []);
+  const setSearch = useCallback((search: string) => setState(s => ({ ...s, search, page: 1 })), []);
+  const setFilter = useCallback((key: string, value: string) =>
+    setState(s => ({ ...s, filters: { ...s.filters, [key]: value }, page: 1 })), []);
+  const toggleSort = useCallback((column: string) =>
+    setState(s => ({
+      ...s,
+      sortBy: column,
+      sortDir: s.sortBy === column && s.sortDir === 'asc' ? 'desc' : 'asc',
+      page: 1,
+    })), []);
+
+  const buildQuery = useCallback(() => {
+    const params = new URLSearchParams({
+      page: String(state.page),
+      pageSize: String(state.pageSize),
+      sortBy: state.sortBy,
+      sortDir: state.sortDir,
+    });
+    if (state.search) params.set('search', state.search);
+    Object.entries(state.filters).forEach(([k, v]) => { if (v) params.set(k, v); });
+    return params.toString();
+  }, [state]);
+
+  return { state, setPage, setSearch, setFilter, toggleSort, buildQuery };
+}
+
+// Usage:
+// const { state, setPage, setSearch, setFilter, toggleSort, buildQuery } = useTableState('createdAt');
+// const { data } = useQuery({ queryKey: ['tasks', buildQuery()], queryFn: () => apiRequest('GET', \`/api/tasks?\${buildQuery()}\`).then(r => r.json()) });`,
+  },
+
+  {
+    id: 'nodejs-background-job',
+    title: 'Background Job Queue (Node.js)',
+    description: 'Simple in-process job queue with retries, delays, and error handling. Use BullMQ for production.',
+    tech: ['typescript', 'nodejs'],
+    tags: ['background-jobs', 'queue', 'async', 'nodejs'],
+    code: `// Simple in-process queue for low-volume tasks
+// For production, replace with BullMQ + Redis
+
+interface Job<T = unknown> {
+  id: string;
+  type: string;
+  data: T;
+  attempts: number;
+  maxAttempts: number;
+  nextRunAt: Date;
+}
+
+type JobHandler<T> = (data: T) => Promise<void>;
+
+class SimpleJobQueue {
+  private queue: Job[] = [];
+  private handlers = new Map<string, JobHandler<any>>();
+  private running = false;
+
+  register<T>(type: string, handler: JobHandler<T>) {
+    this.handlers.set(type, handler);
+  }
+
+  enqueue<T>(type: string, data: T, delayMs = 0): string {
+    const id = \`\${type}-\${Date.now()}-\${Math.random().toString(36).slice(2)}\`;
+    this.queue.push({
+      id, type, data, attempts: 0, maxAttempts: 3,
+      nextRunAt: new Date(Date.now() + delayMs),
+    });
+    if (!this.running) this.process();
+    return id;
+  }
+
+  private async process() {
+    this.running = true;
+    while (this.queue.length > 0) {
+      const now = new Date();
+      const idx = this.queue.findIndex(j => j.nextRunAt <= now);
+      if (idx === -1) { await new Promise(r => setTimeout(r, 1000)); continue; }
+
+      const [job] = this.queue.splice(idx, 1);
+      const handler = this.handlers.get(job.type);
+      if (!handler) continue;
+
+      try {
+        await handler(job.data);
+      } catch (err) {
+        job.attempts++;
+        if (job.attempts < job.maxAttempts) {
+          job.nextRunAt = new Date(Date.now() + Math.pow(2, job.attempts) * 1000); // Exponential backoff
+          this.queue.push(job);
+        } else {
+          console.error(\`[JobQueue] Job \${job.id} failed after \${job.maxAttempts} attempts:\`, err);
+        }
+      }
+    }
+    this.running = false;
+  }
+}
+
+export const jobQueue = new SimpleJobQueue();
+
+// Register handlers:
+// jobQueue.register('send-welcome-email', async (data: { userId: number }) => {
+//   await emailService.sendWelcome(data.userId);
+// });
+// jobQueue.register('generate-pdf-report', async (data: { reportId: number }) => {
+//   await pdfService.generate(data.reportId);
+// });
+
+// Enqueue:
+// jobQueue.enqueue('send-welcome-email', { userId: newUser.id });
+// jobQueue.enqueue('generate-pdf-report', { reportId }, 5000); // 5s delay`,
+  },
+
+  {
+    id: 'react-compound-component',
+    title: 'Compound Component Pattern',
+    description: 'Build flexible, composable UI components using React context + static subcomponents.',
+    tech: ['react', 'typescript'],
+    tags: ['react', 'pattern', 'compound-component', 'context'],
+    code: `import { createContext, useContext, useState } from 'react';
+
+// Example: Accordion compound component
+interface AccordionContext {
+  openItems: Set<string>;
+  toggle: (id: string) => void;
+  allowMultiple: boolean;
+}
+
+const AccordionCtx = createContext<AccordionContext | null>(null);
+
+function useAccordion() {
+  const ctx = useContext(AccordionCtx);
+  if (!ctx) throw new Error('Accordion subcomponents must be used inside <Accordion>');
+  return ctx;
+}
+
+function Accordion({ children, allowMultiple = false }: { children: React.ReactNode; allowMultiple?: boolean }) {
+  const [openItems, setOpenItems] = useState<Set<string>>(new Set());
+
+  const toggle = (id: string) => {
+    setOpenItems(prev => {
+      const next = new Set(allowMultiple ? prev : []);
+      if (prev.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  return (
+    <AccordionCtx.Provider value={{ openItems, toggle, allowMultiple }}>
+      <div role="list">{children}</div>
+    </AccordionCtx.Provider>
+  );
+}
+
+function AccordionItem({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
+  const { openItems, toggle } = useAccordion();
+  const isOpen = openItems.has(id);
+  return (
+    <div role="listitem">
+      <button onClick={() => toggle(id)} aria-expanded={isOpen}>{title}</button>
+      {isOpen && <div>{children}</div>}
+    </div>
+  );
+}
+
+Accordion.Item = AccordionItem;
+
+// Usage:
+// <Accordion allowMultiple>
+//   <Accordion.Item id="section-1" title="Section 1">Content 1</Accordion.Item>
+//   <Accordion.Item id="section-2" title="Section 2">Content 2</Accordion.Item>
+// </Accordion>`,
+  },
+
+  {
+    id: 'express-jwt-auth',
+    title: 'JWT Auth Flow (sign + verify + refresh)',
+    description: 'Complete JWT authentication with short-lived access tokens and long-lived refresh tokens.',
+    tech: ['express', 'typescript', 'jwt'],
+    tags: ['authentication', 'jwt', 'security', 'express'],
+    code: `import jwt from 'jsonwebtoken';
+import { db } from './db';
+import { users, refreshTokens } from './schema';
+import { eq, and, gt } from 'drizzle-orm';
+
+const ACCESS_TOKEN_EXPIRES = '15m';
+const REFRESH_TOKEN_EXPIRES = '7d';
+const REFRESH_TOKEN_EXPIRES_MS = 7 * 24 * 60 * 60 * 1000;
+
+export interface TokenPayload { userId: number; email: string; role: string; }
+
+export function signAccessToken(payload: TokenPayload): string {
+  return jwt.sign(payload, process.env.JWT_SECRET!, { expiresIn: ACCESS_TOKEN_EXPIRES });
+}
+
+export async function createRefreshToken(userId: number): Promise<string> {
+  const token = jwt.sign({ userId, type: 'refresh' }, process.env.JWT_REFRESH_SECRET!, { expiresIn: REFRESH_TOKEN_EXPIRES });
+  // Store in DB for revocation support
+  await db.insert(refreshTokens).values({
+    token: await hashToken(token), // Store hashed, not plain
+    userId,
+    expiresAt: new Date(Date.now() + REFRESH_TOKEN_EXPIRES_MS),
+  });
+  return token;
+}
+
+export function verifyAccessToken(token: string): TokenPayload {
+  return jwt.verify(token, process.env.JWT_SECRET!) as TokenPayload;
+}
+
+export async function refreshAccessToken(refreshToken: string): Promise<string> {
+  const payload = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET!) as { userId: number };
+  const hashedToken = await hashToken(refreshToken);
+  const storedToken = await db.query.refreshTokens.findFirst({
+    where: and(
+      eq(refreshTokens.token, hashedToken),
+      eq(refreshTokens.userId, payload.userId),
+      gt(refreshTokens.expiresAt, new Date()), // Not expired
+    ),
+    with: { user: { columns: { id: true, email: true, role: true } } },
+  });
+  if (!storedToken) throw new Error('Invalid or expired refresh token');
+  return signAccessToken({ userId: storedToken.user.id, email: storedToken.user.email, role: storedToken.user.role });
+}
+
+async function hashToken(token: string): Promise<string> {
+  const { createHash } = await import('crypto');
+  return createHash('sha256').update(token).digest('hex');
+}
+
+// Express middleware
+export function authenticate(req: any, res: any, next: any) {
+  const header = req.headers.authorization;
+  if (!header?.startsWith('Bearer ')) return res.status(401).json({ error: 'Missing token' });
+  try {
+    req.user = verifyAccessToken(header.slice(7));
+    next();
+  } catch {
+    res.status(401).json({ error: 'Invalid or expired token' });
+  }
+}`,
+  },
+
+  {
+    id: 'react-data-chart',
+    title: 'Analytics Chart Component (Recharts)',
+    description: 'Responsive time-series chart with loading state, empty state, and tooltip.',
+    tech: ['react', 'typescript', 'recharts'],
+    tags: ['react', 'charts', 'analytics', 'visualization'],
+    code: `import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { useQuery } from '@tanstack/react-query';
+import { apiRequest } from '@/lib/queryClient';
+
+interface DataPoint { date: string; value: number; }
+
+interface Props {
+  endpoint: string;
+  title: string;
+  color?: string;
+  yAxisLabel?: string;
+  dateRange?: { from: Date; to: Date };
+}
+
+export function TimeSeriesChart({ endpoint, title, color = '#6366f1', yAxisLabel = 'Count', dateRange }: Props) {
+  const { data, isLoading, error } = useQuery<DataPoint[]>({
+    queryKey: [endpoint, dateRange?.from?.toISOString(), dateRange?.to?.toISOString()],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (dateRange?.from) params.set('from', dateRange.from.toISOString());
+      if (dateRange?.to) params.set('to', dateRange.to.toISOString());
+      return apiRequest('GET', \`\${endpoint}?\${params}\`).then(r => r.json());
+    },
+    staleTime: 5 * 60 * 1000, // 5 min cache
+  });
+
+  if (isLoading) return (
+    <div className="h-64 bg-muted animate-pulse rounded-lg flex items-center justify-center">
+      <span className="text-muted-foreground text-sm">Loading chart...</span>
+    </div>
+  );
+
+  if (error) return (
+    <div className="h-64 bg-destructive/10 rounded-lg flex items-center justify-center">
+      <span className="text-destructive text-sm">Failed to load chart data</span>
+    </div>
+  );
+
+  if (!data?.length) return (
+    <div className="h-64 bg-muted/50 rounded-lg flex items-center justify-center">
+      <span className="text-muted-foreground text-sm">No data for selected period</span>
+    </div>
+  );
+
+  return (
+    <div className="w-full">
+      <h3 className="text-sm font-medium mb-3">{title}</h3>
+      <ResponsiveContainer width="100%" height={240}>
+        <LineChart data={data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+          <XAxis dataKey="date" tick={{ fontSize: 11 }} tickLine={false} />
+          <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} label={{ value: yAxisLabel, angle: -90, position: 'insideLeft', style: { fontSize: 11 } }} />
+          <Tooltip contentStyle={{ background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }} />
+          <Line type="monotone" dataKey="value" stroke={color} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}`,
+  },
 ];
 
 // ============================================
@@ -1776,6 +3843,144 @@ const BEST_PRACTICES: BestPractice[] = [
     ],
     languages: ['typescript'],
   },
+  {
+    id: 'security',
+    title: 'Application Security',
+    category: 'security',
+    description: 'Prevent the most common web vulnerabilities (OWASP Top 10) in every application.',
+    do: [
+      'Hash passwords with bcrypt (cost 12) or argon2 — never store plain text',
+      'Validate ALL input on the server with Zod — never trust client data',
+      'Rate limit auth endpoints: 5 req/15min by IP',
+      'Use HttpOnly, Secure, SameSite=Strict cookies for session tokens',
+      'Store secrets in environment variables, never in code',
+      'Set security headers: CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy',
+      'Use parameterized queries / ORM (never string-concatenate SQL)',
+      'Implement RBAC — check authorization on every request, not just the route',
+    ],
+    dont: [
+      'Store passwords, tokens, or API keys in plaintext in DB or logs',
+      'Return internal error messages or stack traces to clients',
+      'Use MD5 or SHA1 for password hashing',
+      'Trust user-supplied IDs without verifying ownership',
+      'Use dangerouslySetInnerHTML with unsanitized input',
+      'Allow unlimited login attempts without lockout/rate limiting',
+    ],
+    languages: ['typescript', 'javascript'],
+  },
+  {
+    id: 'database',
+    title: 'Database Design Principles',
+    category: 'database',
+    description: 'Design schemas that perform well, stay consistent, and scale cleanly.',
+    do: [
+      'Add indexes on every foreign key column',
+      'Add composite indexes for the most common WHERE + ORDER BY combinations',
+      'Store money as integers in cents — never floating point',
+      'Use timestamptz (not timestamp) for all datetime columns — timezone-aware',
+      'Add deletedAt nullable column for soft-delete instead of hard deletes',
+      'Use NOT NULL constraints — nullable = optional, be explicit about intent',
+      'Add createdAt and updatedAt to every mutable table',
+      'Use CHECK constraints for enum-like columns: CHECK (status IN (...))',
+    ],
+    dont: [
+      'Use varchar(MAX) or text for everything — choose appropriate limits',
+      'Use stored procedures for business logic — keep it in application code',
+      'Skip DB constraints thinking application code will handle it',
+      'Store JSON blobs where relational columns would be clearer',
+      'Index every column — only index what queries actually filter/sort on',
+      'Use sequences for natural keys (phone, email) — always add a surrogate PK',
+    ],
+    languages: ['typescript', 'sql'],
+  },
+  {
+    id: 'state-management',
+    title: 'Frontend State Management',
+    category: 'react',
+    description: 'Choose the right state scope and avoid state synchronization hell.',
+    do: [
+      'Distinguish state types: server state (React Query), client/UI state (useState/useReducer), global UI (context/Zustand)',
+      'Use React Query for ALL server data — it handles caching, loading, refetching automatically',
+      'Co-locate state with the component that owns it — lift only when necessary',
+      'Derive values during render instead of storing derived state in useState',
+      'Use URL params for state that should be shareable/bookmarkable (filters, page)',
+      'Reset form state after successful submission',
+    ],
+    dont: [
+      'Mix server cache (React Query) with client state in the same useState',
+      'Store copies of server data in useState — one source of truth',
+      'Use Redux/Zustand for server cache — React Query replaces that use case',
+      'Keep stale data in a context store when React Query would handle it',
+      'Update UI optimistically without handling rollback on failure',
+    ],
+    languages: ['typescript'],
+  },
+  {
+    id: 'performance-react',
+    title: 'React Performance Optimization',
+    category: 'performance',
+    description: 'Prevent unnecessary re-renders and keep the UI responsive.',
+    do: [
+      'Profile with React DevTools Profiler before optimizing — measure first',
+      'Use useMemo for expensive calculations that take >1ms',
+      'Use useCallback when passing functions as props to memoized children',
+      'Use React.memo on pure components that receive complex props',
+      'Virtualize long lists (>100 items) with react-virtual or react-window',
+      'Lazy-load heavy components with React.lazy + Suspense',
+      'Use CSS transitions instead of JS animations when possible',
+    ],
+    dont: [
+      'Add useMemo/useCallback everywhere preemptively — it has overhead too',
+      'Put large objects or arrays inline in JSX props to memoized components',
+      'Import entire icon libraries — use tree-shaking or individual imports',
+      'Render 1000+ items without virtualization',
+      'Run expensive operations on every keystroke without debouncing',
+    ],
+    languages: ['typescript'],
+  },
+  {
+    id: 'file-organization',
+    title: 'Project File Organization',
+    category: 'architecture',
+    description: 'Structure files for discoverability, team collaboration, and scalability.',
+    do: [
+      'Group by feature/domain, not by file type: src/features/invoices/ not src/components/InvoiceForm, src/hooks/useInvoices',
+      'Keep shared utilities in src/lib/ or src/utils/',
+      'Put API client code in src/lib/api.ts or per-resource files',
+      'Use barrel exports (index.ts) only for stable public APIs — not for everything',
+      'Name files after their default export: UserCard.tsx exports UserCard',
+      'Separate business logic from UI: useTaskLogic hook + TaskCard component',
+    ],
+    dont: [
+      'Put 20 components in a single components/ folder with no substructure',
+      'Name files generic.ts, helpers.ts, utils.ts — be specific',
+      'Import from deep paths that reveal implementation details',
+      'Mix server code and client code in the same file without clear separation',
+    ],
+    languages: ['typescript'],
+  },
+  {
+    id: 'async-patterns',
+    title: 'Async Patterns & Concurrency',
+    category: 'paradigm',
+    description: 'Write correct, efficient async code in Node.js and React.',
+    do: [
+      'Use Promise.all() for independent parallel async operations',
+      'Use Promise.allSettled() when you want all results even if some fail',
+      'Add process.on("unhandledRejection") handler to catch floating promises',
+      'Use AbortController to cancel fetches when components unmount',
+      'Debounce user-triggered async operations (search, autocomplete)',
+      'Use async generators for streaming/pagination',
+    ],
+    dont: [
+      'Await inside loops when the operations are independent — use Promise.all',
+      'Create new Promises unnecessarily when the API already returns Promises',
+      'Mix callbacks and Promises in the same code path',
+      'Forget to handle the case where Promise.all rejects (one failure = all fail)',
+      'Start async operations in useEffect without cleanup/cancellation',
+    ],
+    languages: ['typescript', 'javascript'],
+  },
 ];
 
 // ============================================
@@ -1840,14 +4045,20 @@ const LEARNING_PATHS: Record<string, LearningPath> = {
 
 export interface GenerationContext {
   appType?: string;
+  /** Detected application domain: 'project-management' | 'security-dashboard' | 'crm' | 'hr-system' | 'ecommerce' | 'support-desk' */
   domain?: string;
   features?: string[];
+  /** Entity names as detected by NLU (e.g. ['task', 'sprint', 'milestone', 'cve', 'risk', 'deadline']) */
   entities?: string[];
   fileExtension?: 'ts' | 'tsx' | 'js' | 'jsx';
   fileRole?: 'component' | 'route' | 'hook' | 'schema' | 'util' | 'middleware' | 'service';
   techStack?: string[];
   isAuthRequired?: boolean;
   hasDatabaseAccess?: boolean;
+  /** Whether the entity being generated has a status/workflow field */
+  hasWorkflow?: boolean;
+  /** Specific entity name for this file (e.g. 'vulnerability', 'invoice') */
+  primaryEntity?: string;
 }
 
 /**
@@ -1946,6 +4157,7 @@ export function getContextForGeneration(ctx: GenerationContext): string {
   if (ctx.fileExtension === 'tsx' || ctx.fileRole === 'component') practiceIds.push('react-patterns', 'state-management', 'performance-react');
   if (ctx.fileRole === 'route') practiceIds.push('api-design', 'security', 'error-handling');
   if (ctx.hasDatabaseAccess) practiceIds.push('database');
+  if (ctx.isAuthRequired) practiceIds.push('security');
   practiceIds.push('naming', 'typescript-strict');
 
   const relevantPractices = Array.from(new Set(practiceIds)).map(id => BEST_PRACTICES.find(bp => bp.id === id)).filter(Boolean) as BestPractice[];
@@ -1958,6 +4170,50 @@ export function getContextForGeneration(ctx: GenerationContext): string {
       lines.push(`Don't: ${bp.dont.slice(0, 2).join(' | ')}`);
     }
     lines.push('');
+  }
+
+  // ── Domain model context ───────────────────────────────────────────────────
+  if (ctx.domain) {
+    const domainCtx = getDomainModelContext(ctx.domain);
+    if (domainCtx) {
+      lines.push(domainCtx);
+      lines.push('');
+    }
+  }
+
+  // ── Entity archetype resolution ────────────────────────────────────────────
+  const entitiesToResolve: string[] = [];
+  if (ctx.primaryEntity) entitiesToResolve.push(ctx.primaryEntity);
+  if (ctx.entities && ctx.entities.length > 0) {
+    for (const e of ctx.entities) {
+      if (!entitiesToResolve.includes(e)) entitiesToResolve.push(e);
+    }
+  }
+  if (entitiesToResolve.length > 0) {
+    const archetypeCtx = resolveEntityArchetypes(entitiesToResolve);
+    if (archetypeCtx) {
+      lines.push(archetypeCtx);
+      lines.push('');
+    }
+  }
+
+  // ── Primary entity schema suggestions (for schema/route/service files) ──────
+  if (ctx.primaryEntity && (ctx.fileRole === 'schema' || ctx.fileRole === 'route' || ctx.fileRole === 'service' || ctx.hasDatabaseAccess)) {
+    const schemaSuggestions = getSchemaSuggestions(ctx.primaryEntity, ctx.domain);
+    if (schemaSuggestions) {
+      lines.push(schemaSuggestions);
+      lines.push('');
+    }
+    if (ctx.hasWorkflow) {
+      const arch = matchEntityToArchetype(ctx.primaryEntity);
+      if (arch) {
+        const wf = getWorkflowPattern(arch.id);
+        if (wf) {
+          lines.push(wf);
+          lines.push('');
+        }
+      }
+    }
   }
 
   return lines.join('\n');
@@ -2107,4 +4363,197 @@ ${ap.goodExample}
 
 **Tags**: ${ap.tags.join(', ')}
 `;
+}
+
+// ============================================
+// Entity Archetype Utility Functions
+// ============================================
+
+/**
+ * Fuzzy-match an entity name to the best archetype.
+ * Handles variations like "cve" → vulnerability, "deadline" → deadline, "pto" → leave
+ */
+export function matchEntityToArchetype(entityName: string): EntityArchetype | null {
+  const lower = entityName.toLowerCase().trim();
+
+  // 1. Direct ID match
+  if (ENTITY_ARCHETYPES[lower]) return ENTITY_ARCHETYPES[lower];
+
+  // 2. Alias match (exact)
+  for (const arch of Object.values(ENTITY_ARCHETYPES)) {
+    if (arch.aliases.some(alias => alias === lower)) return arch;
+  }
+
+  // 3. Alias partial match
+  for (const arch of Object.values(ENTITY_ARCHETYPES)) {
+    if (arch.aliases.some(alias => alias.includes(lower) || lower.includes(alias))) return arch;
+  }
+
+  // 4. Name partial match
+  for (const arch of Object.values(ENTITY_ARCHETYPES)) {
+    if (arch.name.toLowerCase().includes(lower) || lower.includes(arch.name.toLowerCase().split(' ')[0])) return arch;
+  }
+
+  return null;
+}
+
+/**
+ * Get the suggested DB fields for a known entity archetype.
+ */
+export function getEntityFields(archetypeId: string): EntityArchetype['suggestedFields'] {
+  return ENTITY_ARCHETYPES[archetypeId]?.suggestedFields ?? [];
+}
+
+/**
+ * Get all entity archetypes, optionally filtered by domain.
+ */
+export function getAllEntityArchetypes(domain?: string): EntityArchetype[] {
+  const all = Object.values(ENTITY_ARCHETYPES);
+  if (domain) return all.filter(a => a.domain === domain);
+  return all;
+}
+
+/**
+ * Get all archetypes for a given domain.
+ */
+export function getArchetypesByDomain(domain: string): EntityArchetype[] {
+  return Object.values(ENTITY_ARCHETYPES).filter(a => a.domain === domain);
+}
+
+/**
+ * Get a domain model blueprint by domain key.
+ */
+export function getDomainModel(domain: string): DomainModel | null {
+  return DOMAIN_MODELS[domain] ?? null;
+}
+
+/**
+ * Get all domain models.
+ */
+export function getAllDomainModels(): DomainModel[] {
+  return Object.values(DOMAIN_MODELS);
+}
+
+/**
+ * Given an entity name and optional domain context, return a rich schema suggestion
+ * that can be injected into LLM prompts for schema/code generation stages.
+ */
+export function getSchemaSuggestions(entityName: string, domain?: string): string {
+  const arch = matchEntityToArchetype(entityName);
+  if (!arch) {
+    // Generic suggestion for unknown entities
+    return `Entity "${entityName}": Consider standard fields: id (serial PK), name/title, status (varchar with CHECK constraint), createdAt/updatedAt (timestamptz). Add soft delete (deletedAt). Index FK columns and status.`;
+  }
+
+  const lines: string[] = [];
+  lines.push(`## Schema Suggestions for "${entityName}" (archetype: ${arch.name})`);
+  lines.push(`Domain: ${arch.domain} | Traits: ${arch.traits.join(', ')}`);
+  lines.push('');
+  lines.push('### Recommended Drizzle columns:');
+  for (const field of arch.suggestedFields.slice(0, 12)) {
+    lines.push(`- \`${field.name}\`: ${field.type}${field.nullable ? '' : ' — NOT NULL'} — ${field.description}`);
+  }
+  lines.push('');
+  lines.push(`### Recommended indexes: ${arch.suggestedIndexes.join(', ')}`);
+  lines.push('');
+  lines.push(`### Related entities to model: ${arch.relatedEntities.join(', ')}`);
+  if (arch.typicalEndpoints.length > 0) {
+    lines.push('');
+    lines.push(`### Typical API endpoints:\n${arch.typicalEndpoints.map(e => `- ${e}`).join('\n')}`);
+  }
+  if (arch.defaultWorkflow) {
+    lines.push('');
+    lines.push(`### Workflow states: ${arch.defaultWorkflow.states.join(' → ')}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Get the state machine workflow for an entity archetype as a formatted string.
+ */
+export function getWorkflowPattern(archetypeId: string): string | null {
+  const arch = ENTITY_ARCHETYPES[archetypeId] ?? matchEntityToArchetype(archetypeId);
+  if (!arch?.defaultWorkflow) return null;
+
+  const wf = arch.defaultWorkflow;
+  const lines = [`## ${arch.name} Workflow`];
+  lines.push(`States: ${wf.states.join(' | ')}`);
+  lines.push('');
+  lines.push('Transitions:');
+  for (const t of wf.transitions) {
+    lines.push(`  ${t.from} --[${t.action}]--> ${t.to}`);
+  }
+  lines.push('');
+  lines.push('Implementation tip: Store status as varchar column with CHECK constraint. Create a dedicated PATCH /status endpoint that validates the transition is allowed before updating.');
+  return lines.join('\n');
+}
+
+/**
+ * Resolve a list of entity names to their archetypes and return a compact summary
+ * for injection into LLM prompts. Used by understanding and plan stages.
+ */
+export function resolveEntityArchetypes(entityNames: string[]): string {
+  const resolved: Array<{ name: string; arch: EntityArchetype }> = [];
+  const unresolved: string[] = [];
+
+  for (const name of entityNames) {
+    const arch = matchEntityToArchetype(name);
+    if (arch) {
+      resolved.push({ name, arch });
+    } else {
+      unresolved.push(name);
+    }
+  }
+
+  if (resolved.length === 0) return '';
+
+  const lines = ['## Entity Archetypes Detected'];
+  lines.push('These known patterns apply to your entities:');
+  lines.push('');
+
+  for (const { name, arch } of resolved) {
+    lines.push(`### ${name} → ${arch.name} (${arch.domain} domain)`);
+    lines.push(`Key fields: ${arch.suggestedFields.slice(0, 6).map(f => f.name).join(', ')}`);
+    lines.push(`Traits: ${arch.traits.join(', ')}`);
+    if (arch.defaultWorkflow) {
+      lines.push(`Workflow: ${arch.defaultWorkflow.states.join(' → ')}`);
+    }
+    lines.push(`Related: ${arch.relatedEntities.join(', ')}`);
+    lines.push('');
+  }
+
+  if (unresolved.length > 0) {
+    lines.push(`Unknown entities (no archetype): ${unresolved.join(', ')} — define fields manually`);
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Get domain model context for a detected application domain.
+ * Returns rich guidance about entities, relationships, and features.
+ */
+export function getDomainModelContext(domain: string): string {
+  const model = getDomainModel(domain);
+  if (!model) return '';
+
+  const lines = [`## Domain Model: ${model.name}`];
+  lines.push(model.description);
+  lines.push('');
+  lines.push(`Core entities: ${model.coreEntities.join(', ')}`);
+  lines.push(`Optional entities: ${model.optionalEntities.join(', ')}`);
+  lines.push('');
+  lines.push('Key relationships:');
+  for (const rel of model.keyRelationships) lines.push(`  - ${rel}`);
+  lines.push('');
+  lines.push('Typical features:');
+  for (const feat of model.typicalFeatures) lines.push(`  - ${feat}`);
+  lines.push('');
+  lines.push('Security considerations:');
+  for (const sec of model.securityConsiderations) lines.push(`  - ${sec}`);
+  lines.push('');
+  lines.push('Index strategy:');
+  for (const idx of model.suggestedIndexStrategy) lines.push(`  - ${idx}`);
+
+  return lines.join('\n');
 }

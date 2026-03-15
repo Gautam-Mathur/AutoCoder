@@ -10,6 +10,7 @@
 
 import { registerStageTemplate } from './slm-inference-engine.js';
 import { getConfig } from './prompt-config.js';
+import { resolveEntityArchetypes, getDomainModelContext, matchEntityToArchetype } from './knowledge-base.js';
 
 export const UNDERSTANDING_STAGE_ID = 'understand';
 
@@ -84,7 +85,24 @@ Output a structured JSON analysis.`,
         }
 
         if (rule.level3_entities?.entities?.length > 0) {
-          prompt += `- Entities found: ${rule.level3_entities.entities.map((e: any) => e.name).join(', ')}\n`;
+          const entityNames: string[] = rule.level3_entities.entities.map((e: any) => e.name);
+          prompt += `- Entities found: ${entityNames.join(', ')}\n`;
+
+          // Inject archetype resolution context for better implicit requirement detection
+          const archetypeCtx = resolveEntityArchetypes(entityNames);
+          if (archetypeCtx) {
+            prompt += `\n${archetypeCtx}\n`;
+            prompt += `Use these entity archetypes to infer: missing fields, status workflows, related entities, and domain-specific security requirements.\n`;
+          }
+        }
+
+        // Inject domain model context if domain was detected
+        const detectedDomain = rule.level2_domain?.primaryDomain?.name?.toLowerCase().replace(' ', '-');
+        if (detectedDomain) {
+          const domainCtx = getDomainModelContext(detectedDomain);
+          if (domainCtx) {
+            prompt += `\n${domainCtx}\n`;
+          }
         }
 
         if (rule.level4_workflows?.workflows?.length > 0) {

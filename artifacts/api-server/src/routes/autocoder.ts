@@ -32,6 +32,10 @@ import {
   getAllCodeSnippets, getSnippetsByTech, getSnippetsByTag,
   getAllLearningPaths, getContextForGeneration,
   getConceptsByCategory, getConceptsByDifficulty, getRelatedConcepts,
+  matchEntityToArchetype, getAllEntityArchetypes, getArchetypesByDomain,
+  getDomainModel, getAllDomainModels, getSchemaSuggestions,
+  getWorkflowPattern, resolveEntityArchetypes, getDomainModelContext,
+  getEntityFields,
 } from "../modules/knowledge-base";
 import { detectFollowUp, updateContext, generateClarification, getResponseHints, summarizeConversation, getConversationContext, formatConversationContextAsMarkdown } from "../modules/conversational-flexibility";
 import { continuousDebug, parseError, getDebugStatus, getDebugSession, formatDebugReport } from "../modules/continuous-debugger";
@@ -2903,10 +2907,89 @@ Output ONLY the fixed code. No explanations.`;
         techStack: ctx.techStack,
         isAuthRequired: ctx.isAuthRequired,
         hasDatabaseAccess: ctx.hasDatabaseAccess,
+        hasWorkflow: ctx.hasWorkflow,
+        primaryEntity: ctx.primaryEntity,
       });
       res.json({ success: true, context });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to build context';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Entity Archetypes — list all or filter by domain
+  app.get("/api/ai/entity-archetypes", async (req, res) => {
+    try {
+      const domain = req.query.domain as string | undefined;
+      const archetypes = getAllEntityArchetypes(domain);
+      res.json({ success: true, archetypes, count: archetypes.length });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to get archetypes';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Entity Archetype — match a single entity name to its archetype
+  app.get("/api/ai/entity-archetypes/match", async (req, res) => {
+    try {
+      const name = req.query.name as string;
+      if (!name) return res.status(400).json({ error: 'name query param required' });
+      const archetype = matchEntityToArchetype(name);
+      if (!archetype) return res.json({ success: true, archetype: null, message: 'No matching archetype found' });
+      res.json({ success: true, archetype });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to match archetype';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Entity Archetype — resolve a list of entity names to archetypes (formatted)
+  app.post("/api/ai/entity-archetypes/resolve", async (req, res) => {
+    try {
+      const { entities } = req.body;
+      if (!Array.isArray(entities)) return res.status(400).json({ error: 'entities array required' });
+      const resolved = entities.map(name => ({
+        name,
+        archetype: matchEntityToArchetype(name),
+      }));
+      const context = resolveEntityArchetypes(entities);
+      res.json({ success: true, resolved, context });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to resolve archetypes';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Schema Suggestions — get field/index/workflow suggestions for an entity
+  app.get("/api/ai/schema-suggestions", async (req, res) => {
+    try {
+      const entity = req.query.entity as string;
+      const domain = req.query.domain as string | undefined;
+      if (!entity) return res.status(400).json({ error: 'entity query param required' });
+      const suggestions = getSchemaSuggestions(entity, domain);
+      const archetype = matchEntityToArchetype(entity);
+      const workflow = archetype ? getWorkflowPattern(archetype.id) : null;
+      res.json({ success: true, suggestions, workflow, archetype });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to get schema suggestions';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Domain Models — list all domains or get a specific one
+  app.get("/api/ai/domain-models", async (req, res) => {
+    try {
+      const domain = req.query.domain as string | undefined;
+      if (domain) {
+        const model = getDomainModel(domain);
+        if (!model) return res.status(404).json({ error: `Domain model '${domain}' not found` });
+        const context = getDomainModelContext(domain);
+        return res.json({ success: true, model, context });
+      }
+      const models = getAllDomainModels();
+      res.json({ success: true, models, count: models.length });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to get domain models';
       res.status(500).json({ error: message });
     }
   });

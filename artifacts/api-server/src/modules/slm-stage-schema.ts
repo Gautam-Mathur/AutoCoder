@@ -9,6 +9,7 @@
 
 import { registerStageTemplate } from './slm-inference-engine.js';
 import { getConfig } from './prompt-config.js';
+import { getSchemaSuggestions, getWorkflowPattern, matchEntityToArchetype } from './knowledge-base.js';
 
 export const SCHEMA_STAGE_ID = 'schema';
 
@@ -77,12 +78,31 @@ Output patches as an array. Each patch targets a specific table and field.`,
         }
       }
 
+      // Inject archetype-based schema suggestions for every table
+      const tableNames: string[] = context.ruleOutput?.tables?.map((t: any) => t.name) ?? context.plan?.dataModel?.map((e: any) => e.name) ?? [];
+      if (tableNames.length > 0) {
+        prompt += `\n## Archetype Schema Guidance\n`;
+        prompt += `Use these field/index/workflow patterns as the ground truth for each entity:\n\n`;
+        for (const tableName of tableNames.slice(0, 8)) {
+          const arch = matchEntityToArchetype(tableName);
+          if (arch) {
+            const suggestions = getSchemaSuggestions(tableName);
+            prompt += `${suggestions}\n\n`;
+            if (arch.defaultWorkflow) {
+              const wf = getWorkflowPattern(arch.id);
+              if (wf) prompt += `${wf}\n\n`;
+            }
+          }
+        }
+      }
+
       prompt += `\nPropose patches to improve this schema. Focus on:
 1. Missing indexes for search/filter fields
-2. Better constraints for data integrity
-3. Nullable corrections
+2. Better constraints for data integrity (CHECK constraints for status fields)
+3. Nullable corrections (non-nullable fields that are nullable)
 4. Default values that make sense
-5. Composite unique constraints for business rules`;
+5. Composite unique constraints for business rules
+6. Workflow status column with correct CHECK constraint values`;
 
       return prompt;
     },
