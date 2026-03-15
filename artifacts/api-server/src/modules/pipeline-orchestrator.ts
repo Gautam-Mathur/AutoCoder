@@ -38,6 +38,12 @@ import { isSLMAvailable, runSLM } from './slm-inference-engine.js';
 import { UNDERSTANDING_STAGE_ID, mergeUnderstandingResults } from './slm-stage-understanding.js';
 import { CODEGEN_STAGE_ID, applyCodeEnhancements, validateCodeEnhancement } from './slm-stage-codegen.js';
 import type { CodeEnhancement } from './slm-stage-codegen.js';
+import { SEMANTIC_STAGE_ID, mergeSemanticResults } from './slm-stage-semantic.js';
+import { DESIGN_STAGE_ID, mergeDesignResults } from './slm-stage-design.js';
+import { SCHEMA_STAGE_ID, validateSchemaPatch } from './slm-stage-schema.js';
+import { API_STAGE_ID, validateAPIPatch } from './slm-stage-api.js';
+import { COMPONENT_STAGE_ID, validateComponentPatch } from './slm-stage-components.js';
+import { QUALITY_STAGE_ID, processQualityResults } from './slm-stage-quality.js';
 import { generateTestFiles } from './test-generator.js';
 import { learningEngine } from './generation-learning-engine.js';
 import { inferEntityFields, isSemanticDuplicate } from './entity-field-inference.js';
@@ -518,6 +524,21 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
     };
   });
 
+  if (isSLMAvailable() && ctx.reasoning) {
+    try {
+      emitStep(ctx, 'reason', 'SLM deepening semantic analysis', 'AI finding hidden domain patterns, implied business rules, and relationship nuances');
+      const slmResult = await runSLM(SEMANTIC_STAGE_ID, { ruleOutput: ctx.reasoning, plan: ctx.plan });
+      if (slmResult.success && slmResult.data) {
+        ctx.reasoning = mergeSemanticResults(ctx.reasoning, slmResult.data);
+        ctx.plan = enrichPlanWithReasoning(ctx.plan!, ctx.reasoning);
+        ctx.slmStagesRun.push('reason');
+        emitStep(ctx, 'reason', 'SLM semantic enhancement complete', `${slmResult.latencyMs}ms — enriched relationships and business rules`);
+      }
+    } catch (err) {
+      emitStep(ctx, 'reason', 'SLM semantic enhancement skipped', `Non-fatal: ${err}`);
+    }
+  }
+
   // Stage 3f: Confidence Scoring — assess plan quality across all dimensions
   try {
     const lowConfidenceItems: { section: string; item: string; confidence: number; reason: string }[] = [];
@@ -648,6 +669,20 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
     };
   });
 
+  if (isSLMAvailable() && ctx.designSystem) {
+    try {
+      emitStep(ctx, 'design', 'SLM refining design system', 'AI enhancing color rationale, typography choices, and domain-specific visual patterns');
+      const slmResult = await runSLM(DESIGN_STAGE_ID, { ruleOutput: ctx.designSystem, plan: ctx.plan });
+      if (slmResult.success && slmResult.data) {
+        ctx.designSystem = mergeDesignResults(ctx.designSystem, slmResult.data);
+        ctx.slmStagesRun.push('design');
+        emitStep(ctx, 'design', 'SLM design enhancement complete', `${slmResult.latencyMs}ms — refined visual tokens`);
+      }
+    } catch (err) {
+      emitStep(ctx, 'design', 'SLM design enhancement skipped', `Non-fatal: ${err}`);
+    }
+  }
+
   // Stage 7: Functionality specification
   const specStage = PIPELINE_STAGES.find(s => s.id === 'specify')!;
   emitStep(ctx, 'specify', 'Feature Analyst mapping entity capabilities', `Classifying each entity type to determine what interactive features it needs — CRUD enhancements, data display modes, search/filter options, batch operations, and automation triggers`);
@@ -698,6 +733,20 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
     };
   });
 
+  if (isSLMAvailable() && ctx.schemaDesign) {
+    try {
+      emitStep(ctx, 'schema', 'SLM reviewing schema design', 'AI checking for missing indexes, constraint improvements, and normalization opportunities');
+      const slmResult = await runSLM(SCHEMA_STAGE_ID, { ruleOutput: ctx.schemaDesign, plan: ctx.plan });
+      if (slmResult.success && slmResult.data && validateSchemaPatch(slmResult.data, ctx.schemaDesign)) {
+        ctx.schemaDesign = { ...ctx.schemaDesign, ...slmResult.data };
+        ctx.slmStagesRun.push('schema');
+        emitStep(ctx, 'schema', 'SLM schema improvement complete', `${slmResult.latencyMs}ms — schema hardened`);
+      }
+    } catch (err) {
+      emitStep(ctx, 'schema', 'SLM schema improvement skipped', `Non-fatal: ${err}`);
+    }
+  }
+
   // Stage 9: API design
   const apiStage = PIPELINE_STAGES.find(s => s.id === 'api')!;
   emitStep(ctx, 'api', 'API Architect designing RESTful endpoints', `Creating a complete API layer based on ${entityCount} entities — CRUD routes, search endpoints, nested resources, batch operations, validation schemas, and error handling`);
@@ -717,6 +766,20 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
       output: { routes: routeCount, middleware: middlewareCount },
     };
   });
+
+  if (isSLMAvailable() && ctx.apiDesign) {
+    try {
+      emitStep(ctx, 'api', 'SLM improving API design', 'AI adding missing endpoints, rate limiting hints, and security improvements');
+      const slmResult = await runSLM(API_STAGE_ID, { ruleOutput: ctx.apiDesign, plan: ctx.plan });
+      if (slmResult.success && slmResult.data && validateAPIPatch(slmResult.data, ctx.apiDesign)) {
+        ctx.apiDesign = { ...ctx.apiDesign, ...slmResult.data };
+        ctx.slmStagesRun.push('api');
+        emitStep(ctx, 'api', 'SLM API improvement complete', `${slmResult.latencyMs}ms — API hardened`);
+      }
+    } catch (err) {
+      emitStep(ctx, 'api', 'SLM API improvement skipped', `Non-fatal: ${err}`);
+    }
+  }
 
   // Stage 10: Component composition
   const composeStage = PIPELINE_STAGES.find(s => s.id === 'compose')!;
@@ -738,6 +801,20 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
       output: { components: componentCount, layouts: layoutCount },
     };
   });
+
+  if (isSLMAvailable() && ctx.componentTree) {
+    try {
+      emitStep(ctx, 'compose', 'SLM optimizing component tree', 'AI identifying reuse opportunities, prop interface improvements, and accessibility gaps');
+      const slmResult = await runSLM(COMPONENT_STAGE_ID, { ruleOutput: ctx.componentTree, plan: ctx.plan });
+      if (slmResult.success && slmResult.data && validateComponentPatch(slmResult.data, ctx.componentTree)) {
+        ctx.componentTree = { ...ctx.componentTree, ...slmResult.data };
+        ctx.slmStagesRun.push('compose');
+        emitStep(ctx, 'compose', 'SLM component optimization complete', `${slmResult.latencyMs}ms — component tree refined`);
+      }
+    } catch (err) {
+      emitStep(ctx, 'compose', 'SLM component optimization skipped', `Non-fatal: ${err}`);
+    }
+  }
 
   // Stages 11-15: Generation through validation — wrapped in rollback protection
   try {
@@ -1156,6 +1233,26 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
         output: { totalIssues, totalFixes, passes: 5 },
       };
     });
+
+    if (isSLMAvailable() && ctx.files.length > 0) {
+      try {
+        emitStep(ctx, 'deep-quality', 'SLM performing final quality review', 'AI scanning for anti-patterns, type safety gaps, and cross-file inconsistencies missed by rule-based passes');
+        const slmResult = await runSLM(
+          QUALITY_STAGE_ID,
+          { files: ctx.files.map(f => ({ path: f.path, content: f.content.slice(0, 3000) })), plan: ctx.plan }
+        );
+        if (slmResult.success && slmResult.data) {
+          const qualityIssues = processQualityResults(slmResult.data);
+          if (qualityIssues.length > 0) {
+            ctx.slmStagesRun.push('deep-quality');
+            const sampleIssues = qualityIssues.slice(0, 3).map(i => `${i.file}: ${i.issue}`).join(' | ');
+            emitStep(ctx, 'deep-quality', 'SLM quality review complete', `${qualityIssues.length} issues identified (${slmResult.latencyMs}ms): ${sampleIssues}`);
+          }
+        }
+      } catch (err) {
+        emitStep(ctx, 'deep-quality', 'SLM quality review skipped', `Non-fatal: ${err}`);
+      }
+    }
   }
 
   // Stage 17: Learning & recording

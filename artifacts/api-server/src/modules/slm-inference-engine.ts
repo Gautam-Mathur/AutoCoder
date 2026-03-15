@@ -58,7 +58,7 @@ export interface SLMHealthStatus {
 
 const DEFAULT_CONFIG: SLMConfig = {
   modelPath: '',
-  contextSize: 4096,
+  contextSize: parseInt(process.env.SLM_CONTEXT_SIZE || '16384'),
   maxTokens: 2048,
   temperature: 0.3,
   topP: 0.9,
@@ -79,6 +79,7 @@ let engineState: {
   totalErrors: number;
   lastInferenceMs: number | null;
   httpEndpoint: string | null;
+  supportsResponseFormat: boolean;
 } = {
   initialized: false,
   config: { ...DEFAULT_CONFIG },
@@ -88,6 +89,7 @@ let engineState: {
   totalErrors: 0,
   lastInferenceMs: null,
   httpEndpoint: null,
+  supportsResponseFormat: false,
 };
 
 export function registerStageTemplate(template: StagePromptTemplate): void {
@@ -109,6 +111,28 @@ export function configureSLMEndpoint(endpoint: string): void {
   engineState.httpEndpoint = endpoint;
   engineState.modelLoaded = true;
   console.log(`[SLM Engine] Configured HTTP endpoint: ${endpoint}`);
+  probeResponseFormatSupport(endpoint).then(supported => {
+    engineState.supportsResponseFormat = supported;
+    console.log(`[SLM Engine] response_format JSON mode: ${supported ? 'SUPPORTED' : 'not supported — using prompt-only JSON'}`);
+  }).catch(() => {});
+}
+
+async function probeResponseFormatSupport(endpoint: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${endpoint}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: 'Say {"ok":true}' }],
+        max_tokens: 10,
+        response_format: { type: 'json_object' },
+      }),
+      signal: AbortSignal.timeout(6000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 export function setModelPath(modelPath: string): void {
@@ -186,20 +210,26 @@ async function callHTTPEndpoint(
   const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
 
   try {
+    const body: Record<string, any> = {
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ],
+      max_tokens: config.maxTokens,
+      temperature: config.temperature,
+      top_p: engineState.config.topP,
+      repeat_penalty: engineState.config.repeatPenalty,
+      stream: false,
+    };
+
+    if (engineState.supportsResponseFormat) {
+      body.response_format = { type: 'json_object' };
+    }
+
     const response = await fetch(engineState.httpEndpoint + '/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: user },
-        ],
-        max_tokens: config.maxTokens,
-        temperature: config.temperature,
-        top_p: engineState.config.topP,
-        repeat_penalty: engineState.config.repeatPenalty,
-        stream: false,
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
 
@@ -272,66 +302,70 @@ export async function runSLM<T = any>(
     timeoutMs: overrides?.timeoutMs ?? template.timeoutMs ?? engineState.config.timeoutMs,
   };
 
-  try {
-    const { system, user } = buildPrompt(template, context);
-    const systemWithSchema = system + buildJsonSchemaInstruction(template.outputSchema);
+  const MAX_RETRIES = 3;
+  let lastError = '';
+  let lastRaw = '';
+  let totalTokens = 0;
 
-    const { text, tokensUsed } = engineState.httpEndpoint
-      ? await callHTTPEndpoint(systemWithSchema, user, config)
-      : await callBuiltinFallback(systemWithSchema, user, config);
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const { system, user } = buildPrompt(template, context);
+      const retryHint = attempt > 1
+        ? `\n\nIMPORTANT: Your previous response was not valid JSON. Attempt ${attempt}/${MAX_RETRIES}. Output ONLY the JSON object — no explanation, no markdown, no code fences.`
+        : '';
+      const systemWithSchema = system + buildJsonSchemaInstruction(template.outputSchema) + retryHint;
 
-    const latencyMs = Date.now() - startTime;
-    engineState.totalInferences++;
-    engineState.lastInferenceMs = latencyMs;
+      const { text, tokensUsed } = engineState.httpEndpoint
+        ? await callHTTPEndpoint(systemWithSchema, user, config)
+        : await callBuiltinFallback(systemWithSchema, user, config);
 
-    if (!text || text.trim().length === 0) {
-      engineState.totalErrors++;
+      totalTokens += tokensUsed;
+      lastRaw = text;
+
+      if (!text || text.trim().length === 0) {
+        lastError = 'SLM returned empty response';
+        continue;
+      }
+
+      const parsed = extractJSON(text);
+      if (parsed === null) {
+        lastError = 'Failed to parse SLM output as JSON';
+        console.warn(`[SLM Engine] Stage "${stage}" attempt ${attempt}/${MAX_RETRIES}: JSON parse failed`);
+        continue;
+      }
+
+      const latencyMs = Date.now() - startTime;
+      engineState.totalInferences++;
+      engineState.lastInferenceMs = latencyMs;
+
       return {
-        success: false,
-        data: null,
+        success: true,
+        data: parsed as T,
         rawOutput: text,
-        tokensUsed,
+        tokensUsed: totalTokens,
         latencyMs,
-        error: 'SLM returned empty response',
       };
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      lastError = errMsg.includes('abort') ? `SLM timed out after ${config.timeoutMs}ms` : errMsg;
+      if (attempt < MAX_RETRIES) {
+        console.warn(`[SLM Engine] Stage "${stage}" attempt ${attempt}/${MAX_RETRIES} failed: ${lastError}`);
+      }
     }
-
-    const parsed = extractJSON(text);
-    if (parsed === null) {
-      engineState.totalErrors++;
-      return {
-        success: false,
-        data: null,
-        rawOutput: text,
-        tokensUsed,
-        latencyMs,
-        error: 'Failed to parse SLM output as JSON',
-      };
-    }
-
-    return {
-      success: true,
-      data: parsed as T,
-      rawOutput: text,
-      tokensUsed,
-      latencyMs,
-    };
-  } catch (err) {
-    const latencyMs = Date.now() - startTime;
-    engineState.totalErrors++;
-    engineState.lastInferenceMs = latencyMs;
-
-    const errMsg = err instanceof Error ? err.message : String(err);
-
-    return {
-      success: false,
-      data: null,
-      rawOutput: '',
-      tokensUsed: 0,
-      latencyMs,
-      error: errMsg.includes('abort') ? `SLM timed out after ${config.timeoutMs}ms` : errMsg,
-    };
   }
+
+  const latencyMs = Date.now() - startTime;
+  engineState.totalErrors++;
+  engineState.lastInferenceMs = latencyMs;
+
+  return {
+    success: false,
+    data: null,
+    rawOutput: lastRaw,
+    tokensUsed: totalTokens,
+    latencyMs,
+    error: lastError,
+  };
 }
 
 export async function runSLMRaw(
@@ -426,6 +460,7 @@ export function resetSLMEngine(): void {
     totalErrors: 0,
     lastInferenceMs: null,
     httpEndpoint: null,
+    supportsResponseFormat: false,
   };
   STAGE_PROMPT_TEMPLATES.clear();
 }

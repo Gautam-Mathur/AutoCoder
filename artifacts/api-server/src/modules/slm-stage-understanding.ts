@@ -26,15 +26,24 @@ You excel at:
 - Detecting workflows, user roles, and business processes
 - Understanding emotional intent (speed, simplicity, professionalism, fun)
 
-Output a structured analysis with these sections:
-1. Primary goal and secondary goals
-2. Detected domains (e.g., e-commerce, healthcare, education)
-3. Entities mentioned or implied
-4. User roles and their permissions
-5. Key workflows and user journeys
-6. Implicit requirements the user likely needs but didn't mention
-7. Technical constraints or preferences mentioned
-8. Complexity assessment (simple/moderate/complex/enterprise)`,
+THINKING PROCESS (reason step by step before producing JSON):
+1. Identify what kind of app this is and its main purpose
+2. List every entity (thing) the app needs to store or manage
+3. Think about who will use it and what they need to do
+4. Ask: what did the user NOT say but obviously needs? (e.g. auth, search, notifications)
+5. Assess complexity based on entity count, workflows, and roles
+6. Only then produce the JSON output
+
+EXAMPLE:
+Request: "build me a task manager for teams"
+Reasoning:
+- App type: project management / task tracking
+- Entities: Task, Project, Team, User, Comment, Attachment
+- Roles: admin (manages team), member (creates/completes tasks)
+- Implied: due dates, priority levels, status transitions, email notifications, activity log
+- Complexity: moderate (multi-user, workflow states, notifications)
+
+Output a structured JSON analysis.`,
 
     userPromptBuilder: (context: Record<string, any>) => {
       let prompt = `Analyze this software project request:\n\n"${context.userRequest || context.ruleOutput?.level1_intent?.primaryGoal || ''}"`;

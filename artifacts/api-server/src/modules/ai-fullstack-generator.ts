@@ -148,6 +148,120 @@ CRITICAL LOGIC ERROR PREVENTION - AVOID THESE BUGS:
 
 Remember: Generate COMPLETE, WORKING code with ZERO logic errors. Test your logic mentally before outputting.`;
 
+// Per-file generation using Ollama — more reliable than one-shot JSON blob
+async function generateWithOllamaPerFile(
+  prompt: string,
+  sendProgress: (stage: string, message: string, progress: number) => void
+): Promise<GeneratedProject> {
+  const MANIFEST_SYSTEM = `You are a software architect. Plan file structures for full-stack apps.
+Output ONLY valid JSON. No markdown. No explanation outside the JSON.`;
+
+  const MANIFEST_PROMPT = `Plan the files needed for this app: "${prompt}"
+
+Output JSON:
+{
+  "name": "project-name",
+  "description": "what it does",
+  "dependencies": ["express", "cors"],
+  "instructions": "npm install && node server.js",
+  "files": [
+    { "path": "package.json", "purpose": "Node.js package manifest" },
+    { "path": "server.js", "purpose": "Express API server with all routes" },
+    { "path": "public/index.html", "purpose": "Main frontend UI" }
+  ]
+}
+
+Include ALL files needed. Typical app: package.json, server.js, public/index.html, public/style.css, public/app.js`;
+
+  const FILE_GEN_SYSTEM = `You are a senior full-stack developer. Write complete, working code files.
+Rules:
+- Write COMPLETE code — no placeholders, no TODOs, no "implement here"
+- Code must work on first run
+- Output ONLY the raw file content — no markdown, no code fences, no explanation`;
+
+  // Step 1: Generate manifest with retry
+  let manifest: any = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const raw = await generateWithLocalLLM(
+        attempt > 1 ? MANIFEST_PROMPT + '\n\nReminder: Output ONLY valid JSON. No other text.' : MANIFEST_PROMPT,
+        MANIFEST_SYSTEM
+      );
+      const extracted = extractJSON(raw);
+      if (extracted) {
+        manifest = JSON.parse(extracted);
+        break;
+      }
+      console.warn(`[PerFile] Manifest attempt ${attempt}/3: JSON parse failed`);
+    } catch (e) {
+      console.warn(`[PerFile] Manifest attempt ${attempt}/3 error:`, e);
+    }
+  }
+
+  if (!manifest?.files?.length) {
+    throw new Error('Could not plan file structure after 3 attempts');
+  }
+
+  sendProgress('planning', `File plan ready: ${manifest.files.length} files to generate`, 30);
+
+  // Step 2: Generate each file individually
+  const generatedFiles: GeneratedFile[] = [];
+  const totalFiles = manifest.files.length;
+
+  for (let i = 0; i < totalFiles; i++) {
+    const fileSpec = manifest.files[i];
+    const progressPct = 30 + Math.round(((i + 1) / totalFiles) * 60);
+    sendProgress('generating', `Writing ${fileSpec.path} (${i + 1}/${totalFiles})...`, progressPct);
+
+    const filePrompt = `Write the complete content for this file: ${fileSpec.path}
+Purpose: ${fileSpec.purpose}
+App: ${manifest.description || prompt}
+Dependencies available: ${(manifest.dependencies || []).join(', ')}
+
+Context about other files in this project:
+${manifest.files.map((f: any) => `- ${f.path}: ${f.purpose}`).join('\n')}
+
+Write ONLY the file content. No explanation. No markdown fences.`;
+
+    let fileContent = '';
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        fileContent = await generateWithLocalLLM(filePrompt, FILE_GEN_SYSTEM);
+        if (fileContent.trim().length > 10) break;
+      } catch (e) {
+        console.warn(`[PerFile] File ${fileSpec.path} attempt ${attempt}/2 error:`, e);
+      }
+    }
+
+    if (fileContent.trim()) {
+      generatedFiles.push({
+        path: fileSpec.path,
+        content: fileContent.trim(),
+        language: detectLanguage(fileSpec.path),
+      });
+    }
+  }
+
+  if (generatedFiles.length === 0) {
+    throw new Error('No files could be generated');
+  }
+
+  sendProgress('complete', `Generated ${generatedFiles.length}/${totalFiles} files`, 95);
+
+  const project: GeneratedProject = {
+    name: manifest.name || 'generated-app',
+    description: manifest.description || prompt,
+    files: generatedFiles,
+    dependencies: manifest.dependencies || [],
+    instructions: manifest.instructions || 'npm install && node server.js',
+  };
+
+  const { files: cleanedFiles } = cleanProjectFiles(project.files);
+  project.files = cleanedFiles;
+
+  return project;
+}
+
 // Generate a full-stack application with streaming progress
 export async function generateFullStackAppStream(
   prompt: string,
@@ -183,41 +297,20 @@ export async function generateFullStackAppStream(
     let fullContent = '';
 
     if (useLocalLLM) {
-      // Use local LLM for generation
-      sendProgress('generating', 'Generating with Local LLM (free)...', 30);
-
-      const localPrompt = `Create a full-stack application for: ${prompt}
-
-Output as JSON with structure:
-{
-  "name": "project-name",
-  "description": "what it does",
-  "files": [
-    {"path": "package.json", "content": "...", "language": "json"},
-    {"path": "server.js", "content": "...", "language": "javascript"},
-    {"path": "public/index.html", "content": "...", "language": "html"}
-  ],
-  "dependencies": ["express"],
-  "instructions": "npm install && node server.js"
-}
-
-Generate COMPLETE working code. No placeholders. No markdown. Pure JSON only.`;
+      sendProgress('planning', 'Planning file structure with Local LLM (free)...', 20);
 
       try {
-        const rawContent = await generateWithLocalLLM(localPrompt, LOCAL_CODE_SYSTEM_PROMPT);
-        const extractedJSON = extractJSON(rawContent);
-        if (extractedJSON) {
-          fullContent = extractedJSON;
-          sendProgress('complete', 'Local LLM generation complete!', 100);
-        } else {
-          throw new Error('Local LLM did not return valid JSON');
-        }
+        const project = await generateWithOllamaPerFile(prompt, sendProgress);
+        res.write(`data: ${JSON.stringify({ type: 'complete', project })}\n\n`);
+        res.end();
+        return;
       } catch (localError: any) {
-        console.error('Local LLM failed:', localError);
+        console.error('Local LLM per-file generation failed:', localError);
         if (useCloud && openai) {
-          sendProgress('fallback', 'Local LLM unavailable, using Cloud AI...', 40);
+          sendProgress('fallback', 'Local LLM failed, switching to Cloud AI...', 40);
         } else {
-          throw localError;
+          sendError(localError.message || 'Local LLM generation failed');
+          return;
         }
       }
     }

@@ -37,6 +37,28 @@ You CANNOT:
 - Add new files or modules
 - Restructure the file layout
 
+THINKING PROCESS (reason before you respond):
+1. Read each function carefully and identify what it is supposed to do
+2. Check if the current implementation is correct, complete, and handles errors
+3. Decide which functions most need improvement and why
+4. Write the improved snippet ensuring it is a valid drop-in replacement
+5. Only then produce your JSON output
+
+EXAMPLE of a valid enhancement:
+Input function stub:
+  async function getUser(id: string) {
+    const user = await db.query("SELECT * FROM users WHERE id = $1", [id]);
+    return user;
+  }
+
+Good enhanced snippet:
+  async function getUser(id: string) {
+    if (!id || typeof id !== 'string') throw new Error('Invalid user id');
+    const result = await db.query("SELECT id, email, name, created_at FROM users WHERE id = $1", [id]);
+    if (result.rows.length === 0) throw new Error(\`User \${id} not found\`);
+    return result.rows[0];
+  }
+
 Output an array of function-level enhancements targeting specific functions in specific files.`,
 
     userPromptBuilder: (context: Record<string, any>) => {
@@ -53,8 +75,7 @@ Output an array of function-level enhancements targeting specific functions in s
           .filter(f => !f.path.includes('test') && !f.path.includes('.config') && !f.path.includes('.d.ts'))
           .filter(f => {
             return f.content.includes('function ') || f.content.includes('const ') || f.content.includes('export ');
-          })
-          .slice(0, 5);
+          });
 
         for (const file of targetFiles) {
           const functions = extractFunctionSignatures(file.content);
@@ -63,8 +84,8 @@ Output an array of function-level enhancements targeting specific functions in s
           prompt += `\n--- ${file.path} ---\n`;
           prompt += `Functions found: ${functions.join(', ')}\n`;
 
-          const truncated = file.content.length > 2500
-            ? file.content.substring(0, 2500) + '\n// ... truncated'
+          const truncated = file.content.length > 8000
+            ? file.content.substring(0, 8000) + '\n// ... truncated'
             : file.content;
           prompt += `${truncated}\n`;
         }
@@ -110,9 +131,9 @@ Output an array of function-level enhancements targeting specific functions in s
       required: ['enhancements'],
     },
 
-    maxTokens: 3072,
+    maxTokens: 6144,
     temperature: 0.2,
-    timeoutMs: 45000,
+    timeoutMs: 90000,
   });
 }
 

@@ -23,7 +23,7 @@ export interface LocalLLMResponse {
 // Default configuration - works with Ollama
 const DEFAULT_CONFIG: LocalLLMConfig = {
   baseUrl: process.env.LOCAL_LLM_URL || 'http://localhost:11434',
-  model: process.env.LOCAL_LLM_MODEL || 'codellama',
+  model: process.env.LOCAL_LLM_MODEL || process.env.OPENAI_MODEL || 'qwen2.5-coder:7b',
   timeout: 120000, // 2 minutes for code generation
 };
 
