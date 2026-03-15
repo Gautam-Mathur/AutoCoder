@@ -10417,28 +10417,47 @@ func RequireRole(role string) fiber.Handler {
     description: 'Typed axios client for a Go backend with interceptors for auth and error handling.',
     tech: ['react', 'typescript', 'axios', 'go'],
     code: `// src/lib/api.ts
+// PREFERRED: store access token in memory (not localStorage) to mitigate XSS.
+// Use httpOnly refresh-token cookie + short-lived in-memory access token instead.
 import axios, { type AxiosError } from 'axios';
+
+let inMemoryToken: string | null = null;
+export const setAccessToken = (token: string | null) => { inMemoryToken = token; };
 
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:8080',
+  // withCredentials sends the httpOnly refresh-token cookie automatically
   withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
 });
 
-// Attach JWT from localStorage on every request
+// Attach in-memory JWT (never stored in localStorage — XSS-safe)
 api.interceptors.request.use(config => {
-  const token = localStorage.getItem('access_token');
-  if (token) config.headers.Authorization = \`Bearer \${token}\`;
+  if (inMemoryToken) config.headers.Authorization = \`Bearer \${inMemoryToken}\`;
   return config;
 });
 
-// Handle 401 — redirect to login
+// Handle 401 — attempt silent token refresh via httpOnly cookie, then redirect
 api.interceptors.response.use(
   res => res,
   async (error: AxiosError) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('access_token');
-      window.location.href = '/login';
+      try {
+        const { data } = await axios.post<{ accessToken: string }>(
+          \`\${import.meta.env.VITE_API_URL}/api/auth/refresh\`,
+          {},
+          { withCredentials: true }
+        );
+        setAccessToken(data.accessToken);
+        // Retry original request with new token
+        if (error.config) {
+          error.config.headers.Authorization = \`Bearer \${data.accessToken}\`;
+          return axios(error.config);
+        }
+      } catch {
+        setAccessToken(null);
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }
