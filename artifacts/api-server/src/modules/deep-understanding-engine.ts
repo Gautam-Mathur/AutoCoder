@@ -199,6 +199,16 @@ const WELL_KNOWN_APP_PATTERNS: Record<string, { domain: string; modules: string[
   'knowledge base': { domain: 'documentation', modules: ['Articles', 'Categories', 'Search', 'Dashboard'], description: 'Knowledge base' },
   'analytics dashboard': { domain: 'analytics', modules: ['Charts', 'Metrics', 'Reports', 'Dashboard'], description: 'Analytics dashboard' },
   'admin dashboard': { domain: 'saas-dashboard', modules: ['Charts', 'Metrics', 'Reports', 'Dashboard'], description: 'Admin dashboard' },
+  'news app': { domain: 'news-media', modules: ['Articles', 'Categories', 'Authors', 'Dashboard'], description: 'News application' },
+  'news site': { domain: 'news-media', modules: ['Articles', 'Categories', 'Authors', 'Dashboard'], description: 'News website' },
+  'news website': { domain: 'news-media', modules: ['Articles', 'Categories', 'Authors', 'Dashboard'], description: 'News website' },
+  'news platform': { domain: 'news-media', modules: ['Articles', 'Categories', 'Authors', 'Dashboard'], description: 'News platform' },
+  'media site': { domain: 'news-media', modules: ['Articles', 'Media', 'Categories', 'Dashboard'], description: 'Media website' },
+  'forum': { domain: 'forum', modules: ['Topics', 'Posts', 'Users', 'Categories', 'Dashboard'], description: 'Forum platform' },
+  'forum app': { domain: 'forum', modules: ['Topics', 'Posts', 'Users', 'Categories', 'Dashboard'], description: 'Forum application' },
+  'community forum': { domain: 'forum', modules: ['Topics', 'Posts', 'Users', 'Categories', 'Dashboard'], description: 'Community forum' },
+  'discussion board': { domain: 'forum', modules: ['Topics', 'Posts', 'Users', 'Categories', 'Dashboard'], description: 'Discussion board' },
+  'community platform': { domain: 'forum', modules: ['Topics', 'Posts', 'Users', 'Categories', 'Dashboard'], description: 'Community platform' },
 };
 
 const WELL_KNOWN_APP_SIGNALS: string[] = Object.keys(WELL_KNOWN_APP_PATTERNS);
@@ -257,11 +267,11 @@ export function analyzeRequest(userMessage: string, conversationContext?: string
       assumptions.push(`Key data: ${allEntities.slice(0, 5).join(', ')}`);
     }
 
-    const boostedConfidence = Math.max(calculateOverallConfidence(level1, level2, level3, level4), 0.85);
+    const boostedConfidence = Math.max(calculateOverallConfidence(level1, level2, level3, level4), 0.90);
 
     return {
       level1_intent: level1,
-      level2_domain: { ...level2, confidence: Math.max(level2.confidence, 0.8) },
+      level2_domain: { ...level2, confidence: Math.max(level2.confidence, 0.90) },
       level3_entities: level3,
       level4_workflows: level4,
       level5_clarification: { needsClarification: false, questions: [], assumptions },
@@ -289,7 +299,7 @@ export function analyzeRequest(userMessage: string, conversationContext?: string
 
     return {
       level1_intent: level1,
-      level2_domain: { ...level2, confidence: Math.max(level2.confidence, 0.8) },
+      level2_domain: { ...level2, confidence: Math.max(level2.confidence, 0.85) },
       level3_entities: level3,
       level4_workflows: level4,
       level5_clarification: { needsClarification: false, questions: [], assumptions },
