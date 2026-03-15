@@ -19,7 +19,7 @@ cd autocoder
 pnpm install
 
 # 2. Pull a model (one-time)
-ollama pull llama3.2
+ollama pull qwen2.5-coder:7b
 
 # 3. Set up environment
 cp .env.example .env
@@ -43,6 +43,19 @@ Open **http://localhost:5173** in your browser.
 | `pnpm run build` | Typecheck and build all packages |
 | `pnpm run typecheck` | Run TypeScript type checking |
 
+## Recommended Models
+
+Code-specific models produce significantly better output than general models.
+
+| Model | RAM | Quality |
+|-------|-----|---------|
+| `qwen2.5-coder:7b` | 8 GB | Good — fast, code-focused (default) |
+| `deepseek-coder-v2:16b` | 16 GB+ | Excellent — near cloud quality |
+| `codellama:13b` | 12 GB | Good — strong at completion tasks |
+
+> **Do not use general models** like `llama3.2` or `mistral` for code generation.
+> They lack the coding-specific training data and produce lower quality, more error-prone output.
+
 ## Environment Variables
 
 All configuration is in `.env` at the repo root. See `.env.example` for the full list with comments.
@@ -55,7 +68,7 @@ AutoCoder uses the OpenAI SDK, which works with any OpenAI-compatible server:
 ```env
 OPENAI_BASE_URL=http://localhost:11434/v1
 OPENAI_API_KEY=ollama
-OPENAI_MODEL=llama3.2
+OPENAI_MODEL=qwen2.5-coder:7b
 ```
 
 **LM Studio:**
@@ -109,6 +122,6 @@ autocoder/
 
 **Frontend shows blank page** — Make sure the API server is running. The Vite dev server proxies `/api` calls to `http://localhost:3001`.
 
-**AI features not working** — Make sure Ollama is running (`ollama serve`) and you have pulled a model (`ollama pull llama3.2`). Check the API server logs for connection errors.
+**AI features not working** — Make sure Ollama is running (`ollama serve`) and you have pulled a model (`ollama pull qwen2.5-coder:7b`). Check the API server logs for connection errors.
 
 **Database errors** — If you don't need persistence, just remove `DATABASE_URL` from `.env`. The app will use in-memory storage.
