@@ -57,27 +57,27 @@ AutoCoder is a self-hosted AI-powered full-stack application generator. Given a 
 
 ## 2. Lines of Code
 
-> Counted March 2026, excluding `node_modules`, `dist`, `.cache`, and lock files.
+> Counted March 15, 2026, excluding `node_modules`, `dist`, `.cache`, and lock files.
 
 ### Summary
 
 | Metric | Count |
 |---|---|
-| **Total lines** | **~171,000** |
-| TypeScript (`.ts`) | 138,955 lines across 186 files |
-| TypeScript React (`.tsx`) | 27,999 lines across 281 files |
+| **Total lines** | **~172,000** |
+| TypeScript (`.ts`) | 139,123 lines across 185 files |
+| TypeScript React (`.tsx`) | 27,999 lines across 146 files |
 | CSS | 481 lines |
-| Markdown (`.md`) | 1,848 lines |
+| Markdown (`.md`) | 1,700 lines (DOCS.md ~1,690 + replit.md ~130) |
 | JSON config | 1,580 lines |
 
 ### By Package
 
 | Package | Lines |
 |---|---|
-| `artifacts/api-server/src` | ~93,900 |
+| `artifacts/api-server/src` | ~94,100 |
 | `artifacts/autocoder/src` | ~64,400 |
 | `lib/` (shared) | ~3,000 |
-| Config, scripts, docs | ~9,700 |
+| Config, scripts, docs | ~9,900 |
 
 ### API Server Module Count
 
@@ -767,6 +767,23 @@ Used both during generation (as part of the validator) and at runtime when the W
 | `hook_violation` | Rules of Hooks violations | Move hook call to component level |
 | `css_error` | Invalid CSS directives | Fix Tailwind directive version |
 
+**TypeScript generic bracket mismatch fixer (`fixTSGenericBracketMismatch`):**
+
+LLMs frequently confuse `>` (close generic) with `)` (close parameter list) and vice versa. `fixTSGenericBracketMismatch()` is called on every `.ts`/`.tsx` file during both generation (`post-generation-validator.ts`) and auto-fix (`autocoder.ts` route). It applies six targeted regex fixes:
+
+| Fix | Pattern | Correction |
+|-----|---------|------------|
+| 1 | `TypeName> =>` | `TypeName) =>` — `>` used to close function params |
+| 2 | `TypeName> {` | `TypeName) {` — `>` used before function body |
+| 3 | `> =>` after generic | `) =>` — double `>` before arrow |
+| 4 | Line ends `>` with unclosed `(` | Replace final `>` with `)` |
+| 5 | `<TypeArgs) {` | `<TypeArgs> {` — `)` used to close generic in interface/type declaration |
+| 6 | `<TypeArgs) extends` | `<TypeArgs> extends` — same pattern before `extends`/`implements` |
+
+Fix 5 and Fix 6 were added after DB inspection revealed the LLM consistently generates `interface Foo extends React.HTMLAttributes<HTMLSpanElement) {` — a `)` closing the generic type argument instead of `>`.
+
+**Auto-fix route proactive pass:** The `POST /api/conversations/:id/auto-fix` route now applies `fixTSGenericBracketMismatch` to every `.ts`/`.tsx` file *before* running the Vite error pipeline, so bracket fixes are persisted even when Vite hasn't reported errors yet.
+
 ---
 
 ### Anti-Pattern Scanner (`anti-pattern-scanner.ts`)
@@ -1245,7 +1262,7 @@ Complete reference of all modules in `artifacts/api-server/src/modules/`:
 | `context-memory.ts` | Long-term context memory. Stores user preferences, past decisions, and relevant context across conversations. |
 | `context-window-manager.ts` | Manages token budgets for LLM context windows. Chunks conversation history and retrieves relevant chunks. |
 | `contextual-reasoning-engine.ts` | Stage 4 — analyzes entity semantics, finds relationships, computed fields, business rules. Produces `ReasoningResult`. |
-| `continuous-debugger.ts` | Session-scoped debugger that tracks all errors across a conversation and provides cumulative analysis. |
+| `continuous-debugger.ts` | Session-scoped debugger that tracks all errors across a conversation and provides cumulative analysis. Includes `findUnmatchedBrackets()` — a count-based bracket balance checker (not stack-based) that strips strings, template literals, and comments before counting `(`, `)`, `{`, `}`, `[`, `]`. Uses a custom `stripStringsAndComments()` that correctly handles apostrophes in JSX text (`Don't`, `won't`) by only treating `'` as a string delimiter when preceded by a non-word character. `<` and `>` are excluded from bracket pairs — they are TypeScript generics and comparison operators, not paired delimiters. |
 | `conversational-flexibility.ts` | Detects follow-up messages, maintains conversation state, generates appropriate non-generation responses. |
 | `conversation-phase-handler.ts` | Top-level message router. Determines if a message is: project creation, modification, question, or meta-request. |
 | `cross-file-tracer.ts` | Traces relationships between files: which component imports which, which API route serves which frontend page. |
@@ -1325,7 +1342,7 @@ Complete reference of all modules in `artifacts/api-server/src/modules/`:
 | `universal-code-emitter.ts` | Emits project files from a `ProjectBlueprint` spec. Used by `/api/ai/emit`. |
 | `universal-code-explanation.ts` | Language-agnostic code explanation. Handles 20+ languages. |
 | `ux-flow-planner.ts` | Plans multi-step UX flows, error handling pages, and loading patterns. |
-| `vite-error-fixer.ts` | Parses and auto-fixes Vite build/runtime errors. See §10. |
+| `vite-error-fixer.ts` | Parses and auto-fixes Vite build/runtime errors. Exports `fixTSGenericBracketMismatch()` — six-rule fixer for LLM-generated TypeScript where `>` and `)` are confused in generic type positions. Also exports `stripTSGenericsForCounting()` for bracket-count normalization. See §10 for full details. |
 
 ---
 
@@ -1644,6 +1661,22 @@ Each SLM call has a 30-second timeout by default. If the model is slow:
 1. Check that Ollama is using GPU (`ollama ps` shows model + GPU layers)
 2. Use a smaller model (7b instead of 14b)
 3. Reduce `SLM_CONTEXT_SIZE`
+
+### Generated files show "File has N extra ')' without matching '('"
+
+This is reported by `continuous-debugger.ts`'s bracket balance checker and means the generated TypeScript genuinely has unbalanced brackets. The most common LLM mistake:
+
+```typescript
+// Wrong — LLM closes generic type argument with ) instead of >:
+interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement) {
+
+// Correct:
+interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+```
+
+**Fix:** Hit **Fix All** on the diagnostics panel. The auto-fix route runs `fixTSGenericBracketMismatch()` proactively on all `.ts`/`.tsx` files, which includes Fix 5 (`<TypeArgs) {` → `<TypeArgs> {`) and Fix 6 (`<TypeArgs) extends` → `<TypeArgs> extends`). If errors persist, regenerate — the fixer also runs during generation so new projects will be clean.
+
+---
 
 ### TypeScript errors in the codebase
 
