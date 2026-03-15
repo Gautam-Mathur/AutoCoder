@@ -69,19 +69,16 @@ function inferLanguageFromPath(filePath: string): string {
   return map[ext] || 'text';
 }
 
-const hasReplitAI = !!(process.env.AI_INTEGRATIONS_OPENAI_API_KEY && process.env.AI_INTEGRATIONS_OPENAI_BASE_URL);
-const hasOpenAI = !!process.env.OPENAI_API_KEY;
-const hasCloudAI = hasReplitAI || hasOpenAI;
+const AI_API_KEY = process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY || "";
+const AI_BASE_URL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL;
+const hasCloudAI = !!AI_API_KEY;
+export const AI_MODEL = process.env.OPENAI_MODEL || "llama3.2";
 
 let openai: OpenAI | null = null;
-if (hasReplitAI) {
+if (AI_API_KEY) {
   openai = new OpenAI({
-    apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-    baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-  });
-} else if (hasOpenAI) {
-  openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
+    apiKey: AI_API_KEY,
+    ...(AI_BASE_URL ? { baseURL: AI_BASE_URL } : {}),
   });
 }
 

@@ -1,9 +1,13 @@
 {
-  "name": "workspace",
-  "version": "0.0.0",
+  "name": "autocoder",
+  "version": "1.0.0",
+  "description": "AI-powered code generation platform — runs locally with Ollama or any OpenAI-compatible model server",
   "license": "MIT",
   "scripts": {
     "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
+    "dev": "pnpm --filter @workspace/api-server run dev & pnpm --filter @workspace/autocoder run dev",
+    "dev:api": "pnpm --filter @workspace/api-server run dev",
+    "dev:web": "pnpm --filter @workspace/autocoder run dev",
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"

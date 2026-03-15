@@ -7,13 +7,16 @@ import { Response } from "express";
 import { isLocalLLMAvailable, generateWithLocalLLM, LOCAL_CODE_SYSTEM_PROMPT, extractJSON } from "./local-llm-client";
 import { cleanCodeArtifacts, cleanProjectFiles } from "./code-cleaner";
 
-// OpenAI is optional - only used as fallback
+const AI_API_KEY = process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY || "";
+const AI_BASE_URL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL;
+const AI_MODEL = process.env.OPENAI_MODEL || "llama3.2";
+
 let openai: OpenAI | null = null;
 try {
-  if (process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+  if (AI_API_KEY) {
     openai = new OpenAI({
-      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+      apiKey: AI_API_KEY,
+      ...(AI_BASE_URL ? { baseURL: AI_BASE_URL } : {}),
     });
   }
 } catch (e) {
@@ -23,7 +26,7 @@ try {
 // Check if we can use any AI
 export async function isAIAvailable(): Promise<{ local: boolean; cloud: boolean }> {
   const localAvailable = await isLocalLLMAvailable();
-  const cloudAvailable = openai !== null && !!process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+  const cloudAvailable = openai !== null && !!AI_API_KEY;
   return { local: localAvailable, cloud: cloudAvailable };
 }
 
@@ -222,7 +225,7 @@ Generate COMPLETE working code. No placeholders. No markdown. Pure JSON only.`;
     // Fallback to OpenAI or if local failed
     if (!fullContent && useCloud && openai) {
       const planningResponse = await openai.chat.completions.create({
-        model: "gpt-5.2",
+        model: AI_MODEL,
         max_completion_tokens: 2000,
         messages: [
           {
@@ -259,7 +262,7 @@ ${JSON.stringify(plan, null, 2)}
 Generate the COMPLETE application with ALL files. Every feature must be fully implemented with working code.`;
 
       const stream = await openai.chat.completions.create({
-        model: "gpt-5.2",
+        model: AI_MODEL,
         max_completion_tokens: 16000,
         stream: true,
         messages: [
@@ -391,7 +394,7 @@ Output as JSON only, no markdown.`;
   }
 
   const response = await openai.chat.completions.create({
-    model: "gpt-5.2",
+    model: AI_MODEL,
     max_completion_tokens: 16000,
     messages: [
       { role: "system", content: FULLSTACK_SYSTEM_PROMPT },
@@ -527,7 +530,7 @@ export async function generateFile(
   }
 
   const response = await openai.chat.completions.create({
-    model: "gpt-5.2",
+    model: AI_MODEL,
     max_completion_tokens: 4000,
     messages: [
       {
@@ -582,7 +585,7 @@ export async function modifyCode(
   }
 
   const response = await openai.chat.completions.create({
-    model: "gpt-5.2",
+    model: AI_MODEL,
     max_completion_tokens: 8000,
     messages: [
       {

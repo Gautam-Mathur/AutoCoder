@@ -46,8 +46,20 @@ Every package extends `tsconfig.base.json` which sets `composite: true`. The roo
 
 ## Root Scripts
 
+- `pnpm run dev` — start both API server and frontend in parallel
+- `pnpm run dev:api` — start only the API server
+- `pnpm run dev:web` — start only the frontend
 - `pnpm run build` — runs `typecheck` first, then recursively runs `build` in all packages that define it
 - `pnpm run typecheck` — runs `tsc --build --emitDeclarationOnly` using project references
+
+## Local Development
+
+See `DEVELOPMENT.md` for the full local setup guide. Key points:
+- No cloud API keys required — uses Ollama or any OpenAI-compatible local server
+- `DATABASE_URL` is optional (in-memory storage by default)
+- `PORT` and `BASE_PATH` have sensible defaults (3001 and `/`)
+- Vite dev server proxies `/api` and `/cache` to the API server automatically
+- Platform-specific native binaries are installed normally (no Replit overrides)
 
 ## Packages
 
@@ -63,7 +75,7 @@ Express 5 API server. Routes live in `src/routes/` and use `@workspace/api-zod` 
 - Validation: Multi-pass `validateAndFix()` in `post-generation-validator.ts` catches import/export mismatches, missing dependencies, and Vite-specific issues (Tailwind v4 directives, missing vite.config.ts, missing React imports, missing default exports in App.tsx). Auto-fixes are applied iteratively (up to 3 passes).
 - Storage: `src/storage.ts` — in-memory or PostgreSQL storage (auto-selects based on DATABASE_URL)
 - Client-lib: `src/client-lib/code-generator/` — shared code validator and pro-generator (used server-side)
-- AI: Uses `AI_INTEGRATIONS_OPENAI_API_KEY` + `AI_INTEGRATIONS_OPENAI_BASE_URL` (Replit AI Integrations) or `OPENAI_API_KEY`
+- AI: Unified client via `OPENAI_BASE_URL` + `OPENAI_API_KEY` + `OPENAI_MODEL` (works with Ollama, LM Studio, cloud OpenAI). Falls back to `AI_INTEGRATIONS_OPENAI_*` (Replit). Default model: `llama3.2`
 - Depends on: `@workspace/db`, `@workspace/api-zod`, `openai`, `ws`, `zod`, `nanoid`, `archiver`, `adm-zip`
 - `pnpm --filter @workspace/api-server run dev` — run the dev server
 - `pnpm --filter @workspace/api-server run build` — production esbuild bundle
@@ -85,7 +97,7 @@ AutoCoder React + Vite frontend. Full-stack AI code generation UI.
 
 Database layer using Drizzle ORM with PostgreSQL. Exports a Drizzle client instance and schema models.
 
-- `src/index.ts` — creates a `Pool` + Drizzle instance, exports schema
+- `src/index.ts` — creates a `Pool` + Drizzle instance (or exports `null` when `DATABASE_URL` is absent), exports schema
 - `src/schema/index.ts` — barrel re-export of all models
 - `src/schema/<modelname>.ts` — table definitions with `drizzle-zod` insert schemas (no models definitions exist right now)
 - `drizzle.config.ts` — Drizzle Kit config (requires `DATABASE_URL`, automatically provided by Replit)
