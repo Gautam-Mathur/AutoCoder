@@ -40,7 +40,7 @@ function getModel(): string {
 // Check if we can use any AI
 export async function isAIAvailable(): Promise<{ local: boolean; cloud: boolean }> {
   const localAvailable = await isLocalLLMAvailable();
-  const cloudAvailable = openai !== null && !!AI_API_KEY;
+  const cloudAvailable = openai !== null && !!generatorAIConfig.apiKey;
   return { local: localAvailable, cloud: cloudAvailable };
 }
 

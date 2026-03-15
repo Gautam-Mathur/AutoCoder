@@ -89,9 +89,8 @@ let runtimeAIConfig = {
   model: process.env.OPENAI_MODEL || "qwen2.5-coder:7b",
 };
 
-const hasCloudAI = !!runtimeAIConfig.apiKey;
+export function hasCloudAI(): boolean { return !!runtimeAIConfig.apiKey; }
 export function getAIModel(): string { return runtimeAIConfig.model; }
-export const AI_MODEL = runtimeAIConfig.model;
 
 let openai: OpenAI | null = null;
 function rebuildOpenAIClient() {
@@ -155,7 +154,7 @@ export async function registerRoutes(
       engine: "local-pipeline",
       stages: 16,
       domains: 15,
-      aiEnhancement: hasCloudAI,
+      aiEnhancement: hasCloudAI(),
       message: "AutoCoder local pipeline active"
     });
   });

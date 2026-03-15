@@ -760,7 +760,7 @@ export default function SLMSettings() {
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/slm/status"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/ai/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/ai/connection"] });
       setTestResult(null);
       toast({ title: "AI Configured", description: `Connected to ${endpoint} with model ${model}` });
     },
