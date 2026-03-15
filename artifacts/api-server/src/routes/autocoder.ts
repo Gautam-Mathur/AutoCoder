@@ -3986,15 +3986,29 @@ Output ONLY the fixed code. No explanations.`;
       if (!hash || typeof hash !== 'string' || !/^[a-f0-9]{8,32}$/.test(hash)) {
         return res.status(400).json({ error: 'hash must be 8-32 hex characters' });
       }
-      const { buildSnapshotAsync, getSnapshotStatus } = await import("../modules/snapshot-builder.js");
+      const { buildSnapshotAsync, getSnapshotStatus, upgradePackageJson } = await import("../modules/snapshot-builder.js");
       const currentStatus = getSnapshotStatus(hash);
       if (currentStatus === 'ready') {
         return res.json({ status: 'ready', url: `/cache/snapshot-${hash}.json.gz` });
       }
+
+      const upgradeResult = upgradePackageJson(packageJsonContent);
+      const cleanedContent = JSON.stringify(upgradeResult.packageJson, null, 2);
+
       if (currentStatus !== 'building') {
-        buildSnapshotAsync(hash, packageJsonContent);
+        buildSnapshotAsync(hash, cleanedContent);
       }
-      res.json({ status: 'building', message: `Snapshot build started for hash ${hash}` });
+      res.json({
+        status: 'building',
+        message: `Snapshot build started for hash ${hash}`,
+        upgradedPackageJson: cleanedContent,
+        upgradeInfo: {
+          removedPackages: upgradeResult.removedPackages,
+          renamedPackages: upgradeResult.renamedPackages,
+          upgradedVersions: upgradeResult.upgradedVersions.length,
+          warnings: upgradeResult.warnings,
+        },
+      });
     } catch (error: any) {
       console.error("Snapshot build error:", error);
       res.status(500).json({ error: error.message });

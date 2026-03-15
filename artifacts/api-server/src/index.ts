@@ -76,11 +76,6 @@ fs.mkdirSync("./cache", { recursive: true });
   httpServer.listen({ port, host: "0.0.0.0", reusePort: true }, async () => {
     console.log(`Server listening on port ${port}`);
 
-    try {
-      const { buildPrewarmSnapshot } = await import("./modules/snapshot-builder.js");
-      buildPrewarmSnapshot();
-    } catch (err) {
-      console.error("[Startup] Failed to start prewarm snapshot build:", err);
-    }
+    console.log("[Startup] Per-project snapshots enabled (prewarm disabled)");
   });
 })();

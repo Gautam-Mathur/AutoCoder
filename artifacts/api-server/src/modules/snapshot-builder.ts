@@ -5,7 +5,6 @@ import { spawn } from 'child_process';
 import { AVAILABLE_DEPS, DEV_DEPS } from './dependency-registry.js';
 
 const CACHE_DIR = './cache';
-const PREWARM_SNAPSHOT_FILE = 'prewarm-snapshot.json.gz';
 const inProgressBuilds = new Set<string>();
 
 const KEEP_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.json', '.css', '.ts', '.tsx', '.wasm']);
@@ -15,6 +14,14 @@ const SKIP_DIRS = new Set([
   '.cache', 'example', 'examples', 'benchmark', 'benchmarks', 'docs', 'doc',
   'coverage', '.nyc_output', 'browser', 'umd', 'esm5', 'cjs5',
 ]);
+
+const KNOWN_BAD_PACKAGES = new Set([
+  'auto-animate',
+]);
+
+const PACKAGE_RENAMES: Record<string, string> = {
+  'auto-animate': '@formkit/auto-animate',
+};
 
 function shouldSkipPath(relPath: string): boolean {
   const parts = relPath.split(path.sep);
@@ -64,7 +71,6 @@ function buildTree(baseDir: string): FileSystemTree {
           const contents = fs.readFileSync(fullPath, 'utf-8');
           node[entry.name] = { file: { contents } };
         } catch {
-          // skip unreadable files
         }
       }
     }
@@ -72,6 +78,139 @@ function buildTree(baseDir: string): FileSystemTree {
 
   walk(baseDir, tree);
   return tree;
+}
+
+export interface UpgradeResult {
+  packageJson: any;
+  removedPackages: string[];
+  renamedPackages: Array<{ from: string; to: string }>;
+  upgradedVersions: Array<{ pkg: string; from: string; to: string }>;
+  warnings: string[];
+}
+
+export function upgradePackageJson(input: string | object): UpgradeResult {
+  const pkgJson = typeof input === 'string' ? JSON.parse(input) : JSON.parse(JSON.stringify(input));
+  const removedPackages: string[] = [];
+  const renamedPackages: Array<{ from: string; to: string }> = [];
+  const upgradedVersions: Array<{ pkg: string; from: string; to: string }> = [];
+  const warnings: string[] = [];
+
+  const registryLookup: Record<string, string> = { ...AVAILABLE_DEPS, ...DEV_DEPS };
+
+  function processSection(section: Record<string, string> | undefined, sectionName: string): Record<string, string> | undefined {
+    if (!section || typeof section !== 'object') return section;
+
+    const cleaned: Record<string, string> = {};
+
+    for (const [pkg, version] of Object.entries(section)) {
+      if (KNOWN_BAD_PACKAGES.has(pkg)) {
+        removedPackages.push(pkg);
+
+        const renamed = PACKAGE_RENAMES[pkg];
+        if (renamed && !section[renamed] && !cleaned[renamed]) {
+          const canonicalVersion = registryLookup[renamed];
+          if (canonicalVersion) {
+            cleaned[renamed] = canonicalVersion;
+            renamedPackages.push({ from: pkg, to: renamed });
+          } else {
+            warnings.push(`Rename target "${renamed}" not in registry — skipped rename from "${pkg}"`);
+          }
+        }
+        continue;
+      }
+
+      const canonicalVersion = registryLookup[pkg];
+      if (canonicalVersion && canonicalVersion !== version) {
+        cleaned[pkg] = canonicalVersion;
+        upgradedVersions.push({ pkg, from: version, to: canonicalVersion });
+      } else {
+        cleaned[pkg] = version;
+        if (!canonicalVersion && !pkg.startsWith('@types/')) {
+          warnings.push(`Package "${pkg}" not in registry — kept as-is with version "${version}"`);
+        }
+      }
+    }
+
+    return cleaned;
+  }
+
+  pkgJson.dependencies = processSection(pkgJson.dependencies, 'dependencies');
+  pkgJson.devDependencies = processSection(pkgJson.devDependencies, 'devDependencies');
+
+  if (removedPackages.length > 0) {
+    console.log(`[UpgradePackageJson] Removed ${removedPackages.length} bad packages: ${removedPackages.join(', ')}`);
+  }
+  if (renamedPackages.length > 0) {
+    console.log(`[UpgradePackageJson] Renamed ${renamedPackages.length} packages: ${renamedPackages.map(r => `${r.from} → ${r.to}`).join(', ')}`);
+  }
+  if (upgradedVersions.length > 0) {
+    console.log(`[UpgradePackageJson] Upgraded ${upgradedVersions.length} package versions`);
+  }
+
+  return {
+    packageJson: pkgJson,
+    removedPackages,
+    renamedPackages,
+    upgradedVersions,
+    warnings,
+  };
+}
+
+function parseFailedPackagesFromStderr(stderr: string): string[] {
+  const failed = new Set<string>();
+
+  const notFoundPatterns = [
+    /npm ERR! 404\s+'((?:@[^/]+\/)?[^'@]+)@[^']*' is not in (?:this|the npm) registry/g,
+    /npm ERR! 404\s+Not Found[^:]*:\s*((?:@[^/\s]+\/)?[^\s@]+)@/g,
+    /npm ERR! code E404[^]*?npm ERR! 404\s+'?((?:@[^/\s]+\/)?[^'\s@]+)@/g,
+    /npm ERR! notarget No matching version found for ((?:@[^/\s]+\/)?[^\s@]+)@/g,
+    /npm ERR! peer dep missing: ((?:@[^/\s,]+\/)?[^\s@,]+)@/g,
+    /Could not resolve dependency:.*\n.*npm ERR!\s+peer\s+((?:@[^/\s]+\/)?[^\s@]+)@/g,
+    /ERESOLVE[^]*?While resolving:\s*((?:@[^/\s]+\/)?[^\s@]+)@/g,
+  ];
+
+  for (const pattern of notFoundPatterns) {
+    let match;
+    while ((match = pattern.exec(stderr)) !== null) {
+      const pkg = match[1].trim();
+      if (pkg && !pkg.startsWith('npm') && pkg.length < 100) {
+        failed.add(pkg);
+      }
+    }
+  }
+
+  return Array.from(failed);
+}
+
+async function runNpmInstall(tmpDir: string, label: string): Promise<{ success: boolean; stderr: string }> {
+  return new Promise((resolve) => {
+    const proc = spawn('npm', [
+      'install',
+      '--no-audit',
+      '--no-fund',
+      '--omit=optional',
+      '--legacy-peer-deps',
+      '--prefer-offline',
+      '--loglevel=error',
+    ], {
+      cwd: tmpDir,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, NODE_ENV: 'production' },
+    });
+
+    let stderr = '';
+    proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+
+    const timeout = setTimeout(() => {
+      proc.kill('SIGKILL');
+      resolve({ success: false, stderr: stderr + '\nnpm install timed out after 10 minutes' });
+    }, 600000);
+
+    proc.on('close', (code) => {
+      clearTimeout(timeout);
+      resolve({ success: code === 0, stderr });
+    });
+  });
 }
 
 async function runNpmInstallAndSnapshot(tmpDir: string, snapshotPath: string, packageJsonContent: string, label: string): Promise<void> {
@@ -85,38 +224,36 @@ async function runNpmInstallAndSnapshot(tmpDir: string, snapshotPath: string, pa
 
     console.log(`[SnapshotBuilder] [${label}] Running npm install in ${tmpDir}...`);
 
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn('npm', [
-        'install',
-        '--no-audit',
-        '--no-fund',
-        '--omit=optional',
-        '--legacy-peer-deps',
-        '--prefer-offline',
-        '--loglevel=error',
-      ], {
-        cwd: tmpDir,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, NODE_ENV: 'production' },
-      });
+    let result = await runNpmInstall(tmpDir, label);
 
-      let stderr = '';
-      proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+    if (!result.success) {
+      const failedPkgs = parseFailedPackagesFromStderr(result.stderr);
 
-      const timeout = setTimeout(() => {
-        proc.kill('SIGKILL');
-        reject(new Error('npm install timed out after 10 minutes'));
-      }, 600000);
+      if (failedPkgs.length > 0) {
+        console.warn(`[SnapshotBuilder] [${label}] npm install failed. Retrying without ${failedPkgs.length} bad packages: ${failedPkgs.join(', ')}`);
 
-      proc.on('close', (code) => {
-        clearTimeout(timeout);
-        if (code === 0) {
-          resolve();
-        } else {
-          reject(new Error(`npm install failed with exit code ${code}: ${stderr.slice(-500)}`));
+        const pkgJson = JSON.parse(packageJsonContent);
+        for (const pkg of failedPkgs) {
+          if (pkgJson.dependencies) delete pkgJson.dependencies[pkg];
+          if (pkgJson.devDependencies) delete pkgJson.devDependencies[pkg];
         }
-      });
-    });
+
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+        fs.mkdirSync(tmpDir, { recursive: true });
+        fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify(pkgJson, null, 2), 'utf-8');
+
+        console.log(`[SnapshotBuilder] [${label}] Retry npm install without bad packages...`);
+        result = await runNpmInstall(tmpDir, label);
+
+        if (!result.success) {
+          throw new Error(`npm install retry failed: ${result.stderr.slice(-500)}`);
+        }
+
+        console.log(`[SnapshotBuilder] [${label}] Retry succeeded (dropped ${failedPkgs.length} packages)`);
+      } else {
+        throw new Error(`npm install failed with no parseable bad packages: ${result.stderr.slice(-500)}`);
+      }
+    }
 
     console.log(`[SnapshotBuilder] [${label}] npm install done in ${Date.now() - startTime}ms, building FileSystemTree...`);
 
@@ -170,7 +307,9 @@ export function buildSnapshotAsync(hash: string, packageJsonContent: string): vo
 
   const tmpDir = path.join('/tmp', `snapshot-${hash}`);
   runNpmInstallAndSnapshot(tmpDir, snapshotPath, packageJsonContent, `project:${hash}`)
-    .catch(() => {})
+    .catch((err) => {
+      console.error(`[SnapshotBuilder] Snapshot build failed for hash ${hash}:`, err);
+    })
     .finally(() => { inProgressBuilds.delete(hash); });
 }
 
@@ -182,53 +321,9 @@ export function getSnapshotStatus(hash: string): 'ready' | 'building' | 'not-fou
 }
 
 export function buildPrewarmSnapshot(force = false): void {
-  const snapshotPath = path.join(CACHE_DIR, PREWARM_SNAPSHOT_FILE);
-
-  if (!force && fs.existsSync(snapshotPath)) {
-    const stat = fs.statSync(snapshotPath);
-    console.log(`[SnapshotBuilder] Prewarm snapshot already exists (${(stat.size / 1024 / 1024).toFixed(1)} MB), skipping. Use force=true to rebuild.`);
-    return;
-  }
-
-  if (inProgressBuilds.has('prewarm')) {
-    console.log(`[SnapshotBuilder] Prewarm snapshot build already in progress, skipping`);
-    return;
-  }
-
-  inProgressBuilds.add('prewarm');
-
-  if (force && fs.existsSync(snapshotPath)) {
-    try { fs.unlinkSync(snapshotPath); } catch {}
-    console.log(`[SnapshotBuilder] Deleted existing prewarm snapshot for rebuild`);
-  }
-
-  const depCount = Object.keys(AVAILABLE_DEPS).length;
-  const devDepCount = Object.keys(DEV_DEPS).length;
-  console.log(`[SnapshotBuilder] Building prewarm snapshot with ${depCount} deps + ${devDepCount} devDeps (${depCount + devDepCount} total)...`);
-
-  const packageJson = JSON.stringify({
-    name: 'autocoder-prewarm',
-    private: true,
-    version: '1.0.0',
-    type: 'module',
-    dependencies: { ...AVAILABLE_DEPS },
-    devDependencies: { ...DEV_DEPS },
-  }, null, 2);
-
-  const tmpDir = path.join('/tmp', 'snapshot-prewarm');
-  runNpmInstallAndSnapshot(tmpDir, snapshotPath, packageJson, 'prewarm')
-    .then(() => {
-      console.log(`[SnapshotBuilder] Prewarm snapshot ready at ${snapshotPath}`);
-    })
-    .catch((err) => {
-      console.error(`[SnapshotBuilder] Prewarm snapshot build failed:`, err);
-    })
-    .finally(() => { inProgressBuilds.delete('prewarm'); });
+  console.log('[SnapshotBuilder] Prewarm snapshot is disabled. Use per-project snapshots via /api/cache/build-snapshot.');
 }
 
 export function getPrewarmSnapshotStatus(): 'ready' | 'building' | 'not-found' {
-  const snapshotPath = path.join(CACHE_DIR, PREWARM_SNAPSHOT_FILE);
-  if (fs.existsSync(snapshotPath)) return 'ready';
-  if (inProgressBuilds.has('prewarm')) return 'building';
   return 'not-found';
 }

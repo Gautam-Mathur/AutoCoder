@@ -32,7 +32,7 @@ export const AVAILABLE_DEPS: Record<string, string> = {
   // ── Animation ───────────────────────────────────────────────────────
   'framer-motion': '^11.0.0', '@react-spring/web': '^9.7.3',
   'motion': '^11.0.0', 'react-transition-group': '^4.4.5',
-  'react-flip-move': '^3.0.5', 'auto-animate': '^0.8.1',
+  'react-flip-move': '^3.0.5',
   'animejs': '^3.2.2', 'gsap': '^3.12.5',
   'popmotion': '^11.0.5',
 
