@@ -773,40 +773,47 @@ async function handleGeneration(
     emitStep('orchestrator', 'Pipeline encountered critical error, falling back to direct generation');
     const rawFiles = generateProjectFromPlan(plan);
     emitStep('generating', 'Code generation complete', `${rawFiles.length} files created`);
-    emitStep('validating', 'Running post-generation validation (pass 1)');
-    let currentResult = validateAndFix(rawFiles, 3);
-    if (currentResult.fixesApplied.length > 0) {
-      emitStep('validating', `Auto-fixed ${currentResult.fixesApplied.length} issues (pass 1)`);
-    }
+    const MAX_VALIDATION_PASSES = 3;
+    let currentFiles = rawFiles;
+    let totalFixesApplied: string[] = [];
+    let currentResult = validateAndFix(currentFiles, 1);
+    let passCount = 1;
+    emitStep('validating', `Validation pass ${passCount}`, `${currentResult.issues.length} issues found, ${currentResult.fixesApplied.length} auto-fixed`);
+    totalFixesApplied.push(...currentResult.fixesApplied);
 
-    const remainingErrors = currentResult.issues.filter((i: any) => i.severity === 'error');
-    if (remainingErrors.length > 0) {
-      emitStep('validating', 'Running Vite error analysis (pass 2)');
+    while (passCount < MAX_VALIDATION_PASSES) {
+      const errors = currentResult.issues.filter((i: any) => i.severity === 'error');
+      if (errors.length === 0) break;
+
+      passCount++;
       try {
-        const parsedErrors = viteParseErrors(remainingErrors.map((i: any) => i.message));
+        const parsedErrors = viteParseErrors(errors.map((i: any) => i.message));
         const projectFiles = currentResult.files.map((f: any) => ({ path: f.path, content: f.content, language: f.language || 'typescript' }));
         const viteFixes = viteAnalyzeAndFix(parsedErrors, projectFiles);
-        if (viteFixes.fixes.length > 0) {
-          const patchedFiles = [...currentResult.files];
-          for (const fix of viteFixes.fixes) {
-            if (fix.type === 'patch_file' || fix.type === 'create_file') {
-              const idx = patchedFiles.findIndex((f: any) => f.path === fix.filePath);
-              if (idx >= 0) {
-                patchedFiles[idx] = { ...patchedFiles[idx], content: fix.newContent };
-              } else if (fix.type === 'create_file') {
-                patchedFiles.push({ path: fix.filePath, content: fix.newContent, language: 'typescript' });
-              }
+        if (viteFixes.fixes.length === 0) break;
+
+        const patchedFiles = [...currentResult.files];
+        for (const fix of viteFixes.fixes) {
+          if (fix.type === 'patch_file' || fix.type === 'create_file') {
+            const idx = patchedFiles.findIndex((f: any) => f.path === fix.filePath);
+            if (idx >= 0) {
+              patchedFiles[idx] = { ...patchedFiles[idx], content: fix.newContent };
+            } else if (fix.type === 'create_file') {
+              patchedFiles.push({ path: fix.filePath, content: fix.newContent, language: 'typescript' });
             }
           }
-          emitStep('validating', `Vite fixer applied ${viteFixes.fixes.length} patches, re-validating (pass 3)`);
-          currentResult = validateAndFix(patchedFiles, 2);
-          currentResult.fixesApplied.push(...viteFixes.fixes.map((f: any) => f.description || f.filePath));
         }
+        totalFixesApplied.push(...viteFixes.fixes.map((f: any) => f.description || f.filePath));
+        currentResult = validateAndFix(patchedFiles, 1);
+        totalFixesApplied.push(...currentResult.fixesApplied);
+        emitStep('validating', `Validation pass ${passCount}`, `${viteFixes.fixes.length} Vite fixes + ${currentResult.fixesApplied.length} validator fixes`);
       } catch (e) {
         console.error('[Fallback] Vite fixer error:', e);
+        break;
       }
     }
 
+    currentResult.fixesApplied = totalFixesApplied;
     const fallbackFiles = currentResult.files;
     try {
       learningEngine.recordOutcome({
@@ -822,7 +829,7 @@ async function handleGeneration(
       });
     } catch (e) {}
     const fallbackValSummary: ValidationSummaryResult = {
-      passes: currentResult.iterations,
+      passes: passCount,
       issuesFound: currentResult.issues.length,
       issuesFixed: currentResult.fixesApplied.length,
       unfixableIssues: currentResult.issues

@@ -380,6 +380,7 @@ export default function Chat() {
   const sendMessageToConversation = async (conversationId: number, content: string) => {
     setIsStreaming(true);
     setStreamingContent("");
+    setValidationSummary(null);
     setStreamingThinkingSteps([]);
 
     queryClient.setQueryData<ConversationWithMessages>(
@@ -453,7 +454,6 @@ export default function Chat() {
                 }
                 if (data.validationSummary) {
                   setValidationSummary(data.validationSummary);
-                  setTimeout(() => setValidationSummary(null), 15000);
                 }
                 if (data.fileEdits && data.fileEdits.length > 0) {
                   setRecentEdits(data.fileEdits);

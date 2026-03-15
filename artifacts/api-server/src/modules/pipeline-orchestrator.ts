@@ -878,15 +878,16 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
   const validateStage = PIPELINE_STAGES.find(s => s.id === 'validate')!;
   emitStep(ctx, 'validate', 'Release Engineer running validation passes', `Multi-pass validation: checking all imports resolve, exports match, dependencies exist in package.json, TypeScript types align, and no circular references exist across ${ctx.files.length} files`);
   executeStage(ctx, validateStage, () => {
-    let currentResult = validateAndFix(ctx.files);
+    const MAX_VALIDATION_PASSES = 3;
+    let currentResult = validateAndFix(ctx.files, 1);
     ctx.files = currentResult.files;
     let totalFixCount = currentResult.fixesApplied?.length || 0;
-    let totalPasses = currentResult.iterations;
+    let totalPasses = 1;
 
     const unfixedErrorMessages = (currentResult.issues || [])
       .filter(i => i.severity === 'error')
       .map(i => i.message);
-    if (unfixedErrorMessages.length > 0) {
+    if (unfixedErrorMessages.length > 0 && totalPasses < MAX_VALIDATION_PASSES) {
       const parsedErrors = parseErrors(unfixedErrorMessages);
       if (parsedErrors.length > 0) {
         const projectFiles = ctx.files.map(f => ({
@@ -924,11 +925,14 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
           }
           if (viteFixesApplied > 0) {
             totalFixCount += viteFixesApplied;
-            emitStep(ctx, 'validate', 'Vite error fixer applied', `${viteFixesApplied} Vite-specific fixes applied`);
-            currentResult = validateAndFix(ctx.files);
-            ctx.files = currentResult.files;
-            totalFixCount += currentResult.fixesApplied?.length || 0;
-            totalPasses += currentResult.iterations;
+            totalPasses++;
+            emitStep(ctx, 'validate', `Vite error fixer applied (pass ${totalPasses})`, `${viteFixesApplied} Vite-specific fixes applied`);
+            if (totalPasses < MAX_VALIDATION_PASSES) {
+              currentResult = validateAndFix(ctx.files, 1);
+              ctx.files = currentResult.files;
+              totalFixCount += currentResult.fixesApplied?.length || 0;
+              totalPasses++;
+            }
           }
         }
       }
