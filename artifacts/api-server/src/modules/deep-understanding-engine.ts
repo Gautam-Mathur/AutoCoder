@@ -146,7 +146,10 @@ const APP_TYPE_PATTERNS: Record<string, string[]> = {
   'dashboard': ['dashboard', 'analytics', 'reporting tool', 'data visualization', 'admin panel'],
   'marketplace': ['marketplace', 'multi-vendor', 'platform', 'two-sided'],
   'booking': ['booking', 'reservation', 'appointment scheduler', 'calendar booking'],
-  'social': ['social', 'community', 'forum', 'chat', 'messaging', 'network'],
+  'social': ['social', 'social network', 'social media', 'networking'],
+  'news-media': ['news', 'news app', 'news site', 'news platform', 'newspaper', 'media site', 'journalism', 'news feed', 'press', 'magazine'],
+  'forum': ['forum', 'discussion board', 'community forum', 'message board', 'bulletin board', 'community platform', 'discussion platform'],
+  'chat-messaging': ['chat', 'messaging', 'instant messaging', 'chat app', 'messenger', 'real-time chat'],
   'saas': ['saas', 'subscription', 'multi-tenant', 'platform'],
 };
 
@@ -249,11 +252,11 @@ export function analyzeRequest(userMessage: string, conversationContext?: string
   const level4 = detectWorkflows(lower, level3, level2);
 
   const wellKnownMatch = isWellKnownApp(userMessage);
-  const isSimpleRequest = userMessage.split(/\s+/).length <= 15;
+  const isSimpleRequest = userMessage.split(/\s+/).length <= 25;
 
   const level6 = detectTechnology(lower);
 
-  if (wellKnownMatch && isSimpleRequest && clarificationRound === 0) {
+  if (wellKnownMatch && clarificationRound === 0) {
     const appInfo = WELL_KNOWN_APP_PATTERNS[wellKnownMatch];
     const assumptions: string[] = [];
     if (level2.primaryDomain) {
@@ -406,6 +409,25 @@ function extractPrimaryIntentPhrase(text: string): string {
 }
 
 function detectDomain(lower: string, intent: IntentDecomposition, originalText?: string): DomainDetectionResult {
+  const wellKnown = isWellKnownApp(originalText || lower);
+  if (wellKnown) {
+    const appInfo = WELL_KNOWN_APP_PATTERNS[wellKnown];
+    const domain = getDomain(appInfo.domain);
+    if (domain) {
+      const allModuleNames = domain.modules.map(m => m.name);
+      const detectedModules = appInfo.modules.filter(m => allModuleNames.includes(m));
+      const suggestedModules = allModuleNames.filter(m => !detectedModules.includes(m));
+      return {
+        primaryDomain: domain,
+        secondaryDomains: [],
+        confidence: 0.95,
+        matchedKeywords: [wellKnown],
+        detectedModules,
+        suggestedModules,
+      };
+    }
+  }
+
   const primaryPhrase = extractPrimaryIntentPhrase(originalText || lower);
   const primaryMatches = detectDomainFromText(primaryPhrase);
   const fullMatches = detectDomainFromText(lower);

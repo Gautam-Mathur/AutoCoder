@@ -19,15 +19,18 @@ interface PromptAnalysis {
 
 // Keywords that indicate different project types
 const PROJECT_TYPE_PATTERNS = {
-  landing: ['landing', 'homepage', 'website', 'page'],
-  dashboard: ['dashboard', 'admin', 'panel', 'management'],
-  ecommerce: ['shop', 'store', 'ecommerce', 'cart', 'checkout', 'product'],
-  saas: ['saas', 'subscription', 'billing', 'pricing', 'plan'],
-  portfolio: ['portfolio', 'resume', 'cv', 'personal'],
-  blog: ['blog', 'posts', 'articles', 'content'],
+  portfolio: ['portfolio', 'resume', 'cv', 'personal website', 'personal site', 'personal page'],
+  blog: ['blog', 'blog platform', 'blogging'],
+  ecommerce: ['shop', 'store', 'ecommerce', 'cart', 'checkout', 'product catalog'],
+  dashboard: ['dashboard', 'admin panel', 'admin dashboard', 'analytics dashboard'],
+  saas: ['saas', 'subscription', 'billing', 'pricing tiers'],
+  social: ['social network', 'social media', 'social platform'],
+  forum: ['forum', 'discussion board', 'community forum', 'message board'],
+  news: ['news app', 'news site', 'news platform', 'newspaper', 'journalism'],
+  chat: ['chat app', 'messaging app', 'instant messaging', 'real-time chat'],
+  landing: ['landing page', 'homepage', 'coming soon'],
   webapp: ['app', 'application', 'tool', 'system', 'platform'],
   api: ['api', 'backend', 'server', 'endpoint'],
-  social: ['social', 'chat', 'messaging', 'community', 'forum'],
 };
 
 // Required information for different project types
@@ -41,6 +44,9 @@ const REQUIRED_INFO: Record<string, string[]> = {
   webapp: ['core functionality', 'user workflow', 'data to store'],
   api: ['endpoints needed', 'data models', 'authentication type'],
   social: ['interaction types', 'user relationships', 'content types'],
+  forum: ['discussion topics', 'user roles', 'moderation needs'],
+  news: ['content categories', 'author workflow', 'publishing schedule'],
+  chat: ['messaging features', 'user types', 'notification needs'],
 };
 
 // Analyze the user prompt for ambiguity and missing information
