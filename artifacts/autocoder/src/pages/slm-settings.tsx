@@ -36,6 +36,8 @@ import {
   Save,
   RotateCcw,
   ChevronRight,
+  ChevronDown,
+  ExternalLink,
 } from "lucide-react";
 
 interface SLMStatus {
@@ -690,6 +692,7 @@ export default function SLMSettings() {
   const { toast } = useToast();
   const [endpoint, setEndpoint] = useState("");
   const [activeTab, setActiveTab] = useState<"model" | "prompts">("model");
+  const [showGuide, setShowGuide] = useState(false);
 
   const { data: status, isLoading } = useQuery<SLMStatus>({
     queryKey: ["/api/slm/status"],
@@ -893,8 +896,31 @@ export default function SLMSettings() {
                     </Button>
                   </div>
 
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     <label className="text-sm font-medium">Model Server Endpoint</label>
+
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        { label: "Ollama", url: "http://localhost:11434" },
+                        { label: "LM Studio", url: "http://localhost:1234" },
+                        { label: "llama.cpp", url: "http://localhost:8080" },
+                        { label: "Replit Default", url: "http://localhost:1106/modelfarm/openai" },
+                      ].map((preset) => (
+                        <button
+                          key={preset.label}
+                          onClick={() => setEndpoint(preset.url)}
+                          className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+                            endpoint === preset.url
+                              ? "bg-emerald-500/20 border-emerald-500 text-emerald-400"
+                              : "border-border hover:border-emerald-500/50 hover:text-emerald-400 text-muted-foreground"
+                          }`}
+                          data-testid={`preset-${preset.label.toLowerCase().replace(/\s+/g, "-")}`}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+
                     <div className="flex gap-2">
                       <Input
                         placeholder="http://localhost:8080"
@@ -911,12 +937,110 @@ export default function SLMSettings() {
                       </Button>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Point to a local llama.cpp server, Ollama, or any OpenAI-compatible endpoint
+                      Any OpenAI-compatible <code className="text-[10px] bg-muted px-1 rounded">/v1/chat/completions</code> endpoint
                     </p>
                     {status?.modelManager.endpointUrl && (
                       <p className="text-xs text-green-500" data-testid="text-connected-endpoint">
                         Connected to: {status.modelManager.endpointUrl}
                       </p>
+                    )}
+                  </div>
+
+                  <div className="border-t border-border pt-3">
+                    <button
+                      onClick={() => setShowGuide(!showGuide)}
+                      className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors w-full"
+                      data-testid="toggle-provider-guide"
+                    >
+                      <ChevronDown className={`w-4 h-4 transition-transform ${showGuide ? "rotate-180" : ""}`} />
+                      Provider Setup Guide
+                    </button>
+
+                    {showGuide && (
+                      <div className="mt-3 grid gap-3" data-testid="provider-guide">
+                        <div className="rounded-lg border border-border p-3 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-sm font-medium flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-emerald-500" /> Ollama
+                            </h4>
+                            <a href="https://ollama.com" target="_blank" rel="noopener noreferrer" className="text-xs text-muted-foreground hover:text-emerald-400 flex items-center gap-1">
+                              ollama.com <ExternalLink className="w-3 h-3" />
+                            </a>
+                          </div>
+                          <div className="text-xs text-muted-foreground space-y-1">
+                            <p>1. Install Ollama from the link above</p>
+                            <p>2. Pull a code model:</p>
+                            <code className="block bg-muted px-2 py-1 rounded text-[11px] text-foreground">ollama pull qwen2.5-coder:7b</code>
+                            <p>3. Ollama starts automatically on port 11434</p>
+                            <p className="pt-1 text-muted-foreground/70">Best models: <span className="text-foreground/80">qwen2.5-coder:7b</span> (8GB RAM), <span className="text-foreground/80">deepseek-coder-v2:16b</span> (16GB+), <span className="text-foreground/80">codellama:13b</span></p>
+                          </div>
+                          <div className="flex items-center gap-2 pt-1">
+                            <code className="text-[10px] bg-muted px-2 py-0.5 rounded text-emerald-400">http://localhost:11434</code>
+                            <span className="text-[10px] text-muted-foreground">No API key needed</span>
+                          </div>
+                        </div>
+
+                        <div className="rounded-lg border border-border p-3 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-sm font-medium flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-blue-500" /> LM Studio
+                            </h4>
+                            <a href="https://lmstudio.ai" target="_blank" rel="noopener noreferrer" className="text-xs text-muted-foreground hover:text-blue-400 flex items-center gap-1">
+                              lmstudio.ai <ExternalLink className="w-3 h-3" />
+                            </a>
+                          </div>
+                          <div className="text-xs text-muted-foreground space-y-1">
+                            <p>1. Download and install LM Studio</p>
+                            <p>2. Browse and download any GGUF model from the model hub</p>
+                            <p>3. Go to the <strong className="text-foreground/80">Local Server</strong> tab and click <strong className="text-foreground/80">Start Server</strong></p>
+                            <p>4. It uses whichever model is currently loaded</p>
+                          </div>
+                          <div className="flex items-center gap-2 pt-1">
+                            <code className="text-[10px] bg-muted px-2 py-0.5 rounded text-blue-400">http://localhost:1234</code>
+                            <span className="text-[10px] text-muted-foreground">No API key needed</span>
+                          </div>
+                        </div>
+
+                        <div className="rounded-lg border border-border p-3 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-sm font-medium flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-orange-500" /> llama.cpp server
+                            </h4>
+                            <a href="https://github.com/ggerganov/llama.cpp" target="_blank" rel="noopener noreferrer" className="text-xs text-muted-foreground hover:text-orange-400 flex items-center gap-1">
+                              GitHub <ExternalLink className="w-3 h-3" />
+                            </a>
+                          </div>
+                          <div className="text-xs text-muted-foreground space-y-1">
+                            <p>1. Build llama.cpp from source</p>
+                            <p>2. Run the server with your model:</p>
+                            <code className="block bg-muted px-2 py-1 rounded text-[11px] text-foreground">./llama-server -m your-model.gguf --port 8080</code>
+                            <p>3. Lightweight, no extra dependencies</p>
+                          </div>
+                          <div className="flex items-center gap-2 pt-1">
+                            <code className="text-[10px] bg-muted px-2 py-0.5 rounded text-orange-400">http://localhost:8080</code>
+                            <span className="text-[10px] text-muted-foreground">No API key needed</span>
+                          </div>
+                        </div>
+
+                        <div className="rounded-lg border border-border p-3 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-sm font-medium flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-violet-500" /> Replit Default
+                            </h4>
+                          </div>
+                          <div className="text-xs text-muted-foreground space-y-1">
+                            <p>Replit's built-in model proxy. Works out of the box with no setup needed. Already available in any Replit workspace.</p>
+                          </div>
+                          <div className="flex items-center gap-2 pt-1">
+                            <code className="text-[10px] bg-muted px-2 py-0.5 rounded text-violet-400">http://localhost:1106/modelfarm/openai</code>
+                            <span className="text-[10px] text-muted-foreground">Pre-configured</span>
+                          </div>
+                        </div>
+
+                        <p className="text-[10px] text-muted-foreground/60 text-center pt-1">
+                          All providers use the OpenAI-compatible /v1/chat/completions protocol. No API keys required for local servers.
+                        </p>
+                      </div>
                     )}
                   </div>
                 </CardContent>
