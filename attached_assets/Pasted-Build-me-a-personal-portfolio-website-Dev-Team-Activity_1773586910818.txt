@@ -1,0 +1,79 @@
+Build me a personal portfolio website
+
+Dev Team Activity (14 steps across 1 modules)
+Deep Understanding Engine activated
+Understanding
+Analyzing your request through 5 levels of decomposition to fully grasp what you need built
+
+Why multi-level analysis
+Understanding
+A single pass would miss nuances — each level builds on the previous, from raw intent through domain expertise to specific entity structures and workflows
+
+Level 1: Intent Decomposition
+Understanding
+Breaking down your request into primary goal, secondary features, and implied requirements
+
+Intent identified
+Understanding
+Primary goal: "Build a web application" | Complexity: moderate
+
+SLM enhancing understanding
+Understanding
+Running AI-enhanced analysis to detect implicit requirements and hidden entities
+
+SLM enhancement skipped
+Understanding
+SLM endpoint returned 400: { "error": { "code": "INVALID_ENDPOINT", "message": "Endpoint: 'POST /v1/chat/completions' is not supported." } }
+
+Level 2: Domain Detection
+Understanding
+Detected "Custom Management System" domain with 50% confidence — this activates domain-specific entity templates, vocabulary, and best practices
+
+Why domain matters
+Understanding
+The "Custom Management System" domain has known entity patterns, standard workflows, and industry-specific field types that produce more accurate code than generic templates
+
+Level 3: Entity Extraction
+Understanding
+Found 1 explicitly mentioned data types + 1 inferred from context
+
+Mentioned entities
+Understanding
+users
+
+Inferred entities
+Understanding
+Record — these weren't explicitly mentioned but are needed for the app to function properly
+
+Level 4: Workflow Detection
+Understanding
+0 business workflows identified
+
+Level 5: Need more information
+Understanding
+1 clarifying questions generated — asking now prevents building the wrong thing later
+
+Why we ask questions
+Understanding
+Ambiguous requirements lead to wasted generation cycles — a few targeted questions now save significant rework later
+
+## Understanding Your Request
+
+**Industry:** Custom Management System
+**Application Type:** WEB APPLICATION
+**Scale:** small
+**Target Users:** internal team
+
+**My Understanding:**
+- Industry: Custom Management System (50% confidence)
+- Scale: small
+- Detected modules: Dashboard, Record Management
+- Key data: Record
+
+**Key Data I'll Include:** Record
+
+---
+
+Before I create a detailed plan, I have a few questions:
+
+**What are the main items or records you need to keep track of? For example, employees, products, appointments, etc.**
