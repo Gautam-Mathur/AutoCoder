@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "exportedAt": "2026-03-15T11:43:02.127Z",
+  "exportedAt": "2026-03-15T11:47:08.105Z",
   "patterns": [
     {
       "patternType": "entity-structure",
@@ -551,7 +551,7 @@
           "upcoming-deadlines"
         ]
       },
-      "successCount": 6,
+      "successCount": 7,
       "failureCount": 0,
       "reliability": 1
     },
@@ -620,7 +620,7 @@
       "patternType": "tech-choice",
       "patternKey": "file-structure-general",
       "patternValue": {
-        "fileCount": 64,
+        "fileCount": 56,
         "recentPaths": [
           "src/lib/utils.ts",
           "src/lib/queryClient.ts",
@@ -655,7 +655,7 @@
         ],
         "qualityScore": 90
       },
-      "successCount": 6,
+      "successCount": 7,
       "failureCount": 0,
       "reliability": 1
     },
@@ -1249,7 +1249,7 @@
     {
       "id": 50,
       "patternType": "entity-structure",
-      "domainId": "custom-1773574197426",
+      "domainId": "custom-1773575176729",
       "entityType": "Record",
       "patternKey": "entity-record",
       "patternValue": {
@@ -1270,7 +1270,7 @@
           "createdAt"
         ]
       },
-      "successCount": 2,
+      "successCount": 4,
       "failureCount": 0,
       "reliability": 1
     },
@@ -1287,7 +1287,7 @@
           "create"
         ]
       },
-      "successCount": 1,
+      "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
@@ -1303,7 +1303,7 @@
           "status-tracking"
         ]
       },
-      "successCount": 1,
+      "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
@@ -1429,9 +1429,9 @@
       "reliability": 1
     },
     {
-      "id": 68,
+      "id": 61,
       "patternType": "entity-structure",
-      "domainId": "retail",
+      "domainId": "restaurant",
       "entityType": "Order",
       "patternKey": "entity-order",
       "patternValue": {
@@ -1447,16 +1447,16 @@
           "createdAt": "datetime",
           "orderDate": "date",
           "taxAmount": "number",
+          "customerId": "integer",
           "grandTotal": "text",
           "orderNumber": "text",
           "totalAmount": "integer",
           "customerName": "text",
           "shippingCost": "number",
+          "paymentMethod": "text",
           "orderItemCount": "text",
           "trackingNumber": "string",
-          "shippingAddress": "text",
-          "customerId": "integer",
-          "paymentMethod": "text"
+          "shippingAddress": "text"
         },
         "recommended": [
           "id",
@@ -1489,7 +1489,7 @@
     {
       "id": 64,
       "patternType": "entity-structure",
-      "domainId": "retail",
+      "domainId": "restaurant",
       "entityType": "OrderItem",
       "patternKey": "entity-orderitem",
       "patternValue": {
@@ -1501,11 +1501,11 @@
           "quantity": "integer",
           "createdAt": "datetime",
           "lineTotal": "text",
+          "productId": "integer",
           "unitPrice": "integer",
           "menuItemId": "integer",
           "totalPrice": "number",
-          "specialNotes": "text",
-          "productId": "integer"
+          "specialNotes": "text"
         },
         "recommended": [
           "id",
@@ -1607,7 +1607,7 @@
       "reliability": 1
     },
     {
-      "id": 63,
+      "id": 71,
       "patternType": "workflow-design",
       "patternKey": "workflow-order",
       "patternValue": {
@@ -1789,11 +1789,31 @@
       "reliability": 1
     },
     {
+      "id": 72,
       "patternType": "entity-structure",
-      "entityType": "Product",
       "domainId": "retail",
+      "entityType": "Product",
       "patternKey": "entity-product",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "sku": "text",
+          "name": "text",
+          "tags": "string[]",
+          "price": "integer",
+          "stock": "integer",
+          "status": "enum(active,draft,archived)",
+          "weight": "number",
+          "imageUrl": "text",
+          "quantity": "number",
+          "createdAt": "datetime",
+          "lineTotal": "text",
+          "categoryId": "integer",
+          "description": "text",
+          "compareAtPrice": "integer",
+          "orderItemCount": "text",
+          "inventoryItemCount": "text"
+        },
         "recommended": [
           "id",
           "name",
@@ -1812,37 +1832,31 @@
           "lineTotal",
           "orderItemCount",
           "inventoryItemCount"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "name": "text",
-          "sku": "text",
-          "description": "text",
-          "price": "integer",
-          "compareAtPrice": "integer",
-          "categoryId": "integer",
-          "imageUrl": "text",
-          "stock": "integer",
-          "status": "enum(active,draft,archived)",
-          "quantity": "number",
-          "weight": "number",
-          "tags": "string[]",
-          "createdAt": "datetime",
-          "lineTotal": "text",
-          "orderItemCount": "text",
-          "inventoryItemCount": "text"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 77,
       "patternType": "entity-structure",
-      "entityType": "Category",
       "domainId": "retail",
+      "entityType": "Category",
       "patternKey": "entity-category",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "slug": "string",
+          "status": "enum:active,inactive",
+          "imageUrl": "string",
+          "parentId": "integer",
+          "createdAt": "datetime",
+          "sortOrder": "number",
+          "description": "string",
+          "productCount": "text"
+        },
         "recommended": [
           "id",
           "name",
@@ -1854,30 +1868,36 @@
           "status",
           "createdAt",
           "productCount"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "name": "text",
-          "parentId": "integer",
-          "slug": "string",
-          "description": "string",
-          "imageUrl": "string",
-          "sortOrder": "number",
-          "status": "enum:active,inactive",
-          "createdAt": "datetime",
-          "productCount": "text"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 79,
       "patternType": "entity-structure",
-      "entityType": "InventoryItem",
       "domainId": "retail",
+      "entityType": "InventoryItem",
       "patternKey": "entity-inventoryitem",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "sku": "string",
+          "name": "string",
+          "status": "enum:in-stock,low-stock,out-of-stock,discontinued",
+          "location": "text",
+          "quantity": "integer",
+          "unitCost": "number",
+          "createdAt": "datetime",
+          "lineTotal": "text",
+          "productId": "integer",
+          "expiryDate": "date",
+          "maxQuantity": "number",
+          "minQuantity": "number",
+          "reorderPoint": "integer",
+          "lastRestocked": "date"
+        },
         "recommended": [
           "id",
           "productId",
@@ -1894,30 +1914,14 @@
           "status",
           "createdAt",
           "lineTotal"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "productId": "integer",
-          "location": "text",
-          "quantity": "integer",
-          "reorderPoint": "integer",
-          "name": "string",
-          "sku": "string",
-          "minQuantity": "number",
-          "maxQuantity": "number",
-          "unitCost": "number",
-          "lastRestocked": "date",
-          "expiryDate": "date",
-          "status": "enum:in-stock,low-stock,out-of-stock,discontinued",
-          "createdAt": "datetime",
-          "lineTotal": "text"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 75,
       "patternType": "page-structure",
       "patternKey": "page-layout-products",
       "patternValue": {
@@ -1937,6 +1941,7 @@
       "reliability": 1
     },
     {
+      "id": 80,
       "patternType": "page-structure",
       "patternKey": "page-layout-product-detail",
       "patternValue": {
@@ -1953,6 +1958,7 @@
       "reliability": 1
     },
     {
+      "id": 82,
       "patternType": "page-structure",
       "patternKey": "page-layout-orders",
       "patternValue": {
@@ -1973,6 +1979,7 @@
       "reliability": 1
     },
     {
+      "id": 73,
       "patternType": "page-structure",
       "patternKey": "page-layout-order-detail",
       "patternValue": {
@@ -1989,6 +1996,7 @@
       "reliability": 1
     },
     {
+      "id": 74,
       "patternType": "page-structure",
       "patternKey": "page-layout-inventory",
       "patternValue": {
@@ -2007,23 +2015,11 @@
       "reliability": 1
     },
     {
+      "id": 81,
       "patternType": "domain-mapping",
       "domainId": "retail",
       "patternKey": "domain-retail",
       "patternValue": {
-        "entities": [
-          "Product",
-          "Category",
-          "Order",
-          "OrderItem",
-          "InventoryItem"
-        ],
-        "modules": [
-          "Product Catalog",
-          "Order Management",
-          "Inventory",
-          "Dashboard"
-        ],
         "kpis": [
           "Revenue Today",
           "Orders",
@@ -2034,17 +2030,30 @@
           "Avg Price",
           "Out of Stock Items"
         ],
+        "modules": [
+          "Product Catalog",
+          "Order Management",
+          "Inventory",
+          "Dashboard"
+        ],
+        "entities": [
+          "Product",
+          "Category",
+          "Order",
+          "OrderItem",
+          "InventoryItem"
+        ],
         "pageCount": 6,
         "relationships": {
+          "Order": [
+            "belongsTo Customer",
+            "belongsTo Table"
+          ],
           "Product": [
             "belongsTo Category"
           ],
           "Category": [
             "belongsTo Parent"
-          ],
-          "Order": [
-            "belongsTo Customer",
-            "belongsTo Table"
           ],
           "OrderItem": [
             "belongsTo Order",
@@ -2059,6 +2068,32 @@
       "successCount": 1,
       "failureCount": 0,
       "reliability": 1
+    },
+    {
+      "patternType": "domain-mapping",
+      "domainId": "custom-1773575176729",
+      "patternKey": "domain-custom-1773575176729",
+      "patternValue": {
+        "entities": [
+          "Record"
+        ],
+        "modules": [
+          "Dashboard",
+          "Record Management"
+        ],
+        "kpis": [
+          "Total Records",
+          "Active Records",
+          "Recent Activity",
+          "Active Items",
+          "Growth Rate"
+        ],
+        "pageCount": 3,
+        "relationships": {}
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
     }
   ],
   "preferences": [
@@ -2066,12 +2101,12 @@
       "key": "quality-score-general",
       "value": "91",
       "category": "architecture",
-      "frequency": 6
+      "frequency": 7
     }
   ],
   "stats": {
-    "totalPatterns": 70,
-    "reliablePatterns": 70,
+    "totalPatterns": 71,
+    "reliablePatterns": 71,
     "totalPreferences": 1
   }
 }
