@@ -94,18 +94,22 @@ export function assessComplexity(
 
   const domainConfidence = detectedDomains.length > 0 ? detectedDomains[0].confidence : 0;
   const domainAmbiguity = 1 - domainConfidence;
+  const words = description.split(/\s+/).length;
+
+  const highConfidenceKnownDomain = domainConfidence >= 0.7 && words >= 4;
+
   factors.push({
     name: 'Domain Ambiguity',
     weight: 0.2,
-    value: domainAmbiguity,
-    description: domainConfidence > 0.7 ? 'Clear domain detected' :
+    value: highConfidenceKnownDomain ? 0 : domainAmbiguity,
+    description: highConfidenceKnownDomain ? 'Known domain confidently detected — no clarification needed' :
+                 domainConfidence > 0.7 ? 'Clear domain detected' :
                  domainConfidence > 0.3 ? 'Partial domain match' : 'Unclear or novel domain',
   });
-  totalScore += domainAmbiguity * 0.2;
+  totalScore += (highConfidenceKnownDomain ? 0 : domainAmbiguity) * 0.2;
 
-  const words = description.split(/\s+/).length;
-  const descriptionDepth = Math.min(words / 100, 1);
-  const descriptionBrevity = words < 20 ? 0.8 : words < 50 ? 0.4 : 0;
+  const descriptionBrevity = highConfidenceKnownDomain ? 0 :
+    words < 20 ? 0.8 : words < 50 ? 0.4 : 0;
   factors.push({
     name: 'Description Completeness',
     weight: 0.15,
@@ -125,6 +129,10 @@ export function assessComplexity(
   });
   totalScore += integrationFactor * 0.1;
 
+  if (highConfidenceKnownDomain) {
+    totalScore = Math.min(totalScore, 0.14);
+  }
+
   const level: ComplexityProfile['level'] =
     totalScore < 0.15 ? 'trivial' :
     totalScore < 0.3 ? 'simple' :
@@ -143,7 +151,8 @@ export function assessComplexity(
     level === 'moderate' ? 3 :
     level === 'complex' ? 4 : 5;
 
-  const ambiguityScore = (domainAmbiguity * 0.4 + descriptionBrevity * 0.4 + (entityCount === 0 ? 0.2 : 0));
+  const ambiguityScore = highConfidenceKnownDomain ? 0 :
+    (domainAmbiguity * 0.4 + descriptionBrevity * 0.4 + (entityCount === 0 ? 0.2 : 0));
 
   return {
     score: totalScore,

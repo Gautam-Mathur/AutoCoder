@@ -1342,6 +1342,836 @@ const INDUSTRY_DOMAINS: Record<string, IndustryDomain> = {
     defaultKPIs: ['Total Stock Value', 'Low Stock Items', 'Pending Orders', 'Items Moved Today'],
     commonIntegrations: ['Barcode Scanners', 'Shipping APIs', 'Accounting Software'],
   },
+
+  'portfolio': {
+    id: 'portfolio',
+    name: 'Portfolio / Personal Site',
+    description: 'Personal portfolio website to showcase projects, skills, experience, and contact information',
+    keywords: ['portfolio', 'personal website', 'personal site', 'personal page', 'showcase', 'resume', 'cv', 'developer portfolio', 'freelancer', 'about me', 'my work', 'creative portfolio'],
+    modules: [
+      { name: 'Projects Showcase', description: 'Display portfolio projects with images and descriptions', entities: ['Project'], pages: [
+        { name: 'Projects', path: '/projects', description: 'Project gallery grid', features: ['image-gallery', 'category-filter', 'tech-stack-tags', 'live-demo-link'] },
+        { name: 'Project Detail', path: '/projects/:slug', description: 'Full project case study', features: ['image-carousel', 'description', 'tech-stack', 'github-link', 'live-link'] },
+      ], kpis: ['Total Projects', 'Featured Projects'] },
+      { name: 'About & Skills', description: 'Personal bio, skills, and experience', entities: ['Skill', 'Experience'], pages: [
+        { name: 'About', path: '/about', description: 'Bio, skills, and timeline', features: ['bio-section', 'skills-grid', 'experience-timeline', 'education'] },
+      ], kpis: ['Skills Listed', 'Years Experience'] },
+      { name: 'Contact', description: 'Contact form and social links', entities: ['ContactMessage'], pages: [
+        { name: 'Contact', path: '/contact', description: 'Contact form with social links', features: ['contact-form', 'social-links', 'email-link', 'location-map'] },
+      ], kpis: ['Messages Received'] },
+      { name: 'Blog', description: 'Optional blog section', entities: ['BlogPost'], pages: [
+        { name: 'Blog', path: '/blog', description: 'Articles and thoughts', features: ['post-list', 'category-filter', 'search', 'read-time'] },
+      ], kpis: ['Posts Published'] },
+      { name: 'Home', description: 'Landing hero section', entities: [], pages: [
+        { name: 'Home', path: '/', description: 'Hero with intro, featured projects, and CTA', features: ['hero-section', 'featured-projects', 'skills-preview', 'cta-button'] },
+      ] },
+    ],
+    entities: [
+      { name: 'Project', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'title', type: 'string', required: true }, { name: 'slug', type: 'string', required: true },
+        { name: 'description', type: 'string', required: true }, { name: 'longDescription', type: 'string' },
+        { name: 'imageUrl', type: 'string' }, { name: 'liveUrl', type: 'string' }, { name: 'githubUrl', type: 'string' },
+        { name: 'techStack', type: 'string[]' }, { name: 'category', type: 'string' },
+        { name: 'featured', type: 'boolean' }, { name: 'sortOrder', type: 'number' },
+        { name: 'status', type: 'enum:published,draft', required: true },
+      ]},
+      { name: 'Skill', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'name', type: 'string', required: true },
+        { name: 'category', type: 'enum:frontend,backend,database,devops,design,other', required: true },
+        { name: 'proficiency', type: 'number' }, { name: 'iconUrl', type: 'string' }, { name: 'sortOrder', type: 'number' },
+      ]},
+      { name: 'Experience', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'company', type: 'string', required: true },
+        { name: 'role', type: 'string', required: true }, { name: 'description', type: 'string' },
+        { name: 'startDate', type: 'date', required: true }, { name: 'endDate', type: 'date' },
+        { name: 'current', type: 'boolean' }, { name: 'location', type: 'string' },
+      ]},
+      { name: 'ContactMessage', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'name', type: 'string', required: true },
+        { name: 'email', type: 'string', required: true }, { name: 'subject', type: 'string' },
+        { name: 'message', type: 'string', required: true }, { name: 'read', type: 'boolean' },
+      ]},
+    ],
+    workflows: [],
+    roles: [
+      { name: 'Owner', permissions: ['all'], description: 'Portfolio owner — manages all content' },
+    ],
+    defaultKPIs: ['Projects Showcased', 'Contact Messages', 'Page Views'],
+    commonIntegrations: ['GitHub API', 'Email Service', 'Analytics'],
+  },
+
+  'blog': {
+    id: 'blog',
+    name: 'Blog / Content Platform',
+    description: 'Content publishing platform with posts, categories, comments, and newsletters',
+    keywords: ['blog', 'blogging', 'content', 'articles', 'writing', 'publishing', 'cms', 'content management', 'posts', 'author', 'editorial', 'magazine', 'journal'],
+    modules: [
+      { name: 'Posts', description: 'Create, edit, and publish blog posts', entities: ['Post', 'Tag', 'Category'], pages: [
+        { name: 'All Posts', path: '/posts', description: 'Post listing with filters', features: ['search', 'category-filter', 'tag-filter', 'status-filter', 'sort'] },
+        { name: 'Post Editor', path: '/posts/:id/edit', description: 'Rich text editor with preview', features: ['rich-editor', 'markdown-support', 'image-upload', 'preview', 'seo-fields', 'publish-schedule'] },
+        { name: 'Post View', path: '/posts/:slug', description: 'Published post with comments', features: ['content-display', 'author-bio', 'related-posts', 'social-share', 'comments'] },
+      ], kpis: ['Total Posts', 'Published This Month', 'Avg Read Time'] },
+      { name: 'Comments', description: 'Reader comments and moderation', entities: ['Comment'], pages: [
+        { name: 'Comment Moderation', path: '/comments', description: 'Comment queue for moderation', features: ['pending-queue', 'approve-reject', 'spam-filter', 'reply'] },
+      ], kpis: ['Total Comments', 'Pending Moderation'] },
+      { name: 'Newsletter', description: 'Email subscriber management', entities: ['Subscriber'], pages: [
+        { name: 'Subscribers', path: '/subscribers', description: 'Email subscriber list', features: ['search', 'export', 'subscribe-form', 'unsubscribe'] },
+      ], kpis: ['Total Subscribers', 'New This Week'] },
+      { name: 'Home', description: 'Blog home page', entities: [], pages: [
+        { name: 'Blog Home', path: '/', description: 'Latest posts, featured articles, categories', features: ['latest-posts', 'featured-post', 'category-list', 'newsletter-signup'] },
+      ] },
+    ],
+    entities: [
+      { name: 'Post', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'title', type: 'string', required: true }, { name: 'slug', type: 'string', required: true },
+        { name: 'content', type: 'string', required: true }, { name: 'excerpt', type: 'string' },
+        { name: 'coverImageUrl', type: 'string' }, { name: 'authorId', type: 'number', required: true },
+        { name: 'categoryId', type: 'number' }, { name: 'tags', type: 'string[]' },
+        { name: 'status', type: 'enum:draft,published,archived', required: true },
+        { name: 'publishedAt', type: 'datetime' }, { name: 'readTime', type: 'number' },
+        { name: 'metaTitle', type: 'string' }, { name: 'metaDescription', type: 'string' },
+      ]},
+      { name: 'Category', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'name', type: 'string', required: true },
+        { name: 'slug', type: 'string', required: true }, { name: 'description', type: 'string' },
+      ]},
+      { name: 'Tag', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'name', type: 'string', required: true },
+        { name: 'slug', type: 'string', required: true },
+      ]},
+      { name: 'Comment', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'postId', type: 'number', required: true },
+        { name: 'authorName', type: 'string', required: true }, { name: 'authorEmail', type: 'string', required: true },
+        { name: 'content', type: 'string', required: true }, { name: 'parentId', type: 'number' },
+        { name: 'status', type: 'enum:pending,approved,spam,rejected', required: true },
+      ]},
+      { name: 'Subscriber', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'email', type: 'string', required: true },
+        { name: 'name', type: 'string' }, { name: 'status', type: 'enum:active,unsubscribed', required: true },
+        { name: 'subscribedAt', type: 'datetime', required: true },
+      ]},
+    ],
+    workflows: [
+      { name: 'Post Publishing', entity: 'Post', states: ['draft', 'published', 'archived'], transitions: [
+        { from: 'draft', to: 'published', action: 'Publish', role: 'author' },
+        { from: 'published', to: 'draft', action: 'Unpublish', role: 'author' },
+        { from: 'published', to: 'archived', action: 'Archive', role: 'admin' },
+      ]},
+      { name: 'Comment Moderation', entity: 'Comment', states: ['pending', 'approved', 'spam', 'rejected'], transitions: [
+        { from: 'pending', to: 'approved', action: 'Approve', role: 'admin' },
+        { from: 'pending', to: 'spam', action: 'Mark Spam', role: 'admin' },
+        { from: 'pending', to: 'rejected', action: 'Reject', role: 'admin' },
+      ]},
+    ],
+    roles: [
+      { name: 'Admin', permissions: ['all'], description: 'Full system access' },
+      { name: 'Author', permissions: ['create-posts', 'edit-own-posts', 'publish-posts', 'moderate-comments'], description: 'Content creator' },
+      { name: 'Reader', permissions: ['view-posts', 'comment'], description: 'Blog reader' },
+    ],
+    defaultKPIs: ['Total Posts', 'Page Views', 'Comments', 'Subscribers'],
+    commonIntegrations: ['Email Service', 'Analytics', 'Social Media APIs'],
+  },
+
+  'landing-page': {
+    id: 'landing-page',
+    name: 'Landing Page / Marketing Site',
+    description: 'Promotional landing page with hero, features, pricing, testimonials, and lead capture',
+    keywords: ['landing page', 'landing', 'marketing site', 'marketing', 'promotional', 'product page', 'launch page', 'coming soon', 'waitlist', 'lead capture', 'squeeze page', 'conversion'],
+    modules: [
+      { name: 'Page Sections', description: 'Hero, features, pricing, testimonials, FAQ, CTA', entities: ['Testimonial', 'PricingPlan', 'FAQ'], pages: [
+        { name: 'Landing Page', path: '/', description: 'Single-page marketing layout', features: ['hero-section', 'feature-grid', 'pricing-table', 'testimonial-carousel', 'faq-accordion', 'cta-buttons', 'newsletter-signup'] },
+      ], kpis: ['Page Views', 'Conversion Rate', 'Signups'] },
+      { name: 'Lead Capture', description: 'Collect leads and signups', entities: ['Lead'], pages: [
+        { name: 'Leads', path: '/admin/leads', description: 'Lead management dashboard', features: ['search', 'export-csv', 'date-filter', 'source-filter'] },
+      ], kpis: ['Total Leads', 'Leads This Week', 'Conversion Rate'] },
+    ],
+    entities: [
+      { name: 'Lead', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'email', type: 'string', required: true },
+        { name: 'name', type: 'string' }, { name: 'company', type: 'string' },
+        { name: 'source', type: 'string' }, { name: 'status', type: 'enum:new,contacted,converted', required: true },
+      ]},
+      { name: 'Testimonial', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'authorName', type: 'string', required: true },
+        { name: 'authorTitle', type: 'string' }, { name: 'authorAvatar', type: 'string' },
+        { name: 'quote', type: 'string', required: true }, { name: 'rating', type: 'number' },
+        { name: 'featured', type: 'boolean' }, { name: 'sortOrder', type: 'number' },
+      ]},
+      { name: 'PricingPlan', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'name', type: 'string', required: true },
+        { name: 'price', type: 'number', required: true }, { name: 'billingPeriod', type: 'enum:monthly,yearly', required: true },
+        { name: 'features', type: 'string[]' }, { name: 'highlighted', type: 'boolean' },
+        { name: 'ctaLabel', type: 'string' }, { name: 'sortOrder', type: 'number' },
+      ]},
+      { name: 'FAQ', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'question', type: 'string', required: true },
+        { name: 'answer', type: 'string', required: true }, { name: 'category', type: 'string' }, { name: 'sortOrder', type: 'number' },
+      ]},
+    ],
+    workflows: [],
+    roles: [
+      { name: 'Admin', permissions: ['all'], description: 'Manages landing page content' },
+    ],
+    defaultKPIs: ['Page Views', 'Signups', 'Conversion Rate', 'Bounce Rate'],
+    commonIntegrations: ['Email Service', 'Analytics', 'Stripe', 'CRM'],
+  },
+
+  'social-network': {
+    id: 'social-network',
+    name: 'Social Network / Community',
+    description: 'Social platform with user profiles, posts, follows, likes, and real-time feed',
+    keywords: ['social network', 'social media', 'social platform', 'social app', 'community platform', 'feed', 'timeline', 'followers', 'following', 'like', 'share', 'post feed', 'news feed'],
+    modules: [
+      { name: 'User Profiles', description: 'User profiles with bio and avatar', entities: ['UserProfile'], pages: [
+        { name: 'Profile', path: '/profile/:username', description: 'User profile with posts and stats', features: ['avatar', 'bio', 'follower-count', 'following-count', 'user-posts', 'follow-button'] },
+        { name: 'Edit Profile', path: '/settings/profile', description: 'Edit profile settings', features: ['avatar-upload', 'bio-edit', 'display-name', 'privacy-settings'] },
+      ], kpis: ['Total Users', 'Active Users'] },
+      { name: 'Feed', description: 'Post feed with likes and comments', entities: ['Post', 'Like', 'Comment'], pages: [
+        { name: 'Home Feed', path: '/', description: 'Chronological feed of followed users\' posts', features: ['infinite-scroll', 'post-composer', 'like-button', 'comment', 'share', 'bookmark'] },
+        { name: 'Explore', path: '/explore', description: 'Discover trending content', features: ['trending-posts', 'suggested-users', 'hashtag-search', 'category-browse'] },
+      ], kpis: ['Posts Today', 'Engagement Rate'] },
+      { name: 'Follow System', description: 'Follow/unfollow and follower management', entities: ['Follow'], pages: [
+        { name: 'Followers', path: '/profile/:username/followers', description: 'Follower list', features: ['follower-list', 'follow-back-button'] },
+        { name: 'Following', path: '/profile/:username/following', description: 'Following list', features: ['following-list', 'unfollow-button'] },
+      ], kpis: ['Avg Followers', 'Follow Rate'] },
+      { name: 'Notifications', description: 'Activity notifications', entities: ['Notification'], pages: [
+        { name: 'Notifications', path: '/notifications', description: 'Activity notifications feed', features: ['notification-list', 'mark-read', 'filter-by-type'] },
+      ], kpis: ['Unread Count'] },
+    ],
+    entities: [
+      { name: 'UserProfile', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'username', type: 'string', required: true },
+        { name: 'displayName', type: 'string', required: true }, { name: 'bio', type: 'string' },
+        { name: 'avatarUrl', type: 'string' }, { name: 'coverImageUrl', type: 'string' },
+        { name: 'followerCount', type: 'number' }, { name: 'followingCount', type: 'number' },
+        { name: 'isVerified', type: 'boolean' },
+      ]},
+      { name: 'Post', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'authorId', type: 'number', required: true },
+        { name: 'content', type: 'string', required: true }, { name: 'imageUrl', type: 'string' },
+        { name: 'likeCount', type: 'number' }, { name: 'commentCount', type: 'number' },
+        { name: 'shareCount', type: 'number' }, { name: 'hashtags', type: 'string[]' },
+        { name: 'visibility', type: 'enum:public,followers,private', required: true },
+      ]},
+      { name: 'Like', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'userId', type: 'number', required: true },
+        { name: 'postId', type: 'number', required: true },
+      ]},
+      { name: 'Comment', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'postId', type: 'number', required: true },
+        { name: 'authorId', type: 'number', required: true }, { name: 'content', type: 'string', required: true },
+        { name: 'parentId', type: 'number' }, { name: 'likeCount', type: 'number' },
+      ]},
+      { name: 'Follow', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'followerId', type: 'number', required: true },
+        { name: 'followingId', type: 'number', required: true },
+      ]},
+      { name: 'Notification', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'userId', type: 'number', required: true },
+        { name: 'type', type: 'enum:like,comment,follow,mention', required: true },
+        { name: 'actorId', type: 'number', required: true }, { name: 'targetId', type: 'number' },
+        { name: 'content', type: 'string' }, { name: 'read', type: 'boolean' },
+      ]},
+    ],
+    workflows: [],
+    roles: [
+      { name: 'Admin', permissions: ['all'], description: 'Full system access' },
+      { name: 'Moderator', permissions: ['remove-posts', 'ban-users', 'view-reports'], description: 'Content moderator' },
+      { name: 'User', permissions: ['create-posts', 'comment', 'like', 'follow', 'edit-profile'], description: 'Standard user' },
+    ],
+    defaultKPIs: ['Active Users', 'Posts Per Day', 'Engagement Rate', 'New Users'],
+    commonIntegrations: ['Image CDN', 'Push Notifications', 'Analytics'],
+  },
+
+  'chat-messaging': {
+    id: 'chat-messaging',
+    name: 'Chat / Messaging Platform',
+    description: 'Real-time messaging with conversations, channels, presence, and read receipts',
+    keywords: ['chat', 'messaging', 'instant messaging', 'messenger', 'real-time chat', 'chatroom', 'direct message', 'conversations', 'chat app', 'chat platform', 'slack', 'discord'],
+    modules: [
+      { name: 'Conversations', description: 'Direct messages and group chats', entities: ['Conversation', 'Message', 'Participant'], pages: [
+        { name: 'Chat', path: '/', description: 'Main chat interface with conversation list and messages', features: ['conversation-list', 'message-thread', 'send-message', 'typing-indicator', 'read-receipts', 'search'] },
+        { name: 'New Chat', path: '/new', description: 'Start new conversation', features: ['user-search', 'group-creation', 'channel-creation'] },
+      ], kpis: ['Active Conversations', 'Messages Today'] },
+      { name: 'Channels', description: 'Public or private channels', entities: ['Channel'], pages: [
+        { name: 'Channels', path: '/channels', description: 'Browse and join channels', features: ['channel-list', 'join-channel', 'create-channel', 'search'] },
+      ], kpis: ['Total Channels', 'Active Channels'] },
+      { name: 'User Presence', description: 'Online/offline status', entities: ['UserPresence'], pages: [], kpis: ['Online Users'] },
+    ],
+    entities: [
+      { name: 'Conversation', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'name', type: 'string' },
+        { name: 'type', type: 'enum:direct,group,channel', required: true },
+        { name: 'lastMessageAt', type: 'datetime' }, { name: 'lastMessagePreview', type: 'string' },
+        { name: 'avatarUrl', type: 'string' },
+      ]},
+      { name: 'Message', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'conversationId', type: 'number', required: true },
+        { name: 'senderId', type: 'number', required: true }, { name: 'content', type: 'string', required: true },
+        { name: 'type', type: 'enum:text,image,file,system', required: true },
+        { name: 'replyToId', type: 'number' }, { name: 'edited', type: 'boolean' },
+      ]},
+      { name: 'Participant', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'conversationId', type: 'number', required: true },
+        { name: 'userId', type: 'number', required: true }, { name: 'role', type: 'enum:owner,admin,member', required: true },
+        { name: 'lastReadAt', type: 'datetime' }, { name: 'muted', type: 'boolean' },
+      ]},
+      { name: 'Channel', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'name', type: 'string', required: true },
+        { name: 'description', type: 'string' }, { name: 'isPrivate', type: 'boolean' },
+        { name: 'memberCount', type: 'number' }, { name: 'createdBy', type: 'number', required: true },
+      ]},
+      { name: 'UserPresence', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'userId', type: 'number', required: true },
+        { name: 'status', type: 'enum:online,away,busy,offline', required: true },
+        { name: 'lastSeenAt', type: 'datetime' },
+      ]},
+    ],
+    workflows: [],
+    roles: [
+      { name: 'Admin', permissions: ['all'], description: 'Full system access' },
+      { name: 'User', permissions: ['send-messages', 'create-conversations', 'join-channels'], description: 'Chat user' },
+    ],
+    defaultKPIs: ['Online Users', 'Messages Today', 'Active Conversations'],
+    commonIntegrations: ['WebSockets', 'Push Notifications', 'File Storage'],
+  },
+
+  'booking': {
+    id: 'booking',
+    name: 'Booking / Scheduling Platform',
+    description: 'Appointment booking with availability management, services, staff, and reminders',
+    keywords: ['booking', 'scheduling', 'appointment', 'reservation', 'calendar booking', 'slot booking', 'service booking', 'book appointment', 'schedule appointment', 'calendly'],
+    modules: [
+      { name: 'Services', description: 'Service catalog with pricing and duration', entities: ['Service', 'ServiceCategory'], pages: [
+        { name: 'Services', path: '/services', description: 'Service list with booking', features: ['service-cards', 'category-filter', 'price-display', 'duration-display', 'book-now'] },
+      ], kpis: ['Total Services', 'Most Booked Service'] },
+      { name: 'Appointments', description: 'Booking and appointment management', entities: ['Appointment'], pages: [
+        { name: 'Book Appointment', path: '/book', description: 'Multi-step booking flow', features: ['service-select', 'staff-select', 'date-picker', 'time-slot-picker', 'confirm-booking'] },
+        { name: 'My Appointments', path: '/appointments', description: 'User\'s upcoming and past bookings', features: ['upcoming-list', 'past-list', 'cancel-reschedule'] },
+        { name: 'Admin Calendar', path: '/admin/calendar', description: 'Staff calendar with all bookings', features: ['calendar-view', 'staff-filter', 'create-appointment', 'drag-reschedule'] },
+      ], kpis: ['Appointments Today', 'Bookings This Week', 'Cancellation Rate'] },
+      { name: 'Staff', description: 'Staff profiles and availability', entities: ['Staff', 'Availability'], pages: [
+        { name: 'Staff', path: '/admin/staff', description: 'Staff list with schedules', features: ['staff-list', 'set-availability', 'assign-services', 'view-schedule'] },
+      ], kpis: ['Total Staff', 'Utilization Rate'] },
+      { name: 'Dashboard', description: 'Booking overview', entities: [], pages: [
+        { name: 'Dashboard', path: '/', description: 'Today\'s bookings, revenue, upcoming', features: ['kpi-cards', 'today-schedule', 'revenue-chart', 'upcoming-bookings'] },
+      ] },
+    ],
+    entities: [
+      { name: 'Service', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'name', type: 'string', required: true },
+        { name: 'description', type: 'string' }, { name: 'duration', type: 'number', required: true, description: 'Duration in minutes' },
+        { name: 'price', type: 'number', required: true }, { name: 'categoryId', type: 'number' },
+        { name: 'imageUrl', type: 'string' }, { name: 'status', type: 'enum:active,inactive', required: true },
+      ]},
+      { name: 'Appointment', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'serviceId', type: 'number', required: true },
+        { name: 'staffId', type: 'number', required: true }, { name: 'customerName', type: 'string', required: true },
+        { name: 'customerEmail', type: 'string', required: true }, { name: 'customerPhone', type: 'string' },
+        { name: 'dateTime', type: 'datetime', required: true }, { name: 'duration', type: 'number', required: true },
+        { name: 'status', type: 'enum:booked,confirmed,in-progress,completed,cancelled,no-show', required: true },
+        { name: 'notes', type: 'string' },
+      ]},
+      { name: 'Staff', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'name', type: 'string', required: true },
+        { name: 'email', type: 'string', required: true }, { name: 'phone', type: 'string' },
+        { name: 'avatarUrl', type: 'string' }, { name: 'specialties', type: 'string[]' },
+        { name: 'status', type: 'enum:active,inactive', required: true },
+      ]},
+      { name: 'Availability', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'staffId', type: 'number', required: true },
+        { name: 'dayOfWeek', type: 'number', required: true }, { name: 'startTime', type: 'string', required: true },
+        { name: 'endTime', type: 'string', required: true },
+      ]},
+    ],
+    workflows: [
+      { name: 'Appointment Flow', entity: 'Appointment', states: ['booked', 'confirmed', 'in-progress', 'completed', 'cancelled', 'no-show'], transitions: [
+        { from: 'booked', to: 'confirmed', action: 'Confirm', role: 'staff' },
+        { from: 'confirmed', to: 'in-progress', action: 'Start', role: 'staff' },
+        { from: 'in-progress', to: 'completed', action: 'Complete', role: 'staff' },
+        { from: 'booked', to: 'cancelled', action: 'Cancel', role: 'customer' },
+      ]},
+    ],
+    roles: [
+      { name: 'Admin', permissions: ['all'], description: 'Full system access' },
+      { name: 'Staff', permissions: ['view-appointments', 'update-status', 'manage-availability'], description: 'Service provider' },
+      { name: 'Customer', permissions: ['book-appointment', 'view-own-appointments', 'cancel-own'], description: 'Booking customer' },
+    ],
+    defaultKPIs: ['Bookings Today', 'Revenue', 'Staff Utilization', 'Cancellation Rate'],
+    commonIntegrations: ['Google Calendar', 'Stripe', 'Twilio SMS', 'Email Service'],
+  },
+
+  'event-management': {
+    id: 'event-management',
+    name: 'Event Management Platform',
+    description: 'Event creation, ticketing, RSVP management, and attendee tracking',
+    keywords: ['event', 'events', 'conference', 'meetup', 'ticket', 'ticketing', 'rsvp', 'event planning', 'venue', 'concert', 'workshop', 'webinar', 'registration', 'attendee'],
+    modules: [
+      { name: 'Events', description: 'Event creation and management', entities: ['Event', 'Venue'], pages: [
+        { name: 'Events', path: '/events', description: 'Event listing with categories', features: ['event-cards', 'date-filter', 'category-filter', 'search', 'map-view'] },
+        { name: 'Event Detail', path: '/events/:slug', description: 'Event info with registration', features: ['event-info', 'schedule', 'speakers', 'venue-map', 'register-button', 'ticket-select'] },
+        { name: 'Create Event', path: '/events/new', description: 'Event creation wizard', features: ['multi-step-form', 'date-time-picker', 'venue-select', 'ticket-tiers', 'cover-image'] },
+      ], kpis: ['Total Events', 'Upcoming Events'] },
+      { name: 'Tickets', description: 'Ticket types and sales', entities: ['TicketType', 'Ticket'], pages: [
+        { name: 'Ticket Sales', path: '/admin/tickets', description: 'Ticket sales dashboard', features: ['sales-summary', 'ticket-type-breakdown', 'revenue-chart', 'refund'] },
+      ], kpis: ['Tickets Sold', 'Revenue', 'Sell-Through Rate'] },
+      { name: 'Attendees', description: 'Registration and check-in', entities: ['Attendee'], pages: [
+        { name: 'Attendees', path: '/admin/events/:id/attendees', description: 'Attendee list with check-in', features: ['attendee-list', 'check-in-button', 'qr-scan', 'export-csv', 'email-attendees'] },
+      ], kpis: ['Registered', 'Checked In', 'No-Show Rate'] },
+      { name: 'Dashboard', description: 'Event overview', entities: [], pages: [
+        { name: 'Dashboard', path: '/', description: 'Upcoming events, ticket sales, attendee stats', features: ['kpi-cards', 'upcoming-events', 'sales-chart', 'recent-registrations'] },
+      ] },
+    ],
+    entities: [
+      { name: 'Event', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'title', type: 'string', required: true },
+        { name: 'slug', type: 'string', required: true }, { name: 'description', type: 'string', required: true },
+        { name: 'startDate', type: 'datetime', required: true }, { name: 'endDate', type: 'datetime', required: true },
+        { name: 'venueId', type: 'number' }, { name: 'coverImageUrl', type: 'string' },
+        { name: 'category', type: 'string' }, { name: 'capacity', type: 'number' },
+        { name: 'status', type: 'enum:draft,published,cancelled,completed', required: true },
+        { name: 'organizerId', type: 'number', required: true },
+      ]},
+      { name: 'TicketType', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'eventId', type: 'number', required: true },
+        { name: 'name', type: 'string', required: true }, { name: 'price', type: 'number', required: true },
+        { name: 'quantity', type: 'number', required: true }, { name: 'sold', type: 'number' },
+        { name: 'description', type: 'string' },
+      ]},
+      { name: 'Ticket', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'ticketTypeId', type: 'number', required: true },
+        { name: 'attendeeId', type: 'number', required: true }, { name: 'ticketNumber', type: 'string', required: true },
+        { name: 'status', type: 'enum:valid,used,cancelled,refunded', required: true },
+      ]},
+      { name: 'Attendee', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'eventId', type: 'number', required: true },
+        { name: 'name', type: 'string', required: true }, { name: 'email', type: 'string', required: true },
+        { name: 'phone', type: 'string' }, { name: 'checkedIn', type: 'boolean' },
+        { name: 'checkedInAt', type: 'datetime' },
+      ]},
+      { name: 'Venue', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'name', type: 'string', required: true },
+        { name: 'address', type: 'string', required: true }, { name: 'capacity', type: 'number' },
+        { name: 'contactPhone', type: 'string' },
+      ]},
+    ],
+    workflows: [
+      { name: 'Event Lifecycle', entity: 'Event', states: ['draft', 'published', 'cancelled', 'completed'], transitions: [
+        { from: 'draft', to: 'published', action: 'Publish', role: 'organizer' },
+        { from: 'published', to: 'cancelled', action: 'Cancel', role: 'organizer' },
+        { from: 'published', to: 'completed', action: 'Complete', role: 'system' },
+      ]},
+    ],
+    roles: [
+      { name: 'Admin', permissions: ['all'], description: 'Full system access' },
+      { name: 'Organizer', permissions: ['create-events', 'manage-events', 'view-attendees', 'manage-tickets'], description: 'Event organizer' },
+      { name: 'Attendee', permissions: ['view-events', 'register', 'view-tickets'], description: 'Event attendee' },
+    ],
+    defaultKPIs: ['Upcoming Events', 'Tickets Sold', 'Revenue', 'Attendee Satisfaction'],
+    commonIntegrations: ['Stripe', 'Google Calendar', 'Email Service', 'QR Code'],
+  },
+
+  'saas-dashboard': {
+    id: 'saas-dashboard',
+    name: 'SaaS / Dashboard Platform',
+    description: 'Multi-tenant SaaS application with subscription management, user analytics, and admin dashboard',
+    keywords: ['saas', 'subscription', 'multi-tenant', 'admin panel', 'analytics dashboard', 'control panel', 'reporting tool', 'business intelligence', 'dashboard platform', 'admin dashboard'],
+    modules: [
+      { name: 'Subscription Management', description: 'Plans, billing, and subscription lifecycle', entities: ['Plan', 'Subscription', 'Invoice'], pages: [
+        { name: 'Plans', path: '/admin/plans', description: 'Manage subscription plans', features: ['plan-list', 'create-plan', 'edit-pricing', 'feature-toggles'] },
+        { name: 'Subscriptions', path: '/admin/subscriptions', description: 'Active subscriptions', features: ['search', 'status-filter', 'plan-filter', 'revenue-summary'] },
+        { name: 'Billing', path: '/billing', description: 'Customer billing portal', features: ['current-plan', 'usage-summary', 'invoice-history', 'update-payment', 'upgrade-downgrade'] },
+      ], kpis: ['MRR', 'Active Subscriptions', 'Churn Rate'] },
+      { name: 'User Management', description: 'Users, teams, and permissions', entities: ['User', 'Team'], pages: [
+        { name: 'Users', path: '/admin/users', description: 'User management', features: ['search', 'role-filter', 'status-filter', 'invite-user', 'impersonate'] },
+        { name: 'Teams', path: '/admin/teams', description: 'Team and organization management', features: ['team-list', 'member-management', 'plan-assignment'] },
+      ], kpis: ['Total Users', 'Active Users', 'Teams'] },
+      { name: 'Analytics', description: 'Usage analytics and reporting', entities: ['UsageEvent'], pages: [
+        { name: 'Analytics Dashboard', path: '/admin/analytics', description: 'Product usage analytics', features: ['user-growth-chart', 'active-users-chart', 'feature-usage', 'retention-chart', 'date-range-picker'] },
+      ], kpis: ['DAU', 'MAU', 'Feature Adoption'] },
+      { name: 'Dashboard', description: 'Admin overview', entities: [], pages: [
+        { name: 'Dashboard', path: '/', description: 'SaaS metrics overview', features: ['kpi-cards', 'mrr-chart', 'user-growth', 'churn-chart', 'recent-signups'] },
+      ] },
+    ],
+    entities: [
+      { name: 'Plan', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'name', type: 'string', required: true },
+        { name: 'price', type: 'number', required: true }, { name: 'billingPeriod', type: 'enum:monthly,yearly', required: true },
+        { name: 'features', type: 'string[]' }, { name: 'limits', type: 'string' },
+        { name: 'isPopular', type: 'boolean' }, { name: 'status', type: 'enum:active,archived', required: true },
+      ]},
+      { name: 'Subscription', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'userId', type: 'number', required: true },
+        { name: 'planId', type: 'number', required: true },
+        { name: 'status', type: 'enum:active,past-due,cancelled,trialing', required: true },
+        { name: 'startDate', type: 'date', required: true }, { name: 'endDate', type: 'date' },
+        { name: 'cancelledAt', type: 'datetime' }, { name: 'stripeSubscriptionId', type: 'string' },
+      ]},
+      { name: 'Invoice', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'subscriptionId', type: 'number', required: true },
+        { name: 'amount', type: 'number', required: true },
+        { name: 'status', type: 'enum:draft,sent,paid,overdue,void', required: true },
+        { name: 'issueDate', type: 'date', required: true }, { name: 'dueDate', type: 'date', required: true },
+      ]},
+    ],
+    workflows: [],
+    roles: [
+      { name: 'Super Admin', permissions: ['all'], description: 'Platform administrator' },
+      { name: 'Team Admin', permissions: ['manage-team', 'view-billing', 'manage-members'], description: 'Team admin' },
+      { name: 'Member', permissions: ['use-app', 'view-profile'], description: 'Team member' },
+    ],
+    defaultKPIs: ['MRR', 'Active Users', 'Churn Rate', 'LTV', 'New Signups'],
+    commonIntegrations: ['Stripe', 'Intercom', 'Analytics', 'Email Service'],
+  },
+
+  'documentation': {
+    id: 'documentation',
+    name: 'Documentation / Wiki Site',
+    description: 'Knowledge base and documentation platform with search, versioning, and navigation',
+    keywords: ['documentation', 'docs', 'wiki', 'knowledge base', 'help center', 'faq', 'reference', 'manual', 'guide', 'gitbook', 'docusaurus'],
+    modules: [
+      { name: 'Pages', description: 'Documentation pages and sections', entities: ['DocPage', 'DocSection'], pages: [
+        { name: 'Doc Page', path: '/docs/:slug', description: 'Documentation page with sidebar navigation', features: ['markdown-content', 'table-of-contents', 'sidebar-nav', 'breadcrumbs', 'edit-button', 'last-updated'] },
+        { name: 'Editor', path: '/admin/docs/:id/edit', description: 'Page editor with preview', features: ['markdown-editor', 'live-preview', 'image-upload', 'section-ordering'] },
+      ], kpis: ['Total Pages', 'Updated This Month'] },
+      { name: 'Search', description: 'Full-text search across docs', entities: [], pages: [
+        { name: 'Search', path: '/search', description: 'Search results page', features: ['full-text-search', 'highlighted-results', 'category-filter'] },
+      ], kpis: ['Searches Per Day', 'Zero-Result Rate'] },
+      { name: 'Home', description: 'Documentation home', entities: [], pages: [
+        { name: 'Docs Home', path: '/', description: 'Documentation landing with sections', features: ['section-cards', 'quick-search', 'popular-pages', 'getting-started'] },
+      ] },
+    ],
+    entities: [
+      { name: 'DocPage', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'title', type: 'string', required: true },
+        { name: 'slug', type: 'string', required: true }, { name: 'content', type: 'string', required: true },
+        { name: 'sectionId', type: 'number' }, { name: 'parentId', type: 'number' },
+        { name: 'sortOrder', type: 'number' }, { name: 'status', type: 'enum:published,draft', required: true },
+        { name: 'version', type: 'string' }, { name: 'lastEditedBy', type: 'string' },
+      ]},
+      { name: 'DocSection', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'name', type: 'string', required: true },
+        { name: 'slug', type: 'string', required: true }, { name: 'description', type: 'string' },
+        { name: 'iconUrl', type: 'string' }, { name: 'sortOrder', type: 'number' },
+      ]},
+    ],
+    workflows: [],
+    roles: [
+      { name: 'Admin', permissions: ['all'], description: 'Full system access' },
+      { name: 'Editor', permissions: ['create-pages', 'edit-pages', 'publish'], description: 'Documentation writer' },
+      { name: 'Viewer', permissions: ['view-docs', 'search'], description: 'Reader' },
+    ],
+    defaultKPIs: ['Total Pages', 'Page Views', 'Search Queries', 'Helpful Rating'],
+    commonIntegrations: ['GitHub', 'Search Engine', 'Analytics'],
+  },
+
+  'news-media': {
+    id: 'news-media',
+    name: 'News / Media Platform',
+    description: 'News publishing platform with articles, categories, editorial workflow, and breaking news',
+    keywords: ['news', 'media', 'newspaper', 'press', 'editorial', 'journalism', 'article', 'breaking news', 'headline', 'reporter'],
+    modules: [
+      { name: 'Articles', description: 'Article management and publishing', entities: ['Article', 'Category', 'Author'], pages: [
+        { name: 'Articles', path: '/admin/articles', description: 'Article management', features: ['search', 'status-filter', 'category-filter', 'author-filter', 'create-article'] },
+        { name: 'Article View', path: '/articles/:slug', description: 'Published article', features: ['content', 'author-bio', 'related-articles', 'social-share', 'comments'] },
+        { name: 'Home', path: '/', description: 'News home page', features: ['hero-article', 'category-sections', 'trending', 'breaking-news-banner', 'latest-articles'] },
+      ], kpis: ['Articles Published', 'Page Views Today'] },
+    ],
+    entities: [
+      { name: 'Article', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'title', type: 'string', required: true },
+        { name: 'slug', type: 'string', required: true }, { name: 'content', type: 'string', required: true },
+        { name: 'excerpt', type: 'string' }, { name: 'coverImageUrl', type: 'string' },
+        { name: 'authorId', type: 'number', required: true }, { name: 'categoryId', type: 'number' },
+        { name: 'status', type: 'enum:draft,review,published,archived', required: true },
+        { name: 'isBreaking', type: 'boolean' }, { name: 'publishedAt', type: 'datetime' },
+        { name: 'tags', type: 'string[]' },
+      ]},
+      { name: 'Category', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'name', type: 'string', required: true },
+        { name: 'slug', type: 'string', required: true }, { name: 'color', type: 'string' },
+      ]},
+      { name: 'Author', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'name', type: 'string', required: true },
+        { name: 'bio', type: 'string' }, { name: 'avatarUrl', type: 'string' },
+        { name: 'role', type: 'enum:reporter,editor,contributor', required: true },
+      ]},
+    ],
+    workflows: [
+      { name: 'Editorial Flow', entity: 'Article', states: ['draft', 'review', 'published', 'archived'], transitions: [
+        { from: 'draft', to: 'review', action: 'Submit for Review', role: 'reporter' },
+        { from: 'review', to: 'published', action: 'Publish', role: 'editor' },
+        { from: 'review', to: 'draft', action: 'Request Changes', role: 'editor' },
+        { from: 'published', to: 'archived', action: 'Archive', role: 'editor' },
+      ]},
+    ],
+    roles: [
+      { name: 'Admin', permissions: ['all'], description: 'Full system access' },
+      { name: 'Editor', permissions: ['manage-articles', 'publish', 'manage-categories'], description: 'Editorial staff' },
+      { name: 'Reporter', permissions: ['create-articles', 'edit-own-articles'], description: 'Journalist' },
+    ],
+    defaultKPIs: ['Articles Published Today', 'Page Views', 'Active Readers', 'Breaking News Count'],
+    commonIntegrations: ['Social Media', 'Analytics', 'Push Notifications'],
+  },
+
+  'gaming': {
+    id: 'gaming',
+    name: 'Gaming / Entertainment',
+    description: 'Gaming platform with leaderboards, player profiles, achievements, and match tracking',
+    keywords: ['game', 'gaming', 'quiz', 'trivia', 'leaderboard', 'scoreboard', 'puzzle', 'arcade', 'multiplayer', 'player', 'high score', 'achievement'],
+    modules: [
+      { name: 'Players', description: 'Player profiles and stats', entities: ['Player'], pages: [
+        { name: 'Profile', path: '/players/:id', description: 'Player profile with stats', features: ['avatar', 'stats-grid', 'achievement-badges', 'match-history', 'rank'] },
+      ], kpis: ['Total Players', 'Active Players'] },
+      { name: 'Leaderboards', description: 'Score rankings and competitions', entities: ['Score'], pages: [
+        { name: 'Leaderboard', path: '/leaderboard', description: 'Global and category rankings', features: ['rank-list', 'time-filter', 'category-filter', 'search-player'] },
+      ], kpis: ['High Score', 'Games Played Today'] },
+      { name: 'Achievements', description: 'Achievement and badge system', entities: ['Achievement', 'PlayerAchievement'], pages: [
+        { name: 'Achievements', path: '/achievements', description: 'All achievements', features: ['achievement-grid', 'category-filter', 'progress-bar'] },
+      ], kpis: ['Achievements Unlocked', 'Completion Rate'] },
+      { name: 'Game', description: 'Main game interface', entities: [], pages: [
+        { name: 'Play', path: '/', description: 'Main game screen', features: ['game-canvas', 'score-display', 'timer', 'pause-menu', 'game-over-screen'] },
+      ] },
+    ],
+    entities: [
+      { name: 'Player', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'username', type: 'string', required: true },
+        { name: 'displayName', type: 'string' }, { name: 'avatarUrl', type: 'string' },
+        { name: 'level', type: 'number' }, { name: 'experience', type: 'number' },
+        { name: 'totalScore', type: 'number' }, { name: 'gamesPlayed', type: 'number' },
+      ]},
+      { name: 'Score', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'playerId', type: 'number', required: true },
+        { name: 'score', type: 'number', required: true }, { name: 'category', type: 'string' },
+        { name: 'duration', type: 'number' },
+      ]},
+      { name: 'Achievement', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'name', type: 'string', required: true },
+        { name: 'description', type: 'string' }, { name: 'iconUrl', type: 'string' },
+        { name: 'points', type: 'number' }, { name: 'category', type: 'string' },
+      ]},
+      { name: 'PlayerAchievement', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'playerId', type: 'number', required: true },
+        { name: 'achievementId', type: 'number', required: true }, { name: 'unlockedAt', type: 'datetime', required: true },
+      ]},
+    ],
+    workflows: [],
+    roles: [
+      { name: 'Admin', permissions: ['all'], description: 'Full system access' },
+      { name: 'Player', permissions: ['play-game', 'view-leaderboard', 'view-profile', 'view-achievements'], description: 'Game player' },
+    ],
+    defaultKPIs: ['Active Players', 'Games Played', 'High Score', 'Avg Session Time'],
+    commonIntegrations: ['WebSockets', 'Analytics', 'Push Notifications'],
+  },
+
+  'forum': {
+    id: 'forum',
+    name: 'Forum / Discussion Board',
+    description: 'Community discussion forum with threads, categories, voting, and moderation',
+    keywords: ['forum', 'discussion', 'discussion board', 'community forum', 'threads', 'topic', 'bulletin board', 'q&a', 'question answer', 'reddit', 'discourse'],
+    modules: [
+      { name: 'Discussions', description: 'Threads and replies', entities: ['Thread', 'Reply', 'Category'], pages: [
+        { name: 'Forum Home', path: '/', description: 'Category list with latest threads', features: ['category-list', 'latest-threads', 'trending', 'search'] },
+        { name: 'Category', path: '/c/:slug', description: 'Threads in category', features: ['thread-list', 'sort-by-latest-popular', 'create-thread', 'pinned-threads'] },
+        { name: 'Thread', path: '/t/:id', description: 'Thread with replies', features: ['original-post', 'reply-list', 'reply-editor', 'upvote-downvote', 'mark-solution', 'report'] },
+      ], kpis: ['Total Threads', 'Replies Today', 'Active Users'] },
+      { name: 'User Profiles', description: 'User reputation and activity', entities: ['ForumUser'], pages: [
+        { name: 'Profile', path: '/u/:username', description: 'User profile with activity', features: ['bio', 'reputation-score', 'recent-posts', 'badges'] },
+      ], kpis: ['Total Users', 'Avg Reputation'] },
+    ],
+    entities: [
+      { name: 'Thread', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'title', type: 'string', required: true },
+        { name: 'content', type: 'string', required: true }, { name: 'authorId', type: 'number', required: true },
+        { name: 'categoryId', type: 'number', required: true }, { name: 'upvotes', type: 'number' },
+        { name: 'replyCount', type: 'number' }, { name: 'viewCount', type: 'number' },
+        { name: 'isPinned', type: 'boolean' }, { name: 'isLocked', type: 'boolean' },
+        { name: 'status', type: 'enum:open,closed,deleted', required: true },
+      ]},
+      { name: 'Reply', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'threadId', type: 'number', required: true },
+        { name: 'authorId', type: 'number', required: true }, { name: 'content', type: 'string', required: true },
+        { name: 'parentId', type: 'number' }, { name: 'upvotes', type: 'number' },
+        { name: 'isSolution', type: 'boolean' },
+      ]},
+      { name: 'Category', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'name', type: 'string', required: true },
+        { name: 'slug', type: 'string', required: true }, { name: 'description', type: 'string' },
+        { name: 'color', type: 'string' }, { name: 'sortOrder', type: 'number' },
+        { name: 'threadCount', type: 'number' },
+      ]},
+    ],
+    workflows: [],
+    roles: [
+      { name: 'Admin', permissions: ['all'], description: 'Full system access' },
+      { name: 'Moderator', permissions: ['pin-threads', 'lock-threads', 'delete-posts', 'ban-users'], description: 'Community moderator' },
+      { name: 'Member', permissions: ['create-threads', 'reply', 'upvote', 'edit-own'], description: 'Forum member' },
+    ],
+    defaultKPIs: ['Active Threads', 'Posts Today', 'Active Users', 'Answered Questions'],
+    commonIntegrations: ['Email Notifications', 'Markdown Parser', 'Analytics'],
+  },
+
+  'analytics': {
+    id: 'analytics',
+    name: 'Analytics / Reporting Tool',
+    description: 'Data analytics dashboard with charts, reports, KPIs, and data visualization',
+    keywords: ['analytics', 'reporting', 'metrics', 'data visualization', 'chart', 'statistics', 'insights', 'kpi', 'business intelligence', 'bi', 'data dashboard'],
+    modules: [
+      { name: 'Dashboards', description: 'Customizable dashboards with widgets', entities: ['Dashboard', 'Widget'], pages: [
+        { name: 'Dashboard', path: '/', description: 'Main analytics dashboard', features: ['kpi-cards', 'line-charts', 'bar-charts', 'pie-charts', 'date-range-picker', 'comparison-toggle'] },
+        { name: 'Custom Dashboard', path: '/dashboards/:id', description: 'Custom dashboard builder', features: ['widget-grid', 'add-widget', 'drag-resize', 'save-layout'] },
+      ], kpis: ['Total Dashboards', 'Active Users'] },
+      { name: 'Reports', description: 'Generate and export reports', entities: ['Report'], pages: [
+        { name: 'Reports', path: '/reports', description: 'Report library', features: ['report-list', 'create-report', 'schedule-report', 'export-pdf-csv'] },
+      ], kpis: ['Reports Generated', 'Scheduled Reports'] },
+      { name: 'Data Sources', description: 'Connect and manage data sources', entities: ['DataSource'], pages: [
+        { name: 'Data Sources', path: '/admin/sources', description: 'Manage data connections', features: ['source-list', 'add-source', 'test-connection', 'sync-status'] },
+      ], kpis: ['Connected Sources', 'Last Sync'] },
+    ],
+    entities: [
+      { name: 'Dashboard', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'name', type: 'string', required: true },
+        { name: 'description', type: 'string' }, { name: 'ownerId', type: 'number', required: true },
+        { name: 'isPublic', type: 'boolean' }, { name: 'layout', type: 'string' },
+      ]},
+      { name: 'Widget', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'dashboardId', type: 'number', required: true },
+        { name: 'type', type: 'enum:kpi-card,line-chart,bar-chart,pie-chart,table,text', required: true },
+        { name: 'title', type: 'string', required: true }, { name: 'config', type: 'string' },
+        { name: 'position', type: 'string' }, { name: 'size', type: 'string' },
+      ]},
+      { name: 'Report', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'name', type: 'string', required: true },
+        { name: 'type', type: 'string' }, { name: 'config', type: 'string' },
+        { name: 'schedule', type: 'string' }, { name: 'lastRunAt', type: 'datetime' },
+      ]},
+      { name: 'DataSource', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'name', type: 'string', required: true },
+        { name: 'type', type: 'enum:database,api,csv,spreadsheet', required: true },
+        { name: 'connectionString', type: 'string' },
+        { name: 'status', type: 'enum:connected,disconnected,error', required: true },
+        { name: 'lastSyncAt', type: 'datetime' },
+      ]},
+    ],
+    workflows: [],
+    roles: [
+      { name: 'Admin', permissions: ['all'], description: 'Full system access' },
+      { name: 'Analyst', permissions: ['create-dashboards', 'create-reports', 'view-data'], description: 'Data analyst' },
+      { name: 'Viewer', permissions: ['view-dashboards', 'view-reports'], description: 'Report viewer' },
+    ],
+    defaultKPIs: ['Active Users', 'Reports Generated', 'Data Sources', 'Dashboard Views'],
+    commonIntegrations: ['Database Connectors', 'Google Sheets', 'Export APIs'],
+  },
+
+  'recipe': {
+    id: 'recipe',
+    name: 'Recipe / Food Platform',
+    description: 'Recipe sharing platform with ingredients, instructions, meal planning, and nutritional info',
+    keywords: ['recipe', 'recipes', 'cookbook', 'meal plan', 'food', 'cooking', 'ingredients', 'nutrition', 'meal prep', 'diet', 'food blog'],
+    modules: [
+      { name: 'Recipes', description: 'Recipe collection and browsing', entities: ['Recipe', 'Ingredient', 'Category'], pages: [
+        { name: 'Recipes', path: '/', description: 'Recipe gallery with filters', features: ['recipe-cards', 'category-filter', 'cuisine-filter', 'difficulty-filter', 'search', 'cook-time-filter'] },
+        { name: 'Recipe Detail', path: '/recipes/:slug', description: 'Full recipe with instructions', features: ['ingredient-list', 'step-instructions', 'cooking-time', 'servings-adjuster', 'nutrition-info', 'rating', 'print', 'save'] },
+        { name: 'Add Recipe', path: '/recipes/new', description: 'Create new recipe', features: ['title-description', 'ingredient-builder', 'step-editor', 'image-upload', 'tags', 'nutrition-calculator'] },
+      ], kpis: ['Total Recipes', 'Most Popular Recipe'] },
+      { name: 'Meal Planning', description: 'Weekly meal planner', entities: ['MealPlan'], pages: [
+        { name: 'Meal Planner', path: '/planner', description: 'Weekly meal planning calendar', features: ['week-view', 'drag-drop-recipes', 'shopping-list-generator', 'nutrition-summary'] },
+      ], kpis: ['Plans Created', 'Recipes in Plans'] },
+      { name: 'Shopping List', description: 'Generate shopping lists from recipes', entities: ['ShoppingItem'], pages: [
+        { name: 'Shopping List', path: '/shopping-list', description: 'Aggregated shopping list', features: ['item-list', 'check-off', 'add-custom-item', 'share'] },
+      ] },
+    ],
+    entities: [
+      { name: 'Recipe', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'title', type: 'string', required: true },
+        { name: 'slug', type: 'string', required: true }, { name: 'description', type: 'string' },
+        { name: 'instructions', type: 'string', required: true }, { name: 'prepTime', type: 'number' },
+        { name: 'cookTime', type: 'number' }, { name: 'servings', type: 'number', required: true },
+        { name: 'difficulty', type: 'enum:easy,medium,hard', required: true },
+        { name: 'cuisine', type: 'string' }, { name: 'imageUrl', type: 'string' },
+        { name: 'calories', type: 'number' }, { name: 'authorId', type: 'number' },
+        { name: 'rating', type: 'number' }, { name: 'tags', type: 'string[]' },
+      ]},
+      { name: 'Ingredient', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'recipeId', type: 'number', required: true },
+        { name: 'name', type: 'string', required: true }, { name: 'quantity', type: 'string', required: true },
+        { name: 'unit', type: 'string' }, { name: 'notes', type: 'string' }, { name: 'sortOrder', type: 'number' },
+      ]},
+      { name: 'MealPlan', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'userId', type: 'number', required: true },
+        { name: 'date', type: 'date', required: true },
+        { name: 'mealType', type: 'enum:breakfast,lunch,dinner,snack', required: true },
+        { name: 'recipeId', type: 'number', required: true },
+      ]},
+    ],
+    workflows: [],
+    roles: [
+      { name: 'Admin', permissions: ['all'], description: 'Full system access' },
+      { name: 'Chef', permissions: ['create-recipes', 'edit-own', 'manage-categories'], description: 'Recipe creator' },
+      { name: 'User', permissions: ['view-recipes', 'save-recipes', 'create-meal-plans', 'rate'], description: 'Home cook' },
+    ],
+    defaultKPIs: ['Total Recipes', 'Most Popular', 'Active Users', 'Recipes Added This Week'],
+    commonIntegrations: ['Nutrition API', 'Image CDN', 'Social Share'],
+  },
+
+  'job-board': {
+    id: 'job-board',
+    name: 'Job Board / Recruitment',
+    description: 'Job listing platform with applications, company profiles, and candidate management',
+    keywords: ['job board', 'job listing', 'careers', 'recruitment', 'hiring', 'job portal', 'applicant', 'candidate', 'job search', 'job post', 'career page', 'employment'],
+    modules: [
+      { name: 'Job Listings', description: 'Post and browse job openings', entities: ['Job', 'Company'], pages: [
+        { name: 'Job Board', path: '/', description: 'Job listing with search and filters', features: ['search', 'location-filter', 'type-filter', 'salary-filter', 'remote-filter', 'category-filter'] },
+        { name: 'Job Detail', path: '/jobs/:slug', description: 'Full job posting with apply button', features: ['job-description', 'requirements', 'salary-range', 'company-info', 'apply-button', 'share'] },
+        { name: 'Post Job', path: '/post-job', description: 'Create job listing', features: ['job-form', 'rich-editor', 'salary-range', 'tags', 'preview'] },
+      ], kpis: ['Active Jobs', 'New This Week'] },
+      { name: 'Applications', description: 'Application tracking', entities: ['Application'], pages: [
+        { name: 'Applications', path: '/admin/applications', description: 'Application management', features: ['search', 'status-filter', 'job-filter', 'resume-download', 'status-update'] },
+      ], kpis: ['Total Applications', 'Pending Review'] },
+      { name: 'Companies', description: 'Company profiles', entities: ['Company'], pages: [
+        { name: 'Companies', path: '/companies', description: 'Company directory', features: ['company-cards', 'industry-filter', 'search'] },
+        { name: 'Company Profile', path: '/companies/:slug', description: 'Company page with open positions', features: ['company-info', 'open-positions', 'about', 'benefits'] },
+      ], kpis: ['Total Companies'] },
+    ],
+    entities: [
+      { name: 'Job', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'title', type: 'string', required: true },
+        { name: 'slug', type: 'string', required: true }, { name: 'description', type: 'string', required: true },
+        { name: 'requirements', type: 'string' }, { name: 'companyId', type: 'number', required: true },
+        { name: 'location', type: 'string' }, { name: 'type', type: 'enum:full-time,part-time,contract,internship,remote', required: true },
+        { name: 'salaryMin', type: 'number' }, { name: 'salaryMax', type: 'number' },
+        { name: 'category', type: 'string' }, { name: 'status', type: 'enum:active,closed,draft', required: true },
+      ]},
+      { name: 'Application', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'jobId', type: 'number', required: true },
+        { name: 'applicantName', type: 'string', required: true }, { name: 'applicantEmail', type: 'string', required: true },
+        { name: 'resumeUrl', type: 'string' }, { name: 'coverLetter', type: 'string' },
+        { name: 'status', type: 'enum:submitted,reviewing,shortlisted,interview,offered,rejected', required: true },
+      ]},
+      { name: 'Company', fields: [
+        { name: 'id', type: 'serial', required: true }, { name: 'name', type: 'string', required: true },
+        { name: 'slug', type: 'string', required: true }, { name: 'description', type: 'string' },
+        { name: 'logoUrl', type: 'string' }, { name: 'website', type: 'string' },
+        { name: 'industry', type: 'string' }, { name: 'size', type: 'string' }, { name: 'location', type: 'string' },
+      ]},
+    ],
+    workflows: [
+      { name: 'Application Pipeline', entity: 'Application', states: ['submitted', 'reviewing', 'shortlisted', 'interview', 'offered', 'rejected'], transitions: [
+        { from: 'submitted', to: 'reviewing', action: 'Review', role: 'recruiter' },
+        { from: 'reviewing', to: 'shortlisted', action: 'Shortlist', role: 'recruiter' },
+        { from: 'shortlisted', to: 'interview', action: 'Schedule Interview', role: 'recruiter' },
+        { from: 'interview', to: 'offered', action: 'Make Offer', role: 'recruiter' },
+        { from: 'reviewing', to: 'rejected', action: 'Reject', role: 'recruiter' },
+      ]},
+    ],
+    roles: [
+      { name: 'Admin', permissions: ['all'], description: 'Full system access' },
+      { name: 'Recruiter', permissions: ['post-jobs', 'manage-applications', 'manage-company'], description: 'Hiring manager' },
+      { name: 'Applicant', permissions: ['view-jobs', 'apply', 'view-applications'], description: 'Job seeker' },
+    ],
+    defaultKPIs: ['Active Jobs', 'Applications This Week', 'Companies', 'Hired This Month'],
+    commonIntegrations: ['LinkedIn', 'Email Service', 'Calendar'],
+  },
 };
 
 export function getAllDomains(): IndustryDomain[] {

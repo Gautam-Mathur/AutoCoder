@@ -709,23 +709,45 @@ function buildTransitions(states: string[]): { from: string; to: string; action:
 }
 
 function extractAppType(text: string): string {
-  const appTypes: Record<string, string[]> = {
-    'Business Management': ['business', 'company', 'organization', 'enterprise', 'corporate'],
-    'Service Platform': ['service', 'booking', 'appointment', 'schedule', 'salon', 'spa', 'grooming'],
-    'Marketplace': ['marketplace', 'buy', 'sell', 'listing', 'vendor', 'multi-vendor'],
-    'Community Platform': ['community', 'social', 'forum', 'group', 'network', 'connect'],
-    'Operations System': ['operations', 'ops', 'workflow', 'process', 'automation'],
-    'Tracking System': ['track', 'monitor', 'log', 'record', 'manage'],
-    'Management Portal': ['manage', 'portal', 'admin', 'control', 'dashboard'],
-  };
+  const appTypes: [string, string[]][] = [
+    ['Portfolio / Personal Site', ['portfolio', 'personal website', 'personal site', 'personal page', 'showcase', 'resume website', 'cv website', 'developer site', 'freelancer site']],
+    ['Blog / Content Platform', ['blog', 'blogging', 'content management', 'cms', 'publishing platform', 'articles', 'writing platform', 'news site', 'magazine']],
+    ['Landing Page / Marketing Site', ['landing page', 'marketing site', 'promotional', 'product page', 'launch page', 'coming soon', 'waitlist', 'lead capture', 'squeeze page']],
+    ['E-Commerce / Online Store', ['ecommerce', 'e-commerce', 'online store', 'shop', 'shopping', 'storefront', 'product catalog', 'cart', 'checkout']],
+    ['Social Network / Community', ['social network', 'social media', 'social platform', 'community', 'forum', 'discussion board', 'social app', 'feed', 'timeline', 'followers']],
+    ['Chat / Messaging Platform', ['chat', 'messaging', 'instant messaging', 'messenger', 'real-time chat', 'chatroom', 'direct message', 'dm', 'conversations']],
+    ['Booking / Scheduling Platform', ['booking', 'appointment', 'scheduling', 'reservation', 'calendar booking', 'slot booking', 'salon', 'spa', 'grooming', 'service booking']],
+    ['Event Management Platform', ['event', 'events', 'conference', 'meetup', 'ticket', 'ticketing', 'rsvp', 'event planning', 'venue', 'concert', 'workshop', 'webinar']],
+    ['SaaS / Dashboard Platform', ['saas', 'subscription', 'multi-tenant', 'admin panel', 'analytics dashboard', 'control panel', 'reporting tool', 'business intelligence']],
+    ['Documentation / Wiki Site', ['documentation', 'docs', 'wiki', 'knowledge base', 'help center', 'faq', 'reference', 'manual', 'guide']],
+    ['Recipe / Food Platform', ['recipe', 'recipes', 'cookbook', 'meal plan', 'food', 'cooking', 'ingredients', 'nutrition']],
+    ['Fitness / Health Tracker', ['fitness', 'workout', 'exercise', 'health tracker', 'gym', 'wellness', 'step counter', 'calorie', 'weight tracker', 'habit tracker']],
+    ['Gaming / Entertainment', ['game', 'gaming', 'quiz', 'trivia', 'leaderboard', 'scoreboard', 'puzzle', 'arcade', 'multiplayer']],
+    ['Job Board / Recruitment', ['job board', 'job listing', 'careers', 'recruitment', 'hiring', 'job portal', 'applicant', 'resume', 'candidate']],
+    ['Learning / Education Platform', ['course', 'learning', 'education', 'tutorial', 'e-learning', 'lms', 'student', 'lesson', 'quiz platform', 'study', 'academy']],
+    ['Finance / Budget Tracker', ['budget', 'expense tracker', 'finance', 'money', 'spending', 'savings', 'income', 'financial', 'accounting', 'invoice']],
+    ['Task / Project Management', ['task manager', 'project management', 'todo', 'to-do', 'kanban', 'task board', 'issue tracker', 'sprint', 'backlog', 'planner']],
+    ['Marketplace', ['marketplace', 'buy', 'sell', 'listing', 'vendor', 'multi-vendor', 'classified', 'auction']],
+    ['Analytics / Reporting Tool', ['analytics', 'reporting', 'metrics', 'data visualization', 'chart', 'statistics', 'insights', 'kpi']],
+    ['Inventory / Warehouse', ['inventory', 'stock', 'warehouse', 'supply chain', 'logistics', 'shipping', 'fulfillment']],
+    ['CRM / Sales Platform', ['crm', 'customer relationship', 'sales pipeline', 'leads', 'deals', 'prospect', 'sales']],
+    ['Real Estate Platform', ['real estate', 'property', 'rental', 'listing', 'apartment', 'housing', 'tenant', 'landlord']],
+    ['Healthcare / Medical', ['healthcare', 'medical', 'patient', 'hospital', 'clinic', 'appointment', 'prescription', 'health record']],
+    ['Business Management', ['business', 'company', 'organization', 'enterprise', 'corporate']],
+    ['Service Platform', ['service', 'service platform']],
+    ['Operations System', ['operations', 'ops', 'workflow', 'process', 'automation']],
+    ['Tracking System', ['track', 'monitor', 'log', 'record']],
+    ['Management Portal', ['portal', 'admin', 'control', 'dashboard']],
+    ['Web Application', ['website', 'web app', 'webapp', 'web application', 'site', 'app', 'application', 'platform', 'tool']],
+  ];
 
-  for (const [appType, keywords] of Object.entries(appTypes)) {
+  for (const [appType, keywords] of appTypes) {
     if (keywords.some(k => text.includes(k))) {
       return appType;
     }
   }
 
-  return 'Management System';
+  return 'Web Application';
 }
 
 export function isDomainSynthesized(domain: IndustryDomain): domain is SynthesizedDomain {

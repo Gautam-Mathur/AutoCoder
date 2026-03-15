@@ -6,6 +6,80 @@
  * knowledge into LLM prompts to dramatically improve output quality.
  */
 
+import {
+  EXPANDED_CONCEPTS,
+  EXPANDED_ENTITY_ARCHETYPES,
+  EXPANDED_DOMAIN_MODELS,
+  EXPANDED_CODE_SNIPPETS,
+  EXPANDED_ANTI_PATTERNS,
+  EXPANDED_BEST_PRACTICES,
+} from './knowledge-base-expansion';
+
+import {
+  EXPANDED_CONCEPTS_2,
+  EXPANDED_ENTITY_ARCHETYPES_2,
+  EXPANDED_DOMAIN_MODELS_2,
+  EXPANDED_CODE_SNIPPETS_2,
+  EXPANDED_ANTI_PATTERNS_2,
+  EXPANDED_BEST_PRACTICES_2,
+} from './knowledge-base-expansion-2';
+
+import {
+  EXPANDED_CONCEPTS_3,
+  EXPANDED_ENTITY_ARCHETYPES_3,
+  EXPANDED_DOMAIN_MODELS_3,
+  EXPANDED_CODE_SNIPPETS_3,
+  EXPANDED_ANTI_PATTERNS_3,
+  EXPANDED_BEST_PRACTICES_3,
+} from './knowledge-base-expansion-3';
+
+import {
+  EXPANDED_CONCEPTS_4,
+  EXPANDED_ENTITY_ARCHETYPES_4,
+  EXPANDED_DOMAIN_MODELS_4,
+  EXPANDED_CODE_SNIPPETS_4,
+  EXPANDED_ANTI_PATTERNS_4,
+  EXPANDED_BEST_PRACTICES_4,
+} from './knowledge-base-expansion-4';
+
+import {
+  EXPANDED_CONCEPTS_5,
+  EXPANDED_ENTITY_ARCHETYPES_5,
+  EXPANDED_DOMAIN_MODELS_5,
+  EXPANDED_CODE_SNIPPETS_5,
+  EXPANDED_ANTI_PATTERNS_5,
+  EXPANDED_BEST_PRACTICES_5,
+} from './knowledge-base-expansion-5';
+
+import {
+  EXPANDED_CONCEPTS_6,
+  EXPANDED_ENTITY_ARCHETYPES_6,
+  EXPANDED_DOMAIN_MODELS_6,
+  EXPANDED_CODE_SNIPPETS_6,
+  EXPANDED_ANTI_PATTERNS_6,
+  EXPANDED_BEST_PRACTICES_6,
+} from './knowledge-base-expansion-6';
+
+import {
+  EXPANDED_CONCEPTS_7,
+  EXPANDED_ENTITY_ARCHETYPES_7,
+  EXPANDED_DOMAIN_MODELS_7,
+  EXPANDED_CODE_SNIPPETS_7,
+  EXPANDED_ANTI_PATTERNS_7,
+  EXPANDED_BEST_PRACTICES_7,
+} from './knowledge-base-expansion-7';
+
+import {
+  EXPANDED_CONCEPTS_8,
+  EXPANDED_ENTITY_ARCHETYPES_8,
+  EXPANDED_DOMAIN_MODELS_8,
+  EXPANDED_CODE_SNIPPETS_8,
+  EXPANDED_ANTI_PATTERNS_8,
+  EXPANDED_BEST_PRACTICES_8,
+  EXPANDED_CODE_SNIPPETS_8b,
+  EXPANDED_DOMAIN_MODELS_8b,
+} from './knowledge-base-expansion-8';
+
 // ============================================
 // Concepts
 // ============================================
@@ -26,7 +100,10 @@ export interface Concept {
     | 'typescript'
     | 'react'
     | 'database'
-    | 'devops';
+    | 'devops'
+    | 'accessibility'
+    | 'ux'
+    | 'deployment';
   description: string;
   explanation: string;
   examples: string[];
@@ -747,6 +824,15 @@ function withCache<T>(key: string, ttlMs: number, fn: () => Promise<T>): Promise
     languages: ['all'],
   },
 };
+
+Object.assign(CONCEPTS, EXPANDED_CONCEPTS);
+Object.assign(CONCEPTS, EXPANDED_CONCEPTS_2);
+Object.assign(CONCEPTS, EXPANDED_CONCEPTS_3);
+Object.assign(CONCEPTS, EXPANDED_CONCEPTS_4);
+Object.assign(CONCEPTS, EXPANDED_CONCEPTS_5);
+Object.assign(CONCEPTS, EXPANDED_CONCEPTS_6);
+Object.assign(CONCEPTS, EXPANDED_CONCEPTS_7);
+Object.assign(CONCEPTS, EXPANDED_CONCEPTS_8);
 
 // ============================================
 // Entity Archetype Registry
@@ -2459,6 +2545,15 @@ const ENTITY_ARCHETYPES: Record<string, EntityArchetype> = {
   },
 };
 
+Object.assign(ENTITY_ARCHETYPES, EXPANDED_ENTITY_ARCHETYPES);
+Object.assign(ENTITY_ARCHETYPES, EXPANDED_ENTITY_ARCHETYPES_2);
+Object.assign(ENTITY_ARCHETYPES, EXPANDED_ENTITY_ARCHETYPES_3);
+Object.assign(ENTITY_ARCHETYPES, EXPANDED_ENTITY_ARCHETYPES_4);
+Object.assign(ENTITY_ARCHETYPES, EXPANDED_ENTITY_ARCHETYPES_5);
+Object.assign(ENTITY_ARCHETYPES, EXPANDED_ENTITY_ARCHETYPES_6);
+Object.assign(ENTITY_ARCHETYPES, EXPANDED_ENTITY_ARCHETYPES_7);
+Object.assign(ENTITY_ARCHETYPES, EXPANDED_ENTITY_ARCHETYPES_8);
+
 // ============================================
 // Domain Model Registry
 // Pre-built schema blueprints for full application domains
@@ -2864,6 +2959,16 @@ const DOMAIN_MODELS: Record<string, DomainModel> = {
   },
 };
 
+Object.assign(DOMAIN_MODELS, EXPANDED_DOMAIN_MODELS);
+Object.assign(DOMAIN_MODELS, EXPANDED_DOMAIN_MODELS_2);
+Object.assign(DOMAIN_MODELS, EXPANDED_DOMAIN_MODELS_3);
+Object.assign(DOMAIN_MODELS, EXPANDED_DOMAIN_MODELS_4);
+Object.assign(DOMAIN_MODELS, EXPANDED_DOMAIN_MODELS_5);
+Object.assign(DOMAIN_MODELS, EXPANDED_DOMAIN_MODELS_6);
+Object.assign(DOMAIN_MODELS, EXPANDED_DOMAIN_MODELS_7);
+Object.assign(DOMAIN_MODELS, EXPANDED_DOMAIN_MODELS_8);
+Object.assign(DOMAIN_MODELS, EXPANDED_DOMAIN_MODELS_8b);
+
 // ============================================
 // Anti-Pattern Registry — LLM bad habits
 // ============================================
@@ -3157,6 +3262,15 @@ const ANTI_PATTERNS: AntiPattern[] = [
     tags: ['database', 'data-integrity', 'audit'],
   },
 ];
+
+ANTI_PATTERNS.push(...EXPANDED_ANTI_PATTERNS);
+ANTI_PATTERNS.push(...EXPANDED_ANTI_PATTERNS_2);
+ANTI_PATTERNS.push(...EXPANDED_ANTI_PATTERNS_3);
+ANTI_PATTERNS.push(...EXPANDED_ANTI_PATTERNS_4);
+ANTI_PATTERNS.push(...EXPANDED_ANTI_PATTERNS_5);
+ANTI_PATTERNS.push(...EXPANDED_ANTI_PATTERNS_6);
+ANTI_PATTERNS.push(...EXPANDED_ANTI_PATTERNS_7);
+ANTI_PATTERNS.push(...EXPANDED_ANTI_PATTERNS_8);
 
 // ============================================
 // Tech Stack Code Snippets
@@ -4781,6 +4895,16 @@ export async function pollAndProcess(queue: string, lockDurationMs = 30000): Pro
   },
 ];
 
+CODE_SNIPPETS.push(...EXPANDED_CODE_SNIPPETS);
+CODE_SNIPPETS.push(...EXPANDED_CODE_SNIPPETS_2);
+CODE_SNIPPETS.push(...EXPANDED_CODE_SNIPPETS_3);
+CODE_SNIPPETS.push(...EXPANDED_CODE_SNIPPETS_4);
+CODE_SNIPPETS.push(...EXPANDED_CODE_SNIPPETS_5);
+CODE_SNIPPETS.push(...EXPANDED_CODE_SNIPPETS_6);
+CODE_SNIPPETS.push(...EXPANDED_CODE_SNIPPETS_7);
+CODE_SNIPPETS.push(...EXPANDED_CODE_SNIPPETS_8);
+CODE_SNIPPETS.push(...EXPANDED_CODE_SNIPPETS_8b);
+
 // ============================================
 // Best Practices Database
 // ============================================
@@ -5286,6 +5410,15 @@ const BEST_PRACTICES: BestPractice[] = [
   },
 ];
 
+BEST_PRACTICES.push(...EXPANDED_BEST_PRACTICES);
+BEST_PRACTICES.push(...EXPANDED_BEST_PRACTICES_2);
+BEST_PRACTICES.push(...EXPANDED_BEST_PRACTICES_3);
+BEST_PRACTICES.push(...EXPANDED_BEST_PRACTICES_4);
+BEST_PRACTICES.push(...EXPANDED_BEST_PRACTICES_5);
+BEST_PRACTICES.push(...EXPANDED_BEST_PRACTICES_6);
+BEST_PRACTICES.push(...EXPANDED_BEST_PRACTICES_7);
+BEST_PRACTICES.push(...EXPANDED_BEST_PRACTICES_8);
+
 // ============================================
 // Learning Paths
 // ============================================
@@ -5455,7 +5588,65 @@ export function getContextForGeneration(ctx: GenerationContext): string {
     relevantSnippets.push(CODE_SNIPPETS.find(s => s.id === 'idempotency-key-pattern')!);
   }
 
-  const uniqueSnippets = Array.from(new Map(relevantSnippets.filter(Boolean).map(s => [s.id, s])).values()).slice(0, 4);
+  // ── Domain-specific snippet injection ──────────────────────────────────────
+  const DOMAIN_SNIPPET_MAP: Record<string, string[]> = {
+    'portfolio': ['portfolio-hero-section', 'portfolio-project-card', 'portfolio-skills-grid', 'portfolio-contact-form'],
+    'blog': ['drizzle-schema-blog', 'pagination-component', 'search-filter-bar'],
+    'booking': ['drizzle-schema-booking'],
+    'event': ['drizzle-schema-events'],
+    'event-management': ['drizzle-schema-events', 'search-filter-bar'],
+    'landing-page': ['landing-pricing-table', 'landing-testimonial-carousel', 'landing-faq-accordion'],
+    'social-network': ['social-feed-component'],
+    'saas-dashboard': ['saas-kpi-cards', 'drizzle-multi-tenant', 'drizzle-search-filter-sort'],
+    'chat-messaging': ['chat-message-list'],
+    'chat': ['toast-notification-system'],
+    'forum': ['drizzle-schema-blog', 'pagination-component', 'toast-notification-system'],
+    'analytics': ['dashboard-stats-cards', 'saas-kpi-cards'],
+    'documentation': ['blog-markdown-renderer'],
+    'job-board': ['drizzle-search-filter-sort', 'search-filter-bar', 'pagination-component'],
+    'recipe': ['drizzle-search-filter-sort', 'search-filter-bar', 'pagination-component'],
+    'news-media': ['blog-post-card'],
+    'gaming': [],
+    'ecommerce': ['ecommerce-product-card', 'ecommerce-cart-sidebar', 'ecommerce-checkout-flow', 'drizzle-schema-ecommerce'],
+    'fitness': ['drizzle-schema-fitness'],
+    'fitness-tracker': ['drizzle-schema-fitness'],
+    'fitness-wellness': ['drizzle-schema-fitness'],
+    'crm': ['crm-pipeline-kanban', 'auth-jwt-middleware'],
+    'inventory': ['drizzle-schema-inventory', 'react-data-table', 'search-filter-bar'],
+    'inventory-management': ['drizzle-schema-inventory', 'react-data-table', 'search-filter-bar'],
+    'project-management': ['express-crud-routes', 'drizzle-schema-project-management', 'dashboard-stats-cards', 'dashboard-sidebar-layout'],
+    'education': ['express-crud-routes', 'pagination-component', 'search-filter-bar'],
+    'task-tracker': ['express-crud-routes', 'drizzle-schema-project-management'],
+    'messaging': ['toast-notification-system'],
+    'saas': ['notification-bell-component', 'react-confirmation-dialog'],
+    'marketplace': ['drizzle-schema-marketplace', 'pagination-component', 'search-filter-bar'],
+    'real-estate': ['drizzle-schema-marketplace', 'search-filter-bar', 'pagination-component'],
+    'cms': ['react-data-table', 'pagination-component', 'search-filter-bar'],
+    'wiki': ['drizzle-schema-blog', 'search-filter-bar', 'pagination-component'],
+    'knowledge-base': ['drizzle-schema-blog', 'search-filter-bar'],
+    'subscription': ['notification-bell-component', 'drizzle-schema-saas-billing'],
+  };
+
+  if (ctx.domain) {
+    const domainSnippetIds = DOMAIN_SNIPPET_MAP[ctx.domain] ?? [];
+    for (const sid of domainSnippetIds) {
+      const snippet = CODE_SNIPPETS.find(s => s.id === sid);
+      if (snippet) relevantSnippets.push(snippet);
+    }
+  }
+
+  if (ctx.hasDatabaseAccess && ctx.fileRole !== 'schema') {
+    const dbSnippet = CODE_SNIPPETS.find(s => s.id === 'express-rest-resource');
+    if (dbSnippet) relevantSnippets.push(dbSnippet);
+  }
+  if (ctx.fileRole === 'component' || ctx.fileExtension === 'tsx') {
+    const sidebarSnippet = CODE_SNIPPETS.find(s => s.id === 'react-responsive-sidebar');
+    if (sidebarSnippet && ctx.features?.some(f => /sidebar|nav|layout|dashboard/.test(f.toLowerCase()))) {
+      relevantSnippets.push(sidebarSnippet);
+    }
+  }
+
+  const uniqueSnippets = Array.from(new Map(relevantSnippets.filter(Boolean).map(s => [s.id, s])).values()).slice(0, 6);
 
   if (uniqueSnippets.length > 0) {
     lines.push('### Reference Code Patterns');
@@ -5482,6 +5673,12 @@ export function getContextForGeneration(ctx: GenerationContext): string {
   if (ctx.features?.some(f => /idempoten|dedup|duplicate/.test(f.toLowerCase()))) practiceIds.push('idempotency');
   if (ctx.features?.some(f => /credential|secret|vault|api.?key/.test(f.toLowerCase()))) practiceIds.push('credential-management');
   if (ctx.features?.some(f => /rate.?limit|throttl/.test(f.toLowerCase()))) practiceIds.push('rate-limiting');
+  if (ctx.fileExtension === 'tsx' || ctx.fileRole === 'component') {
+    practiceIds.push('accessibility-web', 'responsive-design', 'form-ux', 'animation-ux', 'data-fetching-react', 'error-boundaries-strategy');
+  }
+  if (ctx.fileRole === 'route' || ctx.fileRole === 'service') {
+    practiceIds.push('deployment-checklist');
+  }
   practiceIds.push('naming', 'typescript-strict');
 
   const relevantPractices = Array.from(new Set(practiceIds)).map(id => BEST_PRACTICES.find(bp => bp.id === id)).filter(Boolean) as BestPractice[];
