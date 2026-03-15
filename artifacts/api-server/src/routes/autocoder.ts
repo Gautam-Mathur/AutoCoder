@@ -4034,33 +4034,19 @@ Output ONLY the fixed code. No explanations.`;
     }
   });
 
-  app.post("/api/cache/rebuild-prewarm", async (req, res) => {
-    try {
-      const { buildPrewarmSnapshot, getPrewarmSnapshotStatus } = await import("../modules/snapshot-builder.js");
-      const currentStatus = getPrewarmSnapshotStatus();
-      if (currentStatus === 'building') {
-        return res.json({ status: 'building', message: 'Prewarm snapshot is already being built' });
-      }
-      buildPrewarmSnapshot(true);
-      res.json({ status: 'building', message: 'Prewarm snapshot rebuild started' });
-    } catch (error: any) {
-      console.error("Prewarm rebuild error:", error);
-      res.status(500).json({ error: error.message });
-    }
+  app.post("/api/cache/rebuild-prewarm", async (_req, res) => {
+    res.status(410).json({
+      status: 'disabled',
+      message: 'Prewarm snapshots are disabled. Use per-project snapshots via /api/cache/build-snapshot.',
+    });
   });
 
-  app.get("/api/cache/prewarm-status", async (req, res) => {
-    try {
-      const { getPrewarmSnapshotStatus } = await import("../modules/snapshot-builder.js");
-      const status = getPrewarmSnapshotStatus();
-      res.json({
-        status,
-        url: status === 'ready' ? '/cache/prewarm-snapshot.json.gz' : null,
-      });
-    } catch (error: any) {
-      console.error("Prewarm status error:", error);
-      res.status(500).json({ error: error.message });
-    }
+  app.get("/api/cache/prewarm-status", async (_req, res) => {
+    res.json({
+      status: 'disabled',
+      url: null,
+      message: 'Prewarm snapshots are disabled. Use per-project snapshots via /api/cache/build-snapshot.',
+    });
   });
 
   return httpServer;
