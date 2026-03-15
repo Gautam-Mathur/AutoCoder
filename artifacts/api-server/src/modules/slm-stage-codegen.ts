@@ -10,6 +10,7 @@
  */
 
 import { registerStageTemplate } from './slm-inference-engine.js';
+import { getContextForGeneration, getAntiPatternChecklist } from './knowledge-base.js';
 
 export const CODEGEN_STAGE_ID = 'generate';
 
@@ -59,6 +60,8 @@ Good enhanced snippet:
     return result.rows[0];
   }
 
+${getAntiPatternChecklist(['typescript', 'react', 'database', 'security', 'error-handling', 'async', 'nodejs'])}
+
 Output an array of function-level enhancements targeting specific functions in specific files.`,
 
     userPromptBuilder: (context: Record<string, any>) => {
@@ -81,11 +84,30 @@ Output an array of function-level enhancements targeting specific functions in s
           const functions = extractFunctionSignatures(file.content);
           if (functions.length === 0) continue;
 
+          const ext = file.path.split('.').pop() as 'ts' | 'tsx';
+          const isTsx = ext === 'tsx';
+          const isRoute = file.path.includes('/route') || file.path.includes('/api/') || file.path.includes('router');
+          const isHook = file.path.includes('/hooks/') || file.path.includes('use') && isTsx;
+          const isService = file.path.includes('/service') || file.path.includes('/repo') || file.path.includes('/db/');
+          const isSchema = file.path.includes('/schema') || file.path.includes('/models');
+
+          const kbContext = getContextForGeneration({
+            appType: context.plan?.projectType || context.appType,
+            domain: context.plan?.domain,
+            features: context.plan?.features || [],
+            entities: context.plan?.dataModel?.map((e: any) => e.name) || [],
+            fileExtension: ext,
+            fileRole: isTsx && !isHook ? 'component' : isHook ? 'hook' : isRoute ? 'route' : isService ? 'service' : isSchema ? 'schema' : 'util',
+            isAuthRequired: context.plan?.features?.some((f: string) => /auth|login|user/.test(f.toLowerCase())),
+            hasDatabaseAccess: isRoute || isService || isSchema,
+          });
+
           prompt += `\n--- ${file.path} ---\n`;
           prompt += `Functions found: ${functions.join(', ')}\n`;
+          prompt += `\n${kbContext}\n`;
 
-          const truncated = file.content.length > 8000
-            ? file.content.substring(0, 8000) + '\n// ... truncated'
+          const truncated = file.content.length > 6000
+            ? file.content.substring(0, 6000) + '\n// ... truncated'
             : file.content;
           prompt += `${truncated}\n`;
         }

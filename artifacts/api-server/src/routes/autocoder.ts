@@ -25,7 +25,14 @@ import { emitProject, previewEmission, type ProjectBlueprint } from "../modules/
 import { learningEngine } from "../modules/generation-learning-engine";
 import { analyzeNLU, classifyIntent, extractEntities, formatNLUAsMarkdown } from "../modules/natural-language-understanding";
 import { explainCode, detectPatterns, formatExplanationAsMarkdown } from "../modules/code-explanation-engine";
-import { getConcept, searchConcepts, getBestPractices, getBestPractice, getLearningPath, formatConceptAsMarkdown, formatBestPracticeAsMarkdown } from "../modules/knowledge-base";
+import {
+  getConcept, searchConcepts, getBestPractices, getBestPractice, getLearningPath,
+  formatConceptAsMarkdown, formatBestPracticeAsMarkdown, formatAntiPatternAsMarkdown,
+  getAllAntiPatterns, getAntiPatternsByTag, getAntiPatternsBySeverity,
+  getAllCodeSnippets, getSnippetsByTech, getSnippetsByTag,
+  getAllLearningPaths, getContextForGeneration,
+  getConceptsByCategory, getConceptsByDifficulty, getRelatedConcepts,
+} from "../modules/knowledge-base";
 import { detectFollowUp, updateContext, generateClarification, getResponseHints, summarizeConversation, getConversationContext, formatConversationContextAsMarkdown } from "../modules/conversational-flexibility";
 import { continuousDebug, parseError, getDebugStatus, getDebugSession, formatDebugReport } from "../modules/continuous-debugger";
 import { recognizeIntent, isQuestion, extractEntitiesEnhanced, formatIntentAsMarkdown } from "../modules/enhanced-intent-recognition";
@@ -2729,6 +2736,122 @@ Output ONLY the fixed code. No explanations.`;
       res.json({ success: true, path });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to get learning path';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // All learning paths
+  app.get("/api/ai/learning-paths", async (_req, res) => {
+    try {
+      const paths = getAllLearningPaths();
+      res.json({ success: true, count: paths.length, paths });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to get learning paths';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Concepts by category or difficulty
+  app.get("/api/ai/concepts/category/:category", async (req, res) => {
+    try {
+      const concepts = getConceptsByCategory(req.params.category as any);
+      res.json({ success: true, count: concepts.length, concepts });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to get concepts by category';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.get("/api/ai/concepts/related/:id", async (req, res) => {
+    try {
+      const concepts = getRelatedConcepts(req.params.id);
+      res.json({ success: true, count: concepts.length, concepts });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to get related concepts';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Anti-patterns
+  app.get("/api/ai/anti-patterns", async (req, res) => {
+    try {
+      const { tag, severity } = req.query as { tag?: string; severity?: string };
+      let patterns;
+      if (tag) {
+        patterns = getAntiPatternsByTag(tag);
+      } else if (severity) {
+        patterns = getAntiPatternsBySeverity(severity as any);
+      } else {
+        patterns = getAllAntiPatterns();
+      }
+      res.json({ success: true, count: patterns.length, patterns });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to get anti-patterns';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.get("/api/ai/anti-patterns/:id", async (req, res) => {
+    try {
+      const all = getAllAntiPatterns();
+      const pattern = all.find(ap => ap.id === req.params.id);
+      if (!pattern) return res.status(404).json({ error: 'Anti-pattern not found' });
+      const markdown = formatAntiPatternAsMarkdown(pattern);
+      res.json({ success: true, pattern, markdown });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to get anti-pattern';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Code snippets
+  app.get("/api/ai/snippets", async (req, res) => {
+    try {
+      const { tech, tag } = req.query as { tech?: string; tag?: string };
+      let snippets;
+      if (tech) {
+        snippets = getSnippetsByTech(tech);
+      } else if (tag) {
+        snippets = getSnippetsByTag(tag);
+      } else {
+        snippets = getAllCodeSnippets();
+      }
+      res.json({ success: true, count: snippets.length, snippets });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to get snippets';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.get("/api/ai/snippets/:id", async (req, res) => {
+    try {
+      const snippet = getAllCodeSnippets().find(s => s.id === req.params.id);
+      if (!snippet) return res.status(404).json({ error: 'Snippet not found' });
+      res.json({ success: true, snippet });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to get snippet';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Generation context — inject into LLM prompts
+  app.post("/api/ai/knowledge/context", async (req, res) => {
+    try {
+      const ctx = req.body || {};
+      const context = getContextForGeneration({
+        appType: ctx.appType,
+        domain: ctx.domain,
+        features: ctx.features,
+        entities: ctx.entities,
+        fileExtension: ctx.fileExtension,
+        fileRole: ctx.fileRole,
+        techStack: ctx.techStack,
+        isAuthRequired: ctx.isAuthRequired,
+        hasDatabaseAccess: ctx.hasDatabaseAccess,
+      });
+      res.json({ success: true, context });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to build context';
       res.status(500).json({ error: message });
     }
   });

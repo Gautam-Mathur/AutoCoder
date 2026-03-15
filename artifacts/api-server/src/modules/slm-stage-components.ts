@@ -7,6 +7,7 @@
  */
 
 import { registerStageTemplate } from './slm-inference-engine.js';
+import { getAntiPatternChecklist } from './knowledge-base.js';
 
 export const COMPONENT_STAGE_ID = 'compose';
 
@@ -30,6 +31,16 @@ You CANNOT:
 - Change the component hierarchy structure
 - Modify the routing architecture
 - Remove planned components
+
+${getAntiPatternChecklist(['react', 'hooks', 'ux', 'rendering', 'accessibility'])}
+
+Key React patterns to enforce:
+- Every list of items MUST use item.id as key, never array index
+- Every component that fetches data MUST have loading, error, and empty states
+- Interactive components MUST have keyboard navigation (onKeyDown Enter/Space for custom buttons)
+- Large lists (>50 items) should use virtualization (recommend react-window)
+- Async side effects in useEffect MUST have cleanup return functions for subscriptions/timers
+- All form inputs MUST have associated labels (htmlFor or aria-label)
 
 Output patches targeting specific components.`,
 
@@ -59,12 +70,17 @@ Output patches targeting specific components.`,
         }
       }
 
+      if (context.features?.length > 0) {
+        prompt += `\nFeatures in this app: ${context.features.join(', ')}\n`;
+      }
+
       prompt += `\nPropose patches. Focus on:
-1. Missing accessibility attributes
-2. Better prop naming
-3. Missing state considerations (loading, error, empty)
-4. Interaction improvements
-5. Responsive design notes`;
+1. Missing accessibility attributes (aria-label, role, tabIndex, keyboard handlers)
+2. Better prop naming for clarity
+3. Missing state considerations (loading skeleton, error message with retry, empty state illustration)
+4. Interaction improvements (hover, focus, active states)
+5. Responsive design notes (mobile-first, breakpoints)
+6. ErrorBoundary wrapping for data-heavy components`;
 
       return prompt;
     },
