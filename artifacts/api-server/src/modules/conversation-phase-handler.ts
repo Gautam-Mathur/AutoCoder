@@ -3,7 +3,7 @@ import type { UnderstandingResult } from './deep-understanding-engine.js';
 import { generatePlan, formatPlanAsMessage } from './plan-generator.js';
 import type { ProjectPlan, PlannedEntity, PlannedPage, PlannedEndpoint, PlannedModule, PlannedWorkflow } from './plan-generator.js';
 import { generateProjectFromPlan } from './plan-driven-generator.js';
-import { validateAndFix } from './post-generation-validator.js';
+import { validateAndFix, type ValidationIssue } from './post-generation-validator.js';
 import { analyzeSemantics, type ReasoningResult, type EntityRelationship, type ComputedField } from './contextual-reasoning-engine.js';
 import { learningEngine } from './generation-learning-engine.js';
 import { shouldAskMoreQuestions, createClarificationState, parseAnswersFromResponse, generateClarificationQuestions, identifyInformationGaps, calculateReadinessScore, generateLowConfidenceQuestions, formatLowConfidenceInterviewMessage, type ClarificationState } from './adaptive-clarification-engine.js';
@@ -16,7 +16,7 @@ import { planUXFlows } from './ux-flow-planner.js';
 import { planIntegrations } from './integration-planner.js';
 import { planSecurity } from './security-planner.js';
 import { planPerformance } from './performance-planner.js';
-import { analyzeAndFix as viteAnalyzeAndFix, parseErrors as viteParseErrors } from './vite-error-fixer.js';
+import { analyzeAndFix as viteAnalyzeAndFix, parseErrors as viteParseErrors, type FixAction } from './vite-error-fixer.js';
 
 export type ConversationPhase = 'initial' | 'understanding' | 'clarifying' | 'planning' | 'approval' | 'generating' | 'complete' | 'editing';
 
@@ -782,28 +782,35 @@ async function handleGeneration(
     totalFixesApplied.push(...currentResult.fixesApplied);
 
     while (passCount < MAX_VALIDATION_PASSES) {
-      const errors = currentResult.issues.filter((i: any) => i.severity === 'error');
+      const errors = currentResult.issues.filter((i: ValidationIssue) => i.severity === 'error');
       if (errors.length === 0) break;
 
       passCount++;
       try {
-        const parsedErrors = viteParseErrors(errors.map((i: any) => i.message));
-        const projectFiles = currentResult.files.map((f: any) => ({ path: f.path, content: f.content, language: f.language || 'typescript' }));
+        const parsedErrors = viteParseErrors(errors.map((i: ValidationIssue) => i.message));
+        const projectFiles = currentResult.files.map(f => ({ path: f.path, content: f.content, language: f.language || 'typescript' }));
         const viteFixes = viteAnalyzeAndFix(parsedErrors, projectFiles);
         if (viteFixes.fixes.length === 0) break;
 
         const patchedFiles = [...currentResult.files];
         for (const fix of viteFixes.fixes) {
-          if (fix.type === 'patch_file' || fix.type === 'create_file') {
-            const idx = patchedFiles.findIndex((f: any) => f.path === fix.filePath);
+          if (fix.type === 'patch_file') {
+            const idx = patchedFiles.findIndex(f => f.path === fix.filePath);
             if (idx >= 0) {
-              patchedFiles[idx] = { ...patchedFiles[idx], content: fix.newContent };
-            } else if (fix.type === 'create_file') {
+              if (fix.oldContent) {
+                patchedFiles[idx] = { ...patchedFiles[idx], content: patchedFiles[idx].content.replace(fix.oldContent, fix.newContent) };
+              } else {
+                patchedFiles[idx] = { ...patchedFiles[idx], content: fix.newContent };
+              }
+            }
+          } else if (fix.type === 'create_file') {
+            const idx = patchedFiles.findIndex(f => f.path === fix.filePath);
+            if (idx < 0) {
               patchedFiles.push({ path: fix.filePath, content: fix.newContent, language: 'typescript' });
             }
           }
         }
-        totalFixesApplied.push(...viteFixes.fixes.map((f: any) => f.description || f.filePath));
+        totalFixesApplied.push(...viteFixes.fixes.map((f: FixAction) => f.description || f.filePath));
         currentResult = validateAndFix(patchedFiles, 1);
         totalFixesApplied.push(...currentResult.fixesApplied);
         emitStep('validating', `Validation pass ${passCount}`, `${viteFixes.fixes.length} Vite fixes + ${currentResult.fixesApplied.length} validator fixes`);
@@ -815,6 +822,7 @@ async function handleGeneration(
 
     currentResult.fixesApplied = totalFixesApplied;
     const fallbackFiles = currentResult.files;
+    const finalFallbackErrors = currentResult.issues.filter((i: ValidationIssue) => i.severity === 'error');
     try {
       learningEngine.recordOutcome({
         conversationId: state.conversationId || 0,
@@ -822,7 +830,7 @@ async function handleGeneration(
         domainId: state.understandingData?.level2_domain?.primaryDomain?.id,
         plan,
         generatedFiles: fallbackFiles.map(f => ({ path: f.path, content: f.content })),
-        errors: currentResult.issues.filter((i: any) => i.severity === 'error').map((i: any) => i.message),
+        errors: finalFallbackErrors.map((i: ValidationIssue) => i.message),
         autoFixes: currentResult.fixesApplied,
         userModifications: [],
         generationTimeMs: Date.now() - Date.now(),
@@ -832,10 +840,7 @@ async function handleGeneration(
       passes: passCount,
       issuesFound: currentResult.issues.length,
       issuesFixed: currentResult.fixesApplied.length,
-      unfixableIssues: currentResult.issues
-        .filter((i: any) => i.severity === 'error')
-        .map((i: any) => i.message)
-        .filter((msg: string) => !currentResult.fixesApplied.includes(msg)),
+      unfixableIssues: finalFallbackErrors.map((i: ValidationIssue) => i.message),
     };
     const validationSummary = fallbackValSummary.issuesFixed > 0
       ? `Auto-fixed **${fallbackValSummary.issuesFixed} issues** across ${fallbackValSummary.passes} validation pass(es).`

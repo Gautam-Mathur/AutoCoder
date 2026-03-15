@@ -899,10 +899,14 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
         if (viteFixResult.fixes.length > 0) {
           let viteFixesApplied = 0;
           for (const fix of viteFixResult.fixes) {
-            if (fix.type === 'patch_file' && fix.oldContent) {
+            if (fix.type === 'patch_file') {
               const fileIdx = ctx.files.findIndex(f => f.path === fix.filePath);
               if (fileIdx >= 0) {
-                ctx.files[fileIdx] = { ...ctx.files[fileIdx], content: ctx.files[fileIdx].content.replace(fix.oldContent, fix.newContent) };
+                if (fix.oldContent) {
+                  ctx.files[fileIdx] = { ...ctx.files[fileIdx], content: ctx.files[fileIdx].content.replace(fix.oldContent, fix.newContent) };
+                } else {
+                  ctx.files[fileIdx] = { ...ctx.files[fileIdx], content: fix.newContent };
+                }
                 viteFixesApplied++;
               }
             } else if (fix.type === 'create_file') {
@@ -964,12 +968,12 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
           }
         } catch {}
       }
-      if (regenerated > 0) {
-        emitStep(ctx, 'validate', 'Feedback regeneration complete', `Re-generated ${regenerated} files — running re-validation`);
-        currentResult = validateAndFix(ctx.files);
+      if (regenerated > 0 && totalPasses < MAX_VALIDATION_PASSES) {
+        totalPasses++;
+        emitStep(ctx, 'validate', `Feedback regeneration complete (pass ${totalPasses})`, `Re-generated ${regenerated} files — running re-validation`);
+        currentResult = validateAndFix(ctx.files, 1);
         ctx.files = currentResult.files;
         totalFixCount += currentResult.fixesApplied?.length || 0;
-        totalPasses += currentResult.iterations;
         const newErrorCount = (currentResult.issues || []).filter(i => i.severity === 'error').length;
         emitStep(ctx, 'validate', 'Re-validation result', `${newErrorCount} errors remaining (was ${currentUnfixed.length})`);
       }
