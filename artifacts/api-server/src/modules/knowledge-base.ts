@@ -1723,7 +1723,7 @@ const ENTITY_ARCHETYPES: Record<string, EntityArchetype> = {
   comment: {
     id: 'comment',
     name: 'Comment / Note',
-    aliases: ['comment', 'note', 'reply', 'message', 'annotation', 'remark'],
+    aliases: ['comment', 'note', 'reply', 'annotation', 'remark'],
     domain: 'platform',
     description: 'A comment or note on any entity (polymorphic).',
     traits: ['pageable', 'searchable', 'soft-deletable'],
@@ -5143,6 +5143,137 @@ const BEST_PRACTICES: BestPractice[] = [
     ],
     languages: ['typescript', 'javascript'],
   },
+  {
+    id: 'webhook-security',
+    title: 'Webhook & Inbound Request Security',
+    category: 'security',
+    description: 'Safely receive and process webhook callbacks from external services.',
+    do: [
+      'Verify webhook signatures using HMAC-SHA256 before processing the payload',
+      'Use a timing-safe comparison (crypto.timingSafeEqual) to prevent timing attacks',
+      'Parse the raw body (not JSON-parsed) for signature verification',
+      'Store and check an idempotency key to prevent duplicate processing',
+      'Return 200 immediately and process asynchronously if the handler is slow',
+      'Log the webhook event ID and type for audit and debugging',
+    ],
+    dont: [
+      'Trust webhook payloads without signature verification',
+      'Use string equality (===) for signature comparison — vulnerable to timing attacks',
+      'Process webhooks synchronously if the handler takes > 5 seconds',
+      'Expose internal error details in the webhook response body',
+      'Assume webhook delivery order matches event creation order',
+    ],
+    languages: ['typescript', 'javascript'],
+  },
+  {
+    id: 'idempotency',
+    title: 'Idempotency & Deduplication',
+    category: 'reliability',
+    description: 'Ensure operations are safe to retry without causing duplicate side effects.',
+    do: [
+      'Accept an Idempotency-Key header for all state-changing endpoints',
+      'Store the idempotency key with a UNIQUE constraint and return the cached response on replay',
+      'Use database transactions to atomically check-and-insert the idempotency record',
+      'Set an expiry (e.g., 24 hours) on idempotency records to prevent unbounded growth',
+      'Return the same status code and body for replayed requests',
+      'Include the idempotency key in logs for tracing',
+    ],
+    dont: [
+      'Rely on the client to prevent duplicate submissions — always enforce server-side',
+      'Use an in-memory Map for idempotency — it resets on restart and fails in multi-instance deployments',
+      'Silently ignore duplicate requests without returning the original response',
+      'Apply idempotency to GET or other safe methods — only state-changing operations need it',
+    ],
+    languages: ['typescript', 'javascript'],
+  },
+  {
+    id: 'retry-backoff',
+    title: 'Retry & Backoff Strategies',
+    category: 'reliability',
+    description: 'Handle transient failures gracefully with structured retry logic.',
+    do: [
+      'Use exponential backoff with jitter: delay = min(baseDelay * 2^attempt + random, maxDelay)',
+      'Set a maximum retry count (typically 3-5) to prevent infinite loops',
+      'Only retry on transient errors (5xx, network timeout, ECONNREFUSED) — not 4xx',
+      'Log each retry attempt with the attempt number and delay for observability',
+      'Use a dead-letter queue or table for permanently failed items',
+      'Make the retried operation idempotent so retries are safe',
+    ],
+    dont: [
+      'Retry immediately without delay — this amplifies load during outages',
+      'Retry on validation errors (400, 422) — they will always fail',
+      'Use a fixed delay without jitter — causes thundering herd on recovery',
+      'Retry indefinitely — set a maximum and escalate to dead-letter after exhaustion',
+      'Forget to record the final failure — dead-letter items need human review',
+    ],
+    languages: ['typescript', 'javascript'],
+  },
+  {
+    id: 'queue-processing',
+    title: 'Background Job & Queue Processing',
+    category: 'architecture',
+    description: 'Process work asynchronously with reliable queue patterns.',
+    do: [
+      'Use SELECT ... FOR UPDATE SKIP LOCKED for PostgreSQL-based job queues',
+      'Set a visibility timeout so crashed workers do not block jobs forever',
+      'Record job start time, end time, attempt count, and error for observability',
+      'Move permanently failed jobs to a dead-letter table with the error context',
+      'Use a separate connection pool for the worker to avoid starving the API',
+      'Implement graceful shutdown: stop polling, finish current job, then exit',
+    ],
+    dont: [
+      'Poll without a delay — use pg_notify or a sleep interval (1-5 seconds)',
+      'Process jobs without a transaction — partial completion creates inconsistent state',
+      'Delete failed jobs silently — always log and dead-letter for review',
+      'Use the same database connection pool for API and worker processes',
+      'Assume job handlers are re-entrant — design for at-least-once delivery',
+    ],
+    languages: ['typescript', 'javascript'],
+  },
+  {
+    id: 'credential-management',
+    title: 'Credential & Secret Management',
+    category: 'security',
+    description: 'Securely store and rotate API keys, tokens, and credentials.',
+    do: [
+      'Encrypt credentials at rest using AES-256-GCM with a key from environment variables',
+      'Store the encryption key in environment variables, never in the database',
+      'Rotate encryption keys periodically and support multiple active key versions',
+      'Mask credential values in logs and API responses (show only last 4 characters)',
+      'Validate credentials on storage — reject empty or obviously malformed values',
+      'Use separate database columns for the encrypted value, IV, and key version',
+    ],
+    dont: [
+      'Store API keys or tokens in plain text in the database',
+      'Log full credential values — even in debug mode',
+      'Hardcode encryption keys in source code',
+      'Return decrypted credentials in GET API responses — only decrypt when needed for outbound calls',
+      'Share credentials across environments (dev/staging/production)',
+    ],
+    languages: ['typescript', 'javascript'],
+  },
+  {
+    id: 'rate-limiting',
+    title: 'API Rate Limiting',
+    category: 'architecture',
+    description: 'Protect services from abuse and ensure fair resource allocation.',
+    do: [
+      'Implement rate limiting per API key or user ID, not just per IP',
+      'Use a sliding window or token bucket algorithm for smooth rate enforcement',
+      'Return 429 Too Many Requests with a Retry-After header',
+      'Include rate limit headers: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset',
+      'Use Redis or PostgreSQL advisory locks for distributed rate limiting',
+      'Apply different limits to different endpoint tiers (read vs write, public vs authenticated)',
+    ],
+    dont: [
+      'Use only IP-based limiting — multiple users share IPs behind NATs and proxies',
+      'Silently drop rate-limited requests without informing the client',
+      'Use in-memory counters in multi-instance deployments — they are not shared',
+      'Apply the same rate limit to all endpoints — read-heavy endpoints need higher limits',
+      'Forget to rate-limit webhook delivery to downstream services',
+    ],
+    languages: ['typescript', 'javascript'],
+  },
 ];
 
 // ============================================
@@ -5335,6 +5466,12 @@ export function getContextForGeneration(ctx: GenerationContext): string {
   if (ctx.fileRole === 'route') practiceIds.push('api-design', 'security', 'error-handling');
   if (ctx.hasDatabaseAccess) practiceIds.push('database');
   if (ctx.isAuthRequired) practiceIds.push('security');
+  if (ctx.features?.some(f => /webhook|callback|inbound/.test(f.toLowerCase()))) practiceIds.push('webhook-security', 'idempotency');
+  if (ctx.features?.some(f => /queue|worker|background|cron|scheduler/.test(f.toLowerCase()))) practiceIds.push('queue-processing', 'retry-backoff');
+  if (ctx.features?.some(f => /retry|backoff|resilient/.test(f.toLowerCase()))) practiceIds.push('retry-backoff');
+  if (ctx.features?.some(f => /idempoten|dedup|duplicate/.test(f.toLowerCase()))) practiceIds.push('idempotency');
+  if (ctx.features?.some(f => /credential|secret|vault|api.?key/.test(f.toLowerCase()))) practiceIds.push('credential-management');
+  if (ctx.features?.some(f => /rate.?limit|throttl/.test(f.toLowerCase()))) practiceIds.push('rate-limiting');
   practiceIds.push('naming', 'typescript-strict');
 
   const relevantPractices = Array.from(new Set(practiceIds)).map(id => BEST_PRACTICES.find(bp => bp.id === id)).filter(Boolean) as BestPractice[];
