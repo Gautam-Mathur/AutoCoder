@@ -1,4 +1,5 @@
 import { ALL_KNOWN_PACKAGES } from './dependency-registry.js';
+import { fixTSGenericBracketMismatch } from './vite-error-fixer.js';
 
 interface GeneratedFile {
   path: string;
@@ -814,7 +815,17 @@ function generateStubFile(path: string, exportNames: string[]): string {
 }
 
 export function validateAndFix(files: GeneratedFile[], maxIterations: number = 3): ValidationResult {
-  let currentFiles = files;
+  // Proactively fix TypeScript generic-bracket mismatches on every TS/TSX file
+  // before any validation runs — catches LLM errors like `res: Response> =>` → `res: Response) =>`
+  let currentFiles = files.map(f => {
+    if (/\.(ts|tsx)$/.test(f.path)) {
+      const fixed = fixTSGenericBracketMismatch(f.content);
+      if (fixed !== f.content) {
+        return { ...f, content: fixed };
+      }
+    }
+    return f;
+  });
   let allFixes: string[] = [];
   let iteration = 0;
 

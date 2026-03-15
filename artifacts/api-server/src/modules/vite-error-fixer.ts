@@ -546,6 +546,85 @@ function fixExportMismatch(error: ParsedError, files: ProjectFile[], fileMap: Ma
   return [];
 }
 
+function stripTSGenericsForCounting(code: string): string {
+  let result = '';
+  let depth = 0;
+  let inLineComment = false;
+  let inBlockComment = false;
+  let inString = false;
+  let stringChar = '';
+  for (let i = 0; i < code.length; i++) {
+    const ch = code[i];
+    const next = code[i + 1] || '';
+    if (inLineComment) {
+      if (ch === '\n') { inLineComment = false; result += ch; }
+      continue;
+    }
+    if (inBlockComment) {
+      if (ch === '*' && next === '/') { inBlockComment = false; i++; }
+      continue;
+    }
+    if (inString) {
+      if (ch === stringChar && code[i - 1] !== '\\') inString = false;
+      if (depth === 0) result += ch;
+      continue;
+    }
+    if (ch === '/' && next === '/') { inLineComment = true; continue; }
+    if (ch === '/' && next === '*') { inBlockComment = true; i++; continue; }
+    if (ch === '"' || ch === "'" || ch === '`') { inString = true; stringChar = ch; result += ch; continue; }
+    if (ch === '<' && /[\w\]>]/.test(result.trimEnd().slice(-1))) {
+      depth++;
+      continue;
+    }
+    if (depth > 0) {
+      if (ch === '<') depth++;
+      else if (ch === '>') depth--;
+      continue;
+    }
+    result += ch;
+  }
+  return result;
+}
+
+export function fixTSGenericBracketMismatch(content: string): string {
+  let fixed = content;
+
+  // Fix 1: `TypeName> =>` → `TypeName) =>`
+  // Happens when LLM closes function param list with > instead of )
+  fixed = fixed.replace(/([A-Z][A-Za-z0-9_]*)\s*>\s*(=>)/g, '$1) $2');
+
+  // Fix 2: `TypeName> {` when it's a standalone arrow function body opener
+  // e.g., `res: Response> {` → `res: Response) {`
+  fixed = fixed.replace(/([A-Z][A-Za-z0-9_]*)\s*>\s*(\{)/g, (match, typeName, brace) => {
+    return `${typeName}) ${brace}`;
+  });
+
+  // Fix 3: `) =>` written as `> =>` after a type annotation on the same param line
+  // e.g., `req: Request<P>>, res: Response> =>` (double >)
+  fixed = fixed.replace(/>(\s*=>\s*\{)/g, ')$1');
+
+  // Fix 4: Standalone line ending in `> {` that is actually a function body (not JSX or ternary)
+  // Only trigger when there is no matching open < on the same line left over
+  const lines = fixed.split('\n');
+  const repairedLines = lines.map(line => {
+    const stripped = stripTSGenericsForCounting(line);
+    const openP = (stripped.match(/\(/g) || []).length;
+    const closeP = (stripped.match(/\)/g) || []).length;
+    if (closeP > openP) {
+      // More ) than ( after stripping generics — one ) was actually a > we already fixed
+      return line;
+    }
+    if (openP > closeP && line.trimEnd().endsWith('>')) {
+      // Unclosed paren on a line ending with > — the > should be )
+      return line.slice(0, line.lastIndexOf('>')) + ')';
+    }
+    return line;
+  });
+  fixed = repairedLines.join('\n');
+
+  return fixed;
+}
+
 function fixSyntaxError(error: ParsedError, files: ProjectFile[], fileMap: Map<string, ProjectFile>): FixAction[] {
   const targetFile = error.filePath ? findFile(error.filePath, fileMap) : undefined;
   if (!targetFile) return [];
@@ -553,14 +632,20 @@ function fixSyntaxError(error: ParsedError, files: ProjectFile[], fileMap: Map<s
   const content = targetFile.content;
   let fixed = content;
 
-  const openBraces = (content.match(/{/g) || []).length;
-  const closeBraces = (content.match(/}/g) || []).length;
+  // Fix TypeScript generic > used in place of ) before applying bracket counts
+  fixed = fixTSGenericBracketMismatch(fixed);
+
+  // Count brackets after stripping TS generics so <T> doesn't inflate counts
+  const stripped = stripTSGenericsForCounting(fixed);
+
+  const openBraces = (stripped.match(/{/g) || []).length;
+  const closeBraces = (stripped.match(/}/g) || []).length;
   if (openBraces > closeBraces) {
     fixed += '\n' + '}'.repeat(openBraces - closeBraces);
   }
 
-  const openParens = (content.match(/\(/g) || []).length;
-  const closeParens = (content.match(/\)/g) || []).length;
+  const openParens = (stripped.match(/\(/g) || []).length;
+  const closeParens = (stripped.match(/\)/g) || []).length;
   if (openParens > closeParens) {
     fixed += ')'.repeat(openParens - closeParens);
   }
@@ -572,7 +657,7 @@ function fixSyntaxError(error: ParsedError, files: ProjectFile[], fileMap: Map<s
     return [{
       type: 'patch_file',
       filePath: targetFile.path,
-      description: `Fix syntax issues in ${targetFile.path}`,
+      description: `Fix TypeScript bracket/syntax issues in ${targetFile.path}`,
       oldContent: content,
       newContent: fixed,
       confidence: 'medium',
