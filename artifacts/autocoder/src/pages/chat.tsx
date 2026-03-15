@@ -775,6 +775,41 @@ export default function Chat() {
                               {diagnostics.bySeverity.warning > 0 && <span className="text-yellow-500">{diagnostics.bySeverity.warning} warning</span>}
                               <button
                                 onClick={async () => {
+                                  if (!activeConversationId) return;
+                                  const fileEntries = Object.entries(diagnostics.byFile);
+                                  for (const [filePath, issues] of fileEntries) {
+                                    setFixingFiles(prev => new Set(prev).add(filePath));
+                                    try {
+                                      await fetch(`/api/modules/fix`, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                          filePath,
+                                          error: issues.map(i => i.message).join('; '),
+                                          conversationId: activeConversationId,
+                                        }),
+                                      });
+                                    } catch {}
+                                    setFixingFiles(prev => { const s = new Set(prev); s.delete(filePath); return s; });
+                                  }
+                                  queryClient.invalidateQueries({ queryKey: ["/api/conversations", activeConversationId, "files"] });
+                                  try {
+                                    const updatedFiles = await (await fetch(`/api/conversations/${activeConversationId}/files`)).json();
+                                    const resp = await fetch(`/api/modules/diagnostics`, {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ files: updatedFiles.map((f: any) => ({ path: f.path, content: f.content })) }),
+                                    });
+                                    if (resp.ok) setDiagnostics(await resp.json());
+                                  } catch {}
+                                }}
+                                disabled={fixingFiles.size > 0}
+                                className="text-[10px] text-primary hover:text-primary/80 disabled:opacity-50"
+                              >
+                                Fix All
+                              </button>
+                              <button
+                                onClick={async () => {
                                   try {
                                     const resp = await fetch(`/api/modules/diagnostics`, {
                                       method: 'POST',

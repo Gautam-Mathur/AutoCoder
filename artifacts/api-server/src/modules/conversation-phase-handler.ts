@@ -910,13 +910,21 @@ async function handleGeneration(
       ? `Auto-fixed **${fallbackValSummary.issuesFixed} issues** across ${fallbackValSummary.passes} validation pass(es).`
       : 'All imports, exports, and dependencies verified.';
 
-    let fallbackDiagnostics: DiagnosticsReport | undefined;
-    try {
-      fallbackDiagnostics = runDiagnostics(fallbackFiles.map(f => ({ path: f.path, content: f.content })));
-      if (fallbackDiagnostics.totalIssues > 0) {
-        emitStep('diagnostics', 'Post-generation diagnostics', `${fallbackDiagnostics.totalIssues} issues in ${fallbackDiagnostics.unhealthyFiles} file(s)`);
-      }
-    } catch {}
+    const fallbackDiagnosticsPromise = new Promise<DiagnosticsReport | undefined>((resolve) => {
+      setImmediate(() => {
+        try {
+          const report = runDiagnostics(fallbackFiles.map(f => ({ path: f.path, content: f.content })));
+          if (report.totalIssues > 0) {
+            emitStep('diagnostics', 'Post-generation diagnostics', `${report.totalIssues} issues in ${report.unhealthyFiles} file(s)`);
+          }
+          resolve(report);
+        } catch {
+          resolve(undefined);
+        }
+      });
+    });
+
+    const fallbackDiagnostics = await fallbackDiagnosticsPromise;
 
     return {
       responseContent: `## ${plan.projectName} - Generated Successfully!\n\nGenerated **${fallbackFiles.length} files** using fallback generation.\n\n${validationSummary}`,
@@ -1018,13 +1026,21 @@ ${warningsList}
 
   const orchSlmStages = orchestrationResult.context.slmStagesRun || [];
 
-  let orchDiagnostics: DiagnosticsReport | undefined;
-  try {
-    orchDiagnostics = runDiagnostics(finalFiles.map(f => ({ path: f.path, content: f.content })));
-    if (orchDiagnostics.totalIssues > 0) {
-      emitStep('diagnostics', 'Post-generation diagnostics', `${orchDiagnostics.totalIssues} issues in ${orchDiagnostics.unhealthyFiles} file(s)`);
-    }
-  } catch {}
+  const orchDiagnosticsPromise = new Promise<DiagnosticsReport | undefined>((resolve) => {
+    setImmediate(() => {
+      try {
+        const report = runDiagnostics(finalFiles.map(f => ({ path: f.path, content: f.content })));
+        if (report.totalIssues > 0) {
+          emitStep('diagnostics', 'Post-generation diagnostics', `${report.totalIssues} issues in ${report.unhealthyFiles} file(s)`);
+        }
+        resolve(report);
+      } catch {
+        resolve(undefined);
+      }
+    });
+  });
+
+  const orchDiagnostics = await orchDiagnosticsPromise;
 
   return {
     responseContent,
