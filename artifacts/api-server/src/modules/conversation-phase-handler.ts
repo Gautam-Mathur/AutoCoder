@@ -16,7 +16,7 @@ import { planUXFlows } from './ux-flow-planner.js';
 import { planIntegrations } from './integration-planner.js';
 import { planSecurity } from './security-planner.js';
 import { planPerformance } from './performance-planner.js';
-import { analyzeAndFix as viteAnalyzeAndFix } from './vite-error-fixer.js';
+import { analyzeAndFix as viteAnalyzeAndFix, parseErrors as viteParseErrors } from './vite-error-fixer.js';
 
 export type ConversationPhase = 'initial' | 'understanding' | 'clarifying' | 'planning' | 'approval' | 'generating' | 'complete' | 'editing';
 
@@ -783,18 +783,17 @@ async function handleGeneration(
     if (remainingErrors.length > 0) {
       emitStep('validating', 'Running Vite error analysis (pass 2)');
       try {
-        const viteFixes = viteAnalyzeAndFix(
-          currentResult.files.map((f: any) => ({ path: f.path, content: f.content })),
-          remainingErrors.map((i: any) => i.message)
-        );
+        const parsedErrors = viteParseErrors(remainingErrors.map((i: any) => i.message));
+        const projectFiles = currentResult.files.map((f: any) => ({ path: f.path, content: f.content, language: f.language || 'typescript' }));
+        const viteFixes = viteAnalyzeAndFix(parsedErrors, projectFiles);
         if (viteFixes.fixes.length > 0) {
           const patchedFiles = [...currentResult.files];
           for (const fix of viteFixes.fixes) {
-            if (fix.action === 'patch_file' || fix.action === 'create_file') {
+            if (fix.type === 'patch_file' || fix.type === 'create_file') {
               const idx = patchedFiles.findIndex((f: any) => f.path === fix.filePath);
               if (idx >= 0) {
                 patchedFiles[idx] = { ...patchedFiles[idx], content: fix.newContent };
-              } else if (fix.action === 'create_file') {
+              } else if (fix.type === 'create_file') {
                 patchedFiles.push({ path: fix.filePath, content: fix.newContent, language: 'typescript' });
               }
             }

@@ -1899,11 +1899,7 @@ export default defineConfig({
     content: `import type { Config } from 'tailwindcss';
 
 export default {
-  content: ['./src/**/*.{ts,tsx}', './index.html'],
-  theme: {
-    extend: {},
-  },
-  plugins: [],
+  darkMode: 'class',
 } satisfies Config;
 `,
     type: 'config',
@@ -2009,12 +2005,24 @@ export default App;
     type: 'source',
   });
 
-  // index.css - Tailwind CSS
+  // index.css - Tailwind CSS v4
   files.push({
     path: 'src/index.css',
-    content: `@tailwind base;
-@tailwind components;
-@tailwind utilities;
+    content: `@import "tailwindcss";
+
+@theme inline {
+  --color-foreground: hsl(222.2 84% 4.9%);
+  --color-background: hsl(0 0% 100%);
+  --color-muted: hsl(210 40% 96%);
+  --color-muted-foreground: hsl(215.4 16.3% 46.9%);
+  --color-border: hsl(214.3 31.8% 91.4%);
+  --color-primary: hsl(222.2 47.4% 11.2%);
+  --color-primary-foreground: hsl(210 40% 98%);
+  --radius: 0.5rem;
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
 
 :root {
   --foreground: 222.2 84% 4.9%;
@@ -2045,13 +2053,12 @@ body {
     type: 'style',
   });
 
-  // postcss.config.js
+  // postcss.config.js - Tailwind v4
   files.push({
     path: 'postcss.config.js',
     content: `export default {
   plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
+    "@tailwindcss/postcss": {},
   },
 };
 `,
