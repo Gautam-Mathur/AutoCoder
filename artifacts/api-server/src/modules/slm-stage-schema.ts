@@ -1,0 +1,135 @@
+/**
+ * SLM Stage: Schema Design — Patch-based SLM enhancement
+ *
+ * CONSTRAINED: Rule engine generates canonical schema.
+ * SLM proposes patches only: better constraint naming, index suggestions,
+ * composite unique hints, optionality corrections.
+ * Patches validated against structural contracts before applying.
+ */
+
+import { registerStageTemplate } from './slm-inference-engine.js';
+
+export const SCHEMA_STAGE_ID = 'schema';
+
+export function registerSchemaTemplate(): void {
+  registerStageTemplate({
+    stage: SCHEMA_STAGE_ID,
+    systemPrompt: `You are a database architect reviewing a Drizzle ORM schema for a PostgreSQL database.
+Your job is to propose PATCHES to improve the schema — not rewrite it.
+
+You can suggest:
+- Better column constraint naming (e.g., more descriptive check constraint names)
+- Additional indexes for frequently queried fields
+- Composite unique constraints that enforce business rules
+- Optionality corrections (fields that should/shouldn't be nullable)
+- Default value suggestions for new records
+- Better foreign key naming conventions
+- Index strategy improvements (btree vs gin for text search)
+- Enum value suggestions for status/type fields
+
+You CANNOT:
+- Add or remove tables (that's the rule engine's job)
+- Rename tables or primary columns
+- Change primary key strategies
+- Remove existing columns
+- Change column types fundamentally
+
+Output patches as an array. Each patch targets a specific table and field.`,
+
+    userPromptBuilder: (context: Record<string, any>) => {
+      let prompt = `Review this Drizzle schema and propose improvement patches:\n\n`;
+
+      if (context.ruleOutput) {
+        const schema = context.ruleOutput;
+        if (schema.tables?.length > 0) {
+          for (const table of schema.tables.slice(0, 10)) {
+            prompt += `Table: ${table.name}\n`;
+            if (table.columns?.length > 0) {
+              for (const col of table.columns) {
+                prompt += `  - ${col.name}: ${col.type}${col.nullable ? ' (nullable)' : ''}${col.primaryKey ? ' (PK)' : ''}${col.references ? ` → ${col.references}` : ''}\n`;
+              }
+            }
+            if (table.indexes?.length > 0) {
+              prompt += `  Indexes: ${table.indexes.map((i: any) => i.name || i.columns?.join(',')).join(', ')}\n`;
+            }
+            prompt += '\n';
+          }
+        }
+      }
+
+      if (context.plan?.dataModel) {
+        prompt += `\nBusiness context:\n`;
+        for (const entity of context.plan.dataModel.slice(0, 10)) {
+          prompt += `- ${entity.name}: ${entity.description || entity.fields?.map((f: any) => f.name).join(', ')}\n`;
+        }
+      }
+
+      prompt += `\nPropose patches to improve this schema. Focus on:
+1. Missing indexes for search/filter fields
+2. Better constraints for data integrity
+3. Nullable corrections
+4. Default values that make sense
+5. Composite unique constraints for business rules`;
+
+      return prompt;
+    },
+
+    outputSchema: {
+      type: 'object',
+      properties: {
+        patches: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              field: { type: 'string', description: 'table.column or table-level target' },
+              patchedValue: { type: 'object', description: 'The patch details' },
+              originalValue: { type: 'object' },
+              reason: { type: 'string' },
+              confidence: { type: 'number' },
+              type: { type: 'string', enum: ['add-index', 'add-constraint', 'change-nullable', 'add-default', 'add-unique', 'rename-constraint'] },
+            },
+          },
+        },
+        summary: { type: 'string' },
+      },
+      required: ['patches'],
+    },
+
+    maxTokens: 1536,
+    temperature: 0.2,
+    timeoutMs: 20000,
+  });
+}
+
+export function validateSchemaPatch(patch: any, ruleOutput: any): boolean {
+  if (!patch.field || !patch.reason) return false;
+  if ((patch.confidence || 0) < 0.5) return false;
+
+  const forbidden = ['drop', 'delete', 'remove-table', 'change-pk', 'rename-table'];
+  if (forbidden.includes(patch.type)) return false;
+
+  if (patch.type === 'add-index' || patch.type === 'add-constraint' || patch.type === 'add-unique' || patch.type === 'add-default' || patch.type === 'change-nullable') {
+    return true;
+  }
+
+  return false;
+}
+
+export function scoreSchemaPatchOutput(output: any, _context: Record<string, any>): number {
+  if (!output?.patches) return 0.3;
+
+  let score = 0.5;
+  const patches = output.patches as any[];
+
+  if (patches.length > 0) score += 0.1;
+  if (patches.length > 3) score += 0.1;
+
+  const avgConfidence = patches.reduce((sum: number, p: any) => sum + (p.confidence || 0), 0) / Math.max(patches.length, 1);
+  score += avgConfidence * 0.2;
+
+  const hasReasons = patches.every((p: any) => p.reason && p.reason.length > 10);
+  if (hasReasons) score += 0.1;
+
+  return Math.min(score, 1.0);
+}

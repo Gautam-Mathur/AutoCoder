@@ -9,18 +9,32 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@workspace/db": "workspace:*",
+    "@types/archiver": "^7.0.0",
+    "@types/multer": "^2.1.0",
+    "@types/ws": "^8.18.1",
     "@workspace/api-zod": "workspace:*",
+    "@workspace/db": "workspace:*",
+    "adm-zip": "^0.5.16",
+    "archiver": "^7.0.1",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2",
+    "dotenv": "^17.3.1",
     "drizzle-orm": "catalog:",
     "express": "^5",
-    "cookie-parser": "^1.4.7",
-    "cors": "^2"
+    "express-rate-limit": "^8.3.1",
+    "helmet": "^8.1.0",
+    "morgan": "^1.10.1",
+    "multer": "^2.1.1",
+    "nanoid": "^5.1.6",
+    "openai": "^6.29.0",
+    "ws": "^8.19.0",
+    "zod": "catalog:"
   },
   "devDependencies": {
-    "@types/node": "catalog:",
-    "@types/express": "^5.0.6",
-    "@types/cors": "^2.8.19",
     "@types/cookie-parser": "^1.4.10",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "catalog:",
     "esbuild": "^0.27.3",
     "tsx": "catalog:"
   }

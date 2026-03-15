@@ -21,7 +21,8 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 ```text
 artifacts-monorepo/
 ├── artifacts/              # Deployable applications
-│   └── api-server/         # Express API server
+│   ├── api-server/         # Express API server (AutoCoder backend)
+│   └── autocoder/          # AutoCoder React frontend (preview path: /)
 ├── lib/                    # Shared libraries
 │   ├── api-spec/           # OpenAPI spec + Orval codegen config
 │   ├── api-client-react/   # Generated React Query hooks
@@ -54,13 +55,27 @@ Every package extends `tsconfig.base.json` which sets `composite: true`. The roo
 
 Express 5 API server. Routes live in `src/routes/` and use `@workspace/api-zod` for request and response validation and `@workspace/db` for persistence.
 
-- Entry: `src/index.ts` — reads `PORT`, starts Express
-- App setup: `src/app.ts` — mounts CORS, JSON/urlencoded parsing, routes at `/api`
-- Routes: `src/routes/index.ts` mounts sub-routers; `src/routes/health.ts` exposes `GET /health` (full path: `/api/health`)
-- Depends on: `@workspace/db`, `@workspace/api-zod`
+- Entry: `src/index.ts` — reads `PORT`, starts Express + HTTP server (with WebSocket support via ws)
+- Routes: `src/routes/autocoder.ts` — the main AutoCoder routes + WebSocket handlers; `src/routes/health.ts` — health check
+- Modules: `src/modules/` — 35+ AI-powered modules (code generation, planning, security scanning, etc.)
+- Storage: `src/storage.ts` — in-memory or PostgreSQL storage (auto-selects based on DATABASE_URL)
+- Client-lib: `src/client-lib/code-generator/` — shared code validator and pro-generator (used server-side)
+- AI: Uses `AI_INTEGRATIONS_OPENAI_API_KEY` + `AI_INTEGRATIONS_OPENAI_BASE_URL` (Replit AI Integrations) or `OPENAI_API_KEY`
+- Depends on: `@workspace/db`, `@workspace/api-zod`, `openai`, `ws`, `zod`, `nanoid`, `archiver`, `adm-zip`
 - `pnpm --filter @workspace/api-server run dev` — run the dev server
-- `pnpm --filter @workspace/api-server run build` — production esbuild bundle (`dist/index.cjs`)
-- Build bundles an allowlist of deps (express, cors, pg, drizzle-orm, zod, etc.) and externalizes the rest
+- `pnpm --filter @workspace/api-server run build` — production esbuild bundle
+
+### `artifacts/autocoder` (`@workspace/autocoder`)
+
+AutoCoder React + Vite frontend. Full-stack AI code generation UI.
+
+- Pages: `landing` (home), `chat` (main IDE), `vapt-dashboard` (security scans), `slm-settings`
+- Components: chat interface, VS Code-style IDE, file panel, preview panel, code preview, deployment panel
+- Uses `@webcontainer/api` for in-browser code execution/preview
+- Uses `@shared/schema` alias → `artifacts/autocoder/shared/schema.ts`
+- CSS: Tailwind v4 with custom CSS variables for theming
+- AI: Communicates with api-server via REST + WebSockets
+- `pnpm --filter @workspace/autocoder run dev` — run dev server
 
 ### `lib/db` (`@workspace/db`)
 
