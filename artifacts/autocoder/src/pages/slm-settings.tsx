@@ -1030,10 +1030,11 @@ export default function SLMSettings() {
                           </div>
                           <div className="text-xs text-muted-foreground space-y-1">
                             <p>Replit's built-in model proxy. Works out of the box with no setup needed. Already available in any Replit workspace.</p>
+                            <p>Uses OpenAI-compatible /v1/chat/completions — no API key required.</p>
                           </div>
                           <div className="flex items-center gap-2 pt-1">
                             <code className="text-[10px] bg-muted px-2 py-0.5 rounded text-violet-400">http://localhost:1106/modelfarm/openai</code>
-                            <span className="text-[10px] text-muted-foreground">Pre-configured</span>
+                            <span className="text-[10px] text-muted-foreground">Pre-configured, no API key needed</span>
                           </div>
                         </div>
 
