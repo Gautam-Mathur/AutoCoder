@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "exportedAt": "2026-03-15T11:07:36.879Z",
+  "exportedAt": "2026-03-15T11:30:13.604Z",
   "patterns": [
     {
       "patternType": "entity-structure",
@@ -551,7 +551,7 @@
           "upcoming-deadlines"
         ]
       },
-      "successCount": 3,
+      "successCount": 4,
       "failureCount": 0,
       "reliability": 1
     },
@@ -620,7 +620,7 @@
       "patternType": "tech-choice",
       "patternKey": "file-structure-general",
       "patternValue": {
-        "fileCount": 60,
+        "fileCount": 56,
         "recentPaths": [
           "src/lib/utils.ts",
           "src/lib/queryClient.ts",
@@ -655,7 +655,7 @@
         ],
         "qualityScore": 90
       },
-      "successCount": 3,
+      "successCount": 4,
       "failureCount": 0,
       "reliability": 1
     },
@@ -1091,11 +1091,21 @@
       "reliability": 1
     },
     {
+      "id": 42,
       "patternType": "entity-structure",
-      "entityType": "Status",
       "domainId": "synthesized-hr-logistics",
+      "entityType": "Status",
       "patternKey": "entity-status",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "tags": "text[]",
+          "status": "enum(active,inactive,archived)",
+          "category": "text",
+          "createdAt": "timestamp",
+          "description": "text"
+        },
         "recommended": [
           "id",
           "name",
@@ -1104,27 +1114,28 @@
           "status",
           "tags",
           "createdAt"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "name": "text",
-          "description": "text",
-          "category": "text",
-          "status": "enum(active,inactive,archived)",
-          "tags": "text[]",
-          "createdAt": "timestamp"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 47,
       "patternType": "entity-structure",
-      "entityType": "Administrator",
       "domainId": "synthesized-hr-logistics",
+      "entityType": "Administrator",
       "patternKey": "entity-administrator",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "tags": "text[]",
+          "status": "enum(active,inactive,archived)",
+          "category": "text",
+          "createdAt": "timestamp",
+          "description": "text"
+        },
         "recommended": [
           "id",
           "name",
@@ -1133,22 +1144,14 @@
           "status",
           "tags",
           "createdAt"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "name": "text",
-          "description": "text",
-          "category": "text",
-          "status": "enum(active,inactive,archived)",
-          "tags": "text[]",
-          "createdAt": "timestamp"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 45,
       "patternType": "page-structure",
       "patternKey": "page-layout-status-list",
       "patternValue": {
@@ -1164,6 +1167,7 @@
       "reliability": 1
     },
     {
+      "id": 49,
       "patternType": "page-structure",
       "patternKey": "page-layout-status-detail",
       "patternValue": {
@@ -1179,6 +1183,7 @@
       "reliability": 1
     },
     {
+      "id": 48,
       "patternType": "page-structure",
       "patternKey": "page-layout-administrator-list",
       "patternValue": {
@@ -1194,6 +1199,7 @@
       "reliability": 1
     },
     {
+      "id": 46,
       "patternType": "page-structure",
       "patternKey": "page-layout-administrator-detail",
       "patternValue": {
@@ -1209,19 +1215,11 @@
       "reliability": 1
     },
     {
+      "id": 44,
       "patternType": "domain-mapping",
       "domainId": "synthesized-hr-logistics",
       "patternKey": "domain-synthesized-hr-logistics",
       "patternValue": {
-        "entities": [
-          "Status",
-          "Administrator"
-        ],
-        "modules": [
-          "Dashboard",
-          "Status Management",
-          "Administrator Management"
-        ],
         "kpis": [
           "Headcount",
           "Turnover Rate",
@@ -1232,7 +1230,100 @@
           "On-Time Delivery %",
           "Fleet Utilization"
         ],
+        "modules": [
+          "Dashboard",
+          "Status Management",
+          "Administrator Management"
+        ],
+        "entities": [
+          "Status",
+          "Administrator"
+        ],
         "pageCount": 5,
+        "relationships": {}
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "Record",
+      "domainId": "custom-1773574197426",
+      "patternKey": "entity-record",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "name",
+          "type",
+          "value",
+          "notes",
+          "createdAt"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "type": "text",
+          "value": "text",
+          "notes": "text",
+          "createdAt": "timestamp"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-record-list",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "search",
+          "filter-by-status",
+          "sort",
+          "create"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-record-detail",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "edit",
+          "delete",
+          "status-tracking"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "domain-mapping",
+      "domainId": "custom-1773574197426",
+      "patternKey": "domain-custom-1773574197426",
+      "patternValue": {
+        "entities": [
+          "Record"
+        ],
+        "modules": [
+          "Dashboard",
+          "Record Management"
+        ],
+        "kpis": [
+          "Total Records",
+          "Active Records",
+          "Recent Activity",
+          "Active Items",
+          "Growth Rate"
+        ],
+        "pageCount": 3,
         "relationships": {}
       },
       "successCount": 1,
@@ -1245,12 +1336,12 @@
       "key": "quality-score-general",
       "value": "91",
       "category": "architecture",
-      "frequency": 3
+      "frequency": 4
     }
   ],
   "stats": {
-    "totalPatterns": 45,
-    "reliablePatterns": 45,
+    "totalPatterns": 49,
+    "reliablePatterns": 49,
     "totalPreferences": 1
   }
 }
