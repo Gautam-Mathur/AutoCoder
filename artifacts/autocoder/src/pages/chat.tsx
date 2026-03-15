@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Plus, MessageSquare, Trash2, MoreHorizontal, Terminal, PanelRightClose, PanelRight, Pencil, ShieldCheck, AlertTriangle, Sparkles, Bug, ChevronDown, ChevronRight, Wrench, Cpu, Settings, X } from "lucide-react";
+import { Plus, MessageSquare, Trash2, MoreHorizontal, Terminal, PanelRightClose, PanelRight, Pencil, ShieldCheck, AlertTriangle, Sparkles, Bug, ChevronDown, ChevronRight, Wrench, Cpu, Settings, X, Download, Loader2 } from "lucide-react";
 import { isWebContainerSupported, onPreWarmProgress, getPreWarmStatus } from "@/lib/code-runner/webcontainer";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -257,6 +257,9 @@ export default function Chat() {
   const [slmEnhanced, setSlmEnhanced] = useState<boolean>(false);
   const [slmStagesRun, setSlmStagesRun] = useState<string[]>([]);
   const [noAiBannerDismissed, setNoAiBannerDismissed] = useState(false);
+  const [generationStage, setGenerationStage] = useState<string | null>(null);
+  const [generationError, setGenerationError] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   const { data: aiConfigStatus } = useQuery<{ baseUrl: string | null; model: string; hasApiKey: boolean; clientReady: boolean }>({
     queryKey: ["/api/ai/connection"],
@@ -408,6 +411,8 @@ export default function Chat() {
     setDiagnostics(null);
     setDiagnosticsOpen(false);
     setStreamingThinkingSteps([]);
+    setGenerationStage(null);
+    setGenerationError(null);
 
     queryClient.setQueryData<ConversationWithMessages>(
       ["/api/conversations", conversationId],
@@ -437,7 +442,14 @@ export default function Chat() {
         body: JSON.stringify({ content }),
       });
 
-      if (!response.ok) throw new Error("Failed to send message");
+      if (!response.ok) {
+        let errorMsg = "Failed to send message";
+        try {
+          const errBody = await response.json();
+          if (errBody.error) errorMsg = errBody.error;
+        } catch {}
+        throw new Error(errorMsg);
+      }
 
       const reader = response.body?.getReader();
       if (!reader) throw new Error("No response body");
@@ -459,6 +471,15 @@ export default function Chat() {
 
               if (data.type === 'thinking' && data.step) {
                 setStreamingThinkingSteps(prev => [...prev, data.step]);
+                if (data.step.label) {
+                  setGenerationStage(data.step.label);
+                }
+                continue;
+              }
+
+              if (data.error) {
+                setGenerationError(data.error);
+                setGenerationStage(null);
                 continue;
               }
 
@@ -467,6 +488,7 @@ export default function Chat() {
                 setStreamingContent(fullContent);
               }
               if (data.done) {
+                setGenerationStage(null);
                 if (fullContent && !data.phase) {
                   await saveCodeToProject(conversationId, fullContent);
                 }
@@ -522,6 +544,34 @@ export default function Chat() {
       setIsStreaming(false);
       setStreamingContent("");
       setStreamingThinkingSteps([]);
+      setGenerationStage(null);
+      setGenerationError(error instanceof Error ? error.message : "An unexpected error occurred during generation.");
+    }
+  };
+
+  const handleExportZip = async () => {
+    if (!activeConversationId || isExporting) return;
+    setIsExporting(true);
+    try {
+      const resp = await fetch(`/api/conversations/${activeConversationId}/export`);
+      if (!resp.ok) throw new Error('Export failed');
+      const blob = await resp.blob();
+      const disposition = resp.headers.get('content-disposition');
+      const filenameMatch = disposition?.match(/filename="([^"]+)"/);
+      const filename = filenameMatch?.[1] || 'project.zip';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 15000);
+    } catch (err) {
+      console.error('Export failed:', err);
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -531,7 +581,8 @@ export default function Chat() {
     setIsStreaming(false);
     setStreamingThinkingSteps([]);
     setCompletedThinkingSteps(new Map());
-    // Clear any cached conversation data to ensure fresh start
+    setGenerationStage(null);
+    setGenerationError(null);
     queryClient.removeQueries({ queryKey: ["/api/conversations", null] });
   };
 
@@ -687,6 +738,19 @@ export default function Chat() {
                     />
                   </div>
                 )}
+                {conversationFiles.length > 0 && activeConversationId && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="gap-1.5 text-xs"
+                    onClick={handleExportZip}
+                    disabled={isExporting}
+                    data-testid="button-download-zip-header"
+                  >
+                    {isExporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                    <span className="hidden sm:inline">Download ZIP</span>
+                  </Button>
+                )}
                 <Link href="/slm">
                   <Button
                     variant="ghost"
@@ -764,6 +828,24 @@ export default function Chat() {
               </div>
 
               <div className="px-4 py-3 flex-shrink-0 border-t border-border/40">
+                {isStreaming && generationStage && (
+                  <div className="flex items-center gap-2 mb-2 text-xs" data-testid="generation-stage-indicator">
+                    <Loader2 className="h-3 w-3 animate-spin text-primary flex-shrink-0" />
+                    <span className="text-muted-foreground truncate">{generationStage}</span>
+                  </div>
+                )}
+                {generationError && (
+                  <div className="flex items-start gap-2 mb-2 text-xs rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2" data-testid="generation-error-panel">
+                    <AlertTriangle className="h-3.5 w-3.5 text-red-500 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-red-600 dark:text-red-400 font-medium">Generation failed</p>
+                      <p className="text-muted-foreground mt-0.5">{generationError}</p>
+                    </div>
+                    <button onClick={() => setGenerationError(null)} className="text-muted-foreground hover:text-foreground shrink-0">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
                 {validationSummary && (
                   <div className="flex items-center gap-2 mb-2 text-xs text-muted-foreground" data-testid="validation-summary-panel">
                     {validationSummary.unfixableIssues.length > 0 ? (
@@ -1020,7 +1102,15 @@ export default function Chat() {
 
           {showPreview ? (
             <div className="flex-1 min-w-[400px] h-full">
-              <PreviewPanel conversationId={activeConversationId} onRequestFix={handleRequestFix} />
+              <PreviewPanel
+                conversationId={activeConversationId}
+                onRequestFix={handleRequestFix}
+                onRegenerateFile={(filePath) => {
+                  if (!activeConversationId) return;
+                  const prompt = `Please regenerate the file "${filePath}" while keeping all other project files intact. Maintain the same interfaces, exports, and integration points. Improve the implementation quality.`;
+                  handleSendMessage(prompt);
+                }}
+              />
             </div>
           ) : (
             <div className="flex-1 flex items-center justify-center bg-card/30 relative overflow-hidden">

@@ -27,6 +27,7 @@ interface AutoFixLog {
 interface PreviewPanelProps {
   conversationId: number | null;
   onRequestFix?: (error: string, code: string) => void;
+  onRegenerateFile?: (filePath: string) => void;
 }
 
 interface RuntimeError {
@@ -105,11 +106,13 @@ function FileTreeNode({
   node,
   activeFile,
   onSelectFile,
+  onRegenerateFile,
   depth = 0,
 }: {
   node: TreeNode;
   activeFile: string;
   onSelectFile: (path: string) => void;
+  onRegenerateFile?: (path: string) => void;
   depth?: number;
 }) {
   const [isExpanded, setIsExpanded] = useState(depth < 2);
@@ -154,6 +157,7 @@ function FileTreeNode({
                 node={child}
                 activeFile={activeFile}
                 onSelectFile={onSelectFile}
+                onRegenerateFile={onRegenerateFile}
                 depth={depth + 1}
               />
             ))}
@@ -164,19 +168,31 @@ function FileTreeNode({
   }
 
   return (
-    <button
-      onClick={() => onSelectFile(node.path)}
-      className={`w-full text-left px-2 py-1 rounded text-xs flex items-center gap-1.5 transition-colors ${
-        activeFile === node.path
-          ? "bg-primary/20 text-primary"
-          : "text-muted-foreground hover:bg-muted hover:text-foreground"
-      }`}
-      style={{ paddingLeft: `${depth * 12 + 20}px` }}
-      data-testid={`filetree-${node.path.replace(/\//g, "-")}`}
-    >
-      {getFileIcon(node.name)}
-      <span className="truncate">{node.name}</span>
-    </button>
+    <div className="group/file flex items-center">
+      <button
+        onClick={() => onSelectFile(node.path)}
+        className={`flex-1 text-left px-2 py-1 rounded text-xs flex items-center gap-1.5 transition-colors ${
+          activeFile === node.path
+            ? "bg-primary/20 text-primary"
+            : "text-muted-foreground hover:bg-muted hover:text-foreground"
+        }`}
+        style={{ paddingLeft: `${depth * 12 + 20}px` }}
+        data-testid={`filetree-${node.path.replace(/\//g, "-")}`}
+      >
+        {getFileIcon(node.name)}
+        <span className="truncate">{node.name}</span>
+      </button>
+      {onRegenerateFile && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onRegenerateFile(node.path); }}
+          className="opacity-0 group-hover/file:opacity-100 transition-opacity p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground mr-1"
+          title={`Regenerate ${node.name}`}
+          data-testid={`button-regenerate-${node.path.replace(/\//g, "-")}`}
+        >
+          <RefreshCw className="w-3 h-3" />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -315,7 +331,7 @@ function AutoTestSection({
   );
 }
 
-export function PreviewPanel({ conversationId, onRequestFix }: PreviewPanelProps) {
+export function PreviewPanel({ conversationId, onRequestFix, onRegenerateFile }: PreviewPanelProps) {
   const [activeTab, setActiveTab] = useState<"preview" | "code" | "debug" | "intel" | "deploy" | "test" | "flow">("preview");
   const [activeFile, setActiveFile] = useState<string>("index.html");
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -1349,6 +1365,7 @@ ${combinedJs}
                       node={node}
                       activeFile={activeFile}
                       onSelectFile={setActiveFile}
+                      onRegenerateFile={onRegenerateFile}
                     />
                   ))}
                 </ScrollArea>
@@ -2068,6 +2085,7 @@ ${combinedJs}
                     setActiveFile(path);
                     setActiveTab("code");
                   }}
+                  onRegenerateFile={onRegenerateFile}
                 />
               ))}
             </div>
