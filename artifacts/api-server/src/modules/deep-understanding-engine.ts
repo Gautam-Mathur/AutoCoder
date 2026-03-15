@@ -287,7 +287,8 @@ export function analyzeRequest(userMessage: string, conversationContext?: string
     };
   }
 
-  const highConfidenceDomain = level2.primaryDomain && level2.confidence >= 0.70 && isSimpleRequest && clarificationRound === 0;
+  const hasEnoughWords = userMessage.split(/\s+/).length >= 4;
+  const highConfidenceDomain = level2.primaryDomain && level2.confidence >= 0.70 && hasEnoughWords && clarificationRound === 0;
   if (highConfidenceDomain) {
     const assumptions: string[] = [];
     assumptions.push(`This is for the ${level2.primaryDomain!.name} industry`);
