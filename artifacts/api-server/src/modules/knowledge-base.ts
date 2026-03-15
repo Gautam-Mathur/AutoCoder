@@ -5517,10 +5517,10 @@ export function getContextForGeneration(ctx: GenerationContext): string {
     'hr': ['drizzle-schema-hr-management', 'react-data-table', 'api-error-handling'],
     'hr-management': ['drizzle-schema-hr-management', 'react-data-table'],
     'mern': ['mern-mongoose-schema', 'mern-express-crud', 'mern-jwt-auth-middleware', 'mern-react-query-hooks'],
-    'django': ['django-model-advanced', 'django-drf-serializer', 'django-drf-viewset', 'django-settings-split'],
-    'spring-boot': ['spring-jpa-entity', 'spring-service-transactional', 'spring-rest-controller', 'spring-security-jwt-config'],
-    'dotnet': ['dotnet-controller-crud', 'dotnet-ef-core-dbcontext', 'dotnet-service-repository', 'dotnet-program-setup'],
-    'go-react': ['go-gin-crud', 'go-gorm-model-repo', 'go-jwt-middleware', 'go-app-setup'],
+    'django': ['django-model-advanced', 'django-drf-serializer', 'django-drf-viewset', 'django-settings-split', 'django-pytest-fixture'],
+    'spring-boot': ['spring-jpa-entity', 'spring-service-transactional', 'spring-rest-controller', 'spring-security-jwt-config', 'spring-mockmvc-test', 'spring-mapstruct-dto'],
+    'dotnet': ['dotnet-controller-crud', 'dotnet-ef-core-dbcontext', 'dotnet-service-repository', 'dotnet-program-setup', 'dotnet-mediatr-cqrs', 'dotnet-xunit-test'],
+    'go-react': ['go-gin-crud', 'go-gorm-model-repo', 'go-jwt-middleware', 'go-app-setup', 'go-fiber-route-group', 'go-react-axios-client'],
   };
 
   if (ctx.domain) {

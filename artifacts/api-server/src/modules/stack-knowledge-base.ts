@@ -10036,7 +10036,7 @@ const FINAL_ANTI_PATTERNS_END: AntiPattern[] = [
     tags: ['go', 'panic', 'reliability', 'http'],
   },
   {
-    id: 'go-goroutine-leak',
+    id: 'go-goroutine-abandoned-channel',
     name: 'Goroutine Leak from Abandoned Channels',
     description: 'Spawning goroutines that block on a channel no receiver will ever read.',
     whyBad: 'Leaked goroutines hold memory and open resources (DB connections, file handles) for the lifetime of the process, causing steady memory growth and eventual OOM.',
@@ -10061,3 +10061,414 @@ const FINAL_ANTI_PATTERNS_END: AntiPattern[] = [
 ];
 
 STACK_ANTI_PATTERNS.push(...FINAL_ANTI_PATTERNS_END);
+
+// ============================================
+// Extended coverage snippets — missing topics
+// ============================================
+
+const MISSING_COVERAGE_SNIPPETS: CodeSnippet[] = [
+  {
+    id: 'django-pytest-fixture',
+    title: 'pytest-django Fixtures and API Tests',
+    description: 'Write Django REST Framework API tests using pytest-django fixtures.',
+    tech: ['django', 'python', 'pytest', 'rest-framework'],
+    code: `# conftest.py
+import pytest
+from rest_framework.test import APIClient
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
+
+@pytest.fixture
+def api_client():
+    return APIClient()
+
+@pytest.fixture
+def auth_client(api_client, db):
+    user = User.objects.create_user(
+        username='testuser', email='test@example.com', password='testpass123'
+    )
+    api_client.force_authenticate(user=user)
+    return api_client, user
+
+# tests/test_articles.py
+import pytest
+from django.urls import reverse
+from articles.models import Article
+
+@pytest.mark.django_db
+def test_create_article(auth_client):
+    client, user = auth_client
+    url = reverse('article-list')
+    payload = {'title': 'Hello World', 'content': 'Body text', 'status': 'draft'}
+    response = client.post(url, payload, format='json')
+    assert response.status_code == 201
+    assert response.data['title'] == 'Hello World'
+    assert Article.objects.filter(author=user).count() == 1
+
+@pytest.mark.django_db
+def test_list_articles_unauthenticated(api_client):
+    url = reverse('article-list')
+    response = api_client.get(url)
+    assert response.status_code in [200, 401]  # depends on permission class
+
+@pytest.mark.django_db
+@pytest.mark.parametrize('status_filter', ['draft', 'published', 'archived'])
+def test_filter_articles_by_status(auth_client, status_filter):
+    client, user = auth_client
+    Article.objects.create(title='T1', content='C', author=user, status=status_filter)
+    url = reverse('article-list') + f'?status={status_filter}'
+    response = client.get(url)
+    assert response.status_code == 200
+    assert all(a['status'] == status_filter for a in response.data['results'])`,
+    tags: ['django', 'pytest', 'testing', 'api'],
+  },
+  {
+    id: 'spring-mockmvc-test',
+    title: 'Spring Boot MockMvc Integration Tests',
+    description: 'Test Spring REST controllers with MockMvc and JUnit 5.',
+    tech: ['spring-boot', 'java', 'junit5', 'mockito'],
+    code: `package com.example.api.controllers;
+
+import com.example.api.dto.CreateUserRequest;
+import com.example.api.services.UserService;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+@WebMvcTest(UserController.class)
+class UserControllerTest {
+
+    @Autowired MockMvc mockMvc;
+    @Autowired ObjectMapper objectMapper;
+    @MockBean UserService userService;
+
+    @Test
+    void createUser_returnsCreated() throws Exception {
+        var req = new CreateUserRequest("Alice", "alice@example.com");
+        var saved = new UserDto(1L, "Alice", "alice@example.com");
+        when(userService.create(any())).thenReturn(saved);
+
+        mockMvc.perform(post("/api/users")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.id").value(1L))
+            .andExpect(jsonPath("$.name").value("Alice"));
+    }
+
+    @Test
+    void getUser_notFound_returns404() throws Exception {
+        when(userService.findById(99L)).thenThrow(new NotFoundException("User 99 not found"));
+        mockMvc.perform(get("/api/users/99"))
+            .andExpect(status().isNotFound());
+    }
+}`,
+    tags: ['spring', 'mockmvc', 'junit5', 'testing'],
+  },
+  {
+    id: 'spring-mapstruct-dto',
+    title: 'MapStruct DTO Mapping in Spring Boot',
+    description: 'Use MapStruct for compile-time, type-safe DTO ↔ entity mapping.',
+    tech: ['spring-boot', 'java', 'mapstruct', 'jpa'],
+    code: `// Entity
+@Entity
+@Table(name = "users")
+public class User {
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    private String name;
+    private String email;
+    @Column(name = "created_at")
+    private LocalDateTime createdAt;
+    // getters/setters omitted for brevity
+}
+
+// DTO
+public record UserDto(Long id, String name, String email, LocalDateTime createdAt) {}
+public record CreateUserRequest(
+    @NotBlank String name,
+    @Email String email
+) {}
+
+// Mapper — MapStruct generates the implementation at compile time
+@Mapper(componentModel = "spring")
+public interface UserMapper {
+    UserDto toDto(User user);
+    User toEntity(CreateUserRequest request);
+    List<UserDto> toDtoList(List<User> users);
+
+    @Mapping(target = "id", ignore = true)
+    @Mapping(target = "createdAt", ignore = true)
+    User updateFromRequest(UpdateUserRequest request, @MappingTarget User user);
+}
+
+// Usage in Service
+@Service
+@RequiredArgsConstructor
+public class UserService {
+    private final UserRepository repo;
+    private final UserMapper mapper;
+
+    public UserDto create(CreateUserRequest req) {
+        User user = mapper.toEntity(req);
+        return mapper.toDto(repo.save(user));
+    }
+
+    public List<UserDto> findAll() {
+        return mapper.toDtoList(repo.findAll());
+    }
+}`,
+    tags: ['spring', 'mapstruct', 'dto', 'mapping'],
+  },
+  {
+    id: 'dotnet-mediatr-cqrs',
+    title: 'MediatR CQRS Handlers in .NET',
+    description: 'Implement the CQRS pattern using MediatR with commands, queries, and handlers.',
+    tech: ['dotnet', 'csharp', 'mediatr', 'aspnetcore'],
+    code: `// Query
+public record GetUserByIdQuery(int Id) : IRequest<UserDto?>;
+
+// Command
+public record CreateUserCommand(string Name, string Email) : IRequest<UserDto>;
+
+// Query Handler
+public class GetUserByIdHandler : IRequestHandler<GetUserByIdQuery, UserDto?>
+{
+    private readonly IUserRepository _repo;
+    private readonly IMapper _mapper;
+
+    public GetUserByIdHandler(IUserRepository repo, IMapper mapper)
+        => (_repo, _mapper) = (repo, mapper);
+
+    public async Task<UserDto?> Handle(GetUserByIdQuery request, CancellationToken ct)
+    {
+        var user = await _repo.GetByIdAsync(request.Id, ct);
+        return user is null ? null : _mapper.Map<UserDto>(user);
+    }
+}
+
+// Command Handler
+public class CreateUserHandler : IRequestHandler<CreateUserCommand, UserDto>
+{
+    private readonly IUserRepository _repo;
+    private readonly IMapper _mapper;
+
+    public CreateUserHandler(IUserRepository repo, IMapper mapper)
+        => (_repo, _mapper) = (repo, mapper);
+
+    public async Task<UserDto> Handle(CreateUserCommand cmd, CancellationToken ct)
+    {
+        var user = new User { Name = cmd.Name, Email = cmd.Email };
+        await _repo.AddAsync(user, ct);
+        return _mapper.Map<UserDto>(user);
+    }
+}
+
+// Controller — thin, delegates to MediatR
+[ApiController, Route("api/users")]
+public class UsersController : ControllerBase
+{
+    private readonly IMediator _mediator;
+    public UsersController(IMediator mediator) => _mediator = mediator;
+
+    [HttpGet("{id:int}")]
+    public async Task<IActionResult> Get(int id, CancellationToken ct)
+    {
+        var result = await _mediator.Send(new GetUserByIdQuery(id), ct);
+        return result is null ? NotFound() : Ok(result);
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> Create(CreateUserCommand cmd, CancellationToken ct)
+    {
+        var user = await _mediator.Send(cmd, ct);
+        return CreatedAtAction(nameof(Get), new { id = user.Id }, user);
+    }
+}`,
+    tags: ['dotnet', 'mediatr', 'cqrs', 'architecture'],
+  },
+  {
+    id: 'dotnet-xunit-test',
+    title: 'xUnit Integration Tests for .NET API',
+    description: 'Write integration tests for ASP.NET Core controllers using xUnit and WebApplicationFactory.',
+    tech: ['dotnet', 'csharp', 'xunit', 'aspnetcore'],
+    code: `using Microsoft.AspNetCore.Mvc.Testing;
+using System.Net.Http.Json;
+using Xunit;
+
+public class UsersApiTests : IClassFixture<WebApplicationFactory<Program>>
+{
+    private readonly HttpClient _client;
+
+    public UsersApiTests(WebApplicationFactory<Program> factory)
+    {
+        _client = factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                // Replace real DB with in-memory for tests
+                services.RemoveAll<DbContextOptions<AppDbContext>>();
+                services.AddDbContext<AppDbContext>(opts =>
+                    opts.UseInMemoryDatabase("TestDb"));
+            });
+        }).CreateClient();
+    }
+
+    [Fact]
+    public async Task CreateUser_ReturnsCreated()
+    {
+        var cmd = new { Name = "Alice", Email = "alice@test.com" };
+        var response = await _client.PostAsJsonAsync("/api/users", cmd);
+        response.EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var user = await response.Content.ReadFromJsonAsync<UserDto>();
+        Assert.Equal("Alice", user!.Name);
+    }
+
+    [Fact]
+    public async Task GetUser_NotFound_Returns404()
+    {
+        var response = await _client.GetAsync("/api/users/9999");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("", "valid@test.com")]
+    [InlineData("Bob", "not-an-email")]
+    public async Task CreateUser_InvalidInput_Returns400(string name, string email)
+    {
+        var cmd = new { Name = name, Email = email };
+        var response = await _client.PostAsJsonAsync("/api/users", cmd);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+}`,
+    tags: ['dotnet', 'xunit', 'integration-test', 'aspnetcore'],
+  },
+  {
+    id: 'go-fiber-route-group',
+    title: 'Fiber Route Groups with Middleware',
+    description: 'Organise Fiber routes into versioned groups with per-group middleware.',
+    tech: ['go', 'fiber', 'jwt', 'middleware'],
+    code: `package main
+
+import (
+        "github.com/gofiber/fiber/v2"
+        "github.com/gofiber/fiber/v2/middleware/logger"
+        "github.com/gofiber/fiber/v2/middleware/recover"
+        "github.com/gofiber/jwt/v3"
+)
+
+func SetupRoutes(app *fiber.App, h *Handlers) {
+        // Global middleware
+        app.Use(logger.New())
+        app.Use(recover.New())
+
+        // Public routes
+        public := app.Group("/api")
+        public.Post("/auth/login", h.Login)
+        public.Post("/auth/register", h.Register)
+
+        // Protected routes — require JWT
+        protected := app.Group("/api", jwtware.New(jwtware.Config{
+                SigningKey: []byte(cfg.JWTSecret),
+        }))
+
+        // v1 Users
+        v1 := protected.Group("/v1")
+        users := v1.Group("/users")
+        users.Get("/", h.ListUsers)
+        users.Get("/:id", h.GetUser)
+        users.Post("/", h.CreateUser)
+        users.Put("/:id", h.UpdateUser)
+        users.Delete("/:id", h.DeleteUser)
+
+        // Admin-only routes with additional middleware
+        admin := v1.Group("/admin", RequireRole("admin"))
+        admin.Get("/stats", h.GetStats)
+        admin.Delete("/users/:id", h.AdminDeleteUser)
+}
+
+func RequireRole(role string) fiber.Handler {
+        return func(c *fiber.Ctx) error {
+                claims, ok := c.Locals("user").(*Claims)
+                if !ok || claims.Role != role {
+                        return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+                                "error": "insufficient permissions",
+                        })
+                }
+                return c.Next()
+        }
+}`,
+    tags: ['go', 'fiber', 'routing', 'middleware', 'jwt'],
+  },
+  {
+    id: 'go-react-axios-client',
+    title: 'React Axios Client for Go API',
+    description: 'Typed axios client for a Go backend with interceptors for auth and error handling.',
+    tech: ['react', 'typescript', 'axios', 'go'],
+    code: `// src/lib/api.ts
+import axios, { type AxiosError } from 'axios';
+
+export const api = axios.create({
+  baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:8080',
+  withCredentials: true,
+  headers: { 'Content-Type': 'application/json' },
+});
+
+// Attach JWT from localStorage on every request
+api.interceptors.request.use(config => {
+  const token = localStorage.getItem('access_token');
+  if (token) config.headers.Authorization = \`Bearer \${token}\`;
+  return config;
+});
+
+// Handle 401 — redirect to login
+api.interceptors.response.use(
+  res => res,
+  async (error: AxiosError) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('access_token');
+      window.location.href = '/login';
+    }
+    return Promise.reject(error);
+  }
+);
+
+// Typed request helpers
+export async function getUsers(): Promise<User[]> {
+  const { data } = await api.get<{ data: User[] }>('/api/v1/users');
+  return data.data;
+}
+
+export async function createUser(payload: CreateUserInput): Promise<User> {
+  const { data } = await api.post<{ data: User }>('/api/v1/users', payload);
+  return data.data;
+}
+
+export async function updateUser(id: number, payload: Partial<CreateUserInput>): Promise<User> {
+  const { data } = await api.put<{ data: User }>(\`/api/v1/users/\${id}\`, payload);
+  return data.data;
+}
+
+export async function deleteUser(id: number): Promise<void> {
+  await api.delete(\`/api/v1/users/\${id}\`);
+}
+
+// Types
+export interface User { id: number; name: string; email: string; createdAt: string; }
+export interface CreateUserInput { name: string; email: string; }`,
+    tags: ['go', 'react', 'axios', 'typescript', 'frontend'],
+  },
+];
+
+STACK_CODE_SNIPPETS.push(...MISSING_COVERAGE_SNIPPETS);
