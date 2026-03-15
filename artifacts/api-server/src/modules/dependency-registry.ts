@@ -470,7 +470,7 @@ export const AVAILABLE_DEPS: Record<string, string> = {
 export const DEV_DEPS: Record<string, string> = {
   'vite': '^5.1.0', '@vitejs/plugin-react': '^4.2.0',
   'typescript': '^5.3.0', 'esbuild': '^0.19.0',
-  'tailwindcss': '3.4.17', 'postcss': '^8.4.35', 'autoprefixer': '^10.4.17',
+  'tailwindcss': '^4.0.0', '@tailwindcss/postcss': '^4.0.0', 'postcss': '^8.4.35',
   '@types/react': '^18.2.0', '@types/react-dom': '^18.2.0', '@types/node': '^20.10.0',
   '@types/uuid': '^9.0.7',
   '@types/express': '^4.17.21', '@types/cors': '^2.8.17',
@@ -568,7 +568,7 @@ export const ALWAYS_INCLUDE_DEPS = [
 ];
 
 export const ALWAYS_INCLUDE_DEV_DEPS = [
-  'vite', '@vitejs/plugin-react', 'tailwindcss', 'postcss', 'autoprefixer', 'picomatch', 'fast-glob',
+  'vite', '@vitejs/plugin-react', 'tailwindcss', '@tailwindcss/postcss', 'postcss', 'picomatch', 'fast-glob',
   'vitest', '@testing-library/react', '@testing-library/jest-dom', 'jsdom',
 ];
 

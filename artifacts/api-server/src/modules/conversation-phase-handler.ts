@@ -16,8 +16,16 @@ import { planUXFlows } from './ux-flow-planner.js';
 import { planIntegrations } from './integration-planner.js';
 import { planSecurity } from './security-planner.js';
 import { planPerformance } from './performance-planner.js';
+import { analyzeAndFix as viteAnalyzeAndFix } from './vite-error-fixer.js';
 
 export type ConversationPhase = 'initial' | 'understanding' | 'clarifying' | 'planning' | 'approval' | 'generating' | 'complete' | 'editing';
+
+export interface ValidationSummaryResult {
+  passes: number;
+  issuesFound: number;
+  issuesFixed: number;
+  unfixableIssues: string[];
+}
 
 export interface PhaseHandlerResult {
   responseContent: string;
@@ -30,6 +38,7 @@ export interface PhaseHandlerResult {
   understandingData?: UnderstandingResult;
   clarificationRound?: number;
   clarificationState?: ClarificationState;
+  validationSummary?: ValidationSummaryResult;
 }
 
 export interface ThinkingStep {
@@ -764,12 +773,42 @@ async function handleGeneration(
     emitStep('orchestrator', 'Pipeline encountered critical error, falling back to direct generation');
     const rawFiles = generateProjectFromPlan(plan);
     emitStep('generating', 'Code generation complete', `${rawFiles.length} files created`);
-    emitStep('validating', 'Running post-generation validation');
-    const validationResult = validateAndFix(rawFiles, 3);
-    if (validationResult.fixesApplied.length > 0) {
-      emitStep('validating', `Auto-fixed ${validationResult.fixesApplied.length} issues`);
+    emitStep('validating', 'Running post-generation validation (pass 1)');
+    let currentResult = validateAndFix(rawFiles, 3);
+    if (currentResult.fixesApplied.length > 0) {
+      emitStep('validating', `Auto-fixed ${currentResult.fixesApplied.length} issues (pass 1)`);
     }
-    const fallbackFiles = validationResult.files;
+
+    const remainingErrors = currentResult.issues.filter((i: any) => i.severity === 'error');
+    if (remainingErrors.length > 0) {
+      emitStep('validating', 'Running Vite error analysis (pass 2)');
+      try {
+        const viteFixes = viteAnalyzeAndFix(
+          currentResult.files.map((f: any) => ({ path: f.path, content: f.content })),
+          remainingErrors.map((i: any) => i.message)
+        );
+        if (viteFixes.fixes.length > 0) {
+          const patchedFiles = [...currentResult.files];
+          for (const fix of viteFixes.fixes) {
+            if (fix.action === 'patch_file' || fix.action === 'create_file') {
+              const idx = patchedFiles.findIndex((f: any) => f.path === fix.filePath);
+              if (idx >= 0) {
+                patchedFiles[idx] = { ...patchedFiles[idx], content: fix.newContent };
+              } else if (fix.action === 'create_file') {
+                patchedFiles.push({ path: fix.filePath, content: fix.newContent, language: 'typescript' });
+              }
+            }
+          }
+          emitStep('validating', `Vite fixer applied ${viteFixes.fixes.length} patches, re-validating (pass 3)`);
+          currentResult = validateAndFix(patchedFiles, 2);
+          currentResult.fixesApplied.push(...viteFixes.fixes.map((f: any) => f.description || f.filePath));
+        }
+      } catch (e) {
+        console.error('[Fallback] Vite fixer error:', e);
+      }
+    }
+
+    const fallbackFiles = currentResult.files;
     try {
       learningEngine.recordOutcome({
         conversationId: state.conversationId || 0,
@@ -777,14 +816,23 @@ async function handleGeneration(
         domainId: state.understandingData?.level2_domain?.primaryDomain?.id,
         plan,
         generatedFiles: fallbackFiles.map(f => ({ path: f.path, content: f.content })),
-        errors: validationResult.issues.filter(i => i.severity === 'error').map(i => i.message),
-        autoFixes: validationResult.fixesApplied,
+        errors: currentResult.issues.filter((i: any) => i.severity === 'error').map((i: any) => i.message),
+        autoFixes: currentResult.fixesApplied,
         userModifications: [],
         generationTimeMs: Date.now() - Date.now(),
       });
     } catch (e) {}
-    const validationSummary = validationResult.fixesApplied.length > 0
-      ? `Auto-fixed **${validationResult.fixesApplied.length} issues** across ${validationResult.iterations} validation pass(es).`
+    const fallbackValSummary: ValidationSummaryResult = {
+      passes: currentResult.iterations,
+      issuesFound: currentResult.issues.length,
+      issuesFixed: currentResult.fixesApplied.length,
+      unfixableIssues: currentResult.issues
+        .filter((i: any) => i.severity === 'error')
+        .map((i: any) => i.message)
+        .filter((msg: string) => !currentResult.fixesApplied.includes(msg)),
+    };
+    const validationSummary = fallbackValSummary.issuesFixed > 0
+      ? `Auto-fixed **${fallbackValSummary.issuesFixed} issues** across ${fallbackValSummary.passes} validation pass(es).`
       : 'All imports, exports, and dependencies verified.';
     return {
       responseContent: `## ${plan.projectName} - Generated Successfully!\n\nGenerated **${fallbackFiles.length} files** using fallback generation.\n\n${validationSummary}`,
@@ -792,6 +840,7 @@ async function handleGeneration(
       thinkingSteps,
       generatedFiles: fallbackFiles,
       planData: plan,
+      validationSummary: fallbackValSummary,
     };
   }
 
@@ -871,12 +920,22 @@ ${warningsList}
 - Browse **View Code** to explore the generated files
 - Tell me what you'd like to change or add!`;
 
+  const orchestrationValSummary: ValidationSummaryResult | undefined = valSummary
+    ? {
+        passes: valSummary.passes,
+        issuesFound: valSummary.issuesFound,
+        issuesFixed: valSummary.issuesFixed,
+        unfixableIssues: valSummary.unfixableIssues,
+      }
+    : undefined;
+
   return {
     responseContent,
     newPhase: 'complete',
     thinkingSteps,
     generatedFiles: finalFiles,
     planData: plan,
+    validationSummary: orchestrationValSummary,
   };
 }
 

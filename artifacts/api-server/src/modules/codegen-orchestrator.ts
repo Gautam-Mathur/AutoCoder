@@ -867,8 +867,7 @@ function generatePostcssConfig(): GeneratedFile {
     language: 'javascript',
     content: `export default {
   plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
+    "@tailwindcss/postcss": {},
   },
 };
 `,
@@ -932,65 +931,86 @@ function generateIndexCss(designSystem?: DesignSystem): GeneratedFile {
   return {
     path: 'src/index.css',
     language: 'css',
-    content: `@tailwind base;
-@tailwind components;
-@tailwind utilities;
+    content: `@import "tailwindcss";
 
-@layer base {
-  :root {
-    --background: ${light?.background || "0 0% 100%"};
-    --foreground: ${light?.foreground || "222.2 84% 4.9%"};
-    --card: ${light?.card || "0 0% 100%"};
-    --card-foreground: ${light?.cardForeground || "222.2 84% 4.9%"};
-    --popover: ${light?.popover || "0 0% 100%"};
-    --popover-foreground: ${light?.popoverForeground || "222.2 84% 4.9%"};
-    --primary: ${light?.primary || "222.2 47.4% 11.2%"};
-    --primary-foreground: ${light?.primaryForeground || "210 40% 98%"};
-    --secondary: ${light?.secondary || "210 40% 96.1%"};
-    --secondary-foreground: ${light?.secondaryForeground || "222.2 47.4% 11.2%"};
-    --muted: ${light?.muted || "210 40% 96.1%"};
-    --muted-foreground: ${light?.mutedForeground || "215.4 16.3% 46.9%"};
-    --accent: ${light?.accent || "210 40% 96.1%"};
-    --accent-foreground: ${light?.accentForeground || "222.2 47.4% 11.2%"};
-    --destructive: ${light?.destructive || "0 84.2% 60.2%"};
-    --destructive-foreground: ${light?.destructiveForeground || "210 40% 98%"};
-    --border: ${light?.border || "214.3 31.8% 91.4%"};
-    --input: ${light?.input || "214.3 31.8% 91.4%"};
-    --ring: ${light?.ring || "222.2 84% 4.9%"};
-    --radius: 0.5rem;
-  }
-
-  .dark {
-    --background: ${dark?.background || "222.2 84% 4.9%"};
-    --foreground: ${dark?.foreground || "210 40% 98%"};
-    --card: ${dark?.card || "222.2 84% 4.9%"};
-    --card-foreground: ${dark?.cardForeground || "210 40% 98%"};
-    --popover: ${dark?.popover || "222.2 84% 4.9%"};
-    --popover-foreground: ${dark?.popoverForeground || "210 40% 98%"};
-    --primary: ${dark?.primary || "210 40% 98%"};
-    --primary-foreground: ${dark?.primaryForeground || "222.2 47.4% 11.2%"};
-    --secondary: ${dark?.secondary || "217.2 32.6% 17.5%"};
-    --secondary-foreground: ${dark?.secondaryForeground || "210 40% 98%"};
-    --muted: ${dark?.muted || "217.2 32.6% 17.5%"};
-    --muted-foreground: ${dark?.mutedForeground || "215 20.2% 65.1%"};
-    --accent: ${dark?.accent || "217.2 32.6% 17.5%"};
-    --accent-foreground: ${dark?.accentForeground || "210 40% 98%"};
-    --destructive: ${dark?.destructive || "0 62.8% 30.6%"};
-    --destructive-foreground: ${dark?.destructiveForeground || "210 40% 98%"};
-    --border: ${dark?.border || "217.2 32.6% 17.5%"};
-    --input: ${dark?.input || "217.2 32.6% 17.5%"};
-    --ring: ${dark?.ring || "212.7 26.8% 83.9%"};
-  }
+@theme inline {
+  --color-background: hsl(${light?.background || "0 0% 100%"});
+  --color-foreground: hsl(${light?.foreground || "222.2 84% 4.9%"});
+  --color-card: hsl(${light?.card || "0 0% 100%"});
+  --color-card-foreground: hsl(${light?.cardForeground || "222.2 84% 4.9%"});
+  --color-popover: hsl(${light?.popover || "0 0% 100%"});
+  --color-popover-foreground: hsl(${light?.popoverForeground || "222.2 84% 4.9%"});
+  --color-primary: hsl(${light?.primary || "222.2 47.4% 11.2%"});
+  --color-primary-foreground: hsl(${light?.primaryForeground || "210 40% 98%"});
+  --color-secondary: hsl(${light?.secondary || "210 40% 96.1%"});
+  --color-secondary-foreground: hsl(${light?.secondaryForeground || "222.2 47.4% 11.2%"});
+  --color-muted: hsl(${light?.muted || "210 40% 96.1%"});
+  --color-muted-foreground: hsl(${light?.mutedForeground || "215.4 16.3% 46.9%"});
+  --color-accent: hsl(${light?.accent || "210 40% 96.1%"});
+  --color-accent-foreground: hsl(${light?.accentForeground || "222.2 47.4% 11.2%"});
+  --color-destructive: hsl(${light?.destructive || "0 84.2% 60.2%"});
+  --color-destructive-foreground: hsl(${light?.destructiveForeground || "210 40% 98%"});
+  --color-border: hsl(${light?.border || "214.3 31.8% 91.4%"});
+  --color-input: hsl(${light?.input || "214.3 31.8% 91.4%"});
+  --color-ring: hsl(${light?.ring || "222.2 84% 4.9%"});
+  --radius: 0.5rem;
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
 }
 
-@layer base {
-  * {
-    border-color: hsl(var(--border));
-  }
-  body {
-    background-color: hsl(var(--background));
-    color: hsl(var(--foreground));
-  }
+:root {
+  --background: ${light?.background || "0 0% 100%"};
+  --foreground: ${light?.foreground || "222.2 84% 4.9%"};
+  --card: ${light?.card || "0 0% 100%"};
+  --card-foreground: ${light?.cardForeground || "222.2 84% 4.9%"};
+  --popover: ${light?.popover || "0 0% 100%"};
+  --popover-foreground: ${light?.popoverForeground || "222.2 84% 4.9%"};
+  --primary: ${light?.primary || "222.2 47.4% 11.2%"};
+  --primary-foreground: ${light?.primaryForeground || "210 40% 98%"};
+  --secondary: ${light?.secondary || "210 40% 96.1%"};
+  --secondary-foreground: ${light?.secondaryForeground || "222.2 47.4% 11.2%"};
+  --muted: ${light?.muted || "210 40% 96.1%"};
+  --muted-foreground: ${light?.mutedForeground || "215.4 16.3% 46.9%"};
+  --accent: ${light?.accent || "210 40% 96.1%"};
+  --accent-foreground: ${light?.accentForeground || "222.2 47.4% 11.2%"};
+  --destructive: ${light?.destructive || "0 84.2% 60.2%"};
+  --destructive-foreground: ${light?.destructiveForeground || "210 40% 98%"};
+  --border: ${light?.border || "214.3 31.8% 91.4%"};
+  --input: ${light?.input || "214.3 31.8% 91.4%"};
+  --ring: ${light?.ring || "222.2 84% 4.9%"};
+  --radius: 0.5rem;
+}
+
+.dark {
+  --background: ${dark?.background || "222.2 84% 4.9%"};
+  --foreground: ${dark?.foreground || "210 40% 98%"};
+  --card: ${dark?.card || "222.2 84% 4.9%"};
+  --card-foreground: ${dark?.cardForeground || "210 40% 98%"};
+  --popover: ${dark?.popover || "222.2 84% 4.9%"};
+  --popover-foreground: ${dark?.popoverForeground || "210 40% 98%"};
+  --primary: ${dark?.primary || "210 40% 98%"};
+  --primary-foreground: ${dark?.primaryForeground || "222.2 47.4% 11.2%"};
+  --secondary: ${dark?.secondary || "217.2 32.6% 17.5%"};
+  --secondary-foreground: ${dark?.secondaryForeground || "210 40% 98%"};
+  --muted: ${dark?.muted || "217.2 32.6% 17.5%"};
+  --muted-foreground: ${dark?.mutedForeground || "215 20.2% 65.1%"};
+  --accent: ${dark?.accent || "217.2 32.6% 17.5%"};
+  --accent-foreground: ${dark?.accentForeground || "210 40% 98%"};
+  --destructive: ${dark?.destructive || "0 62.8% 30.6%"};
+  --destructive-foreground: ${dark?.destructiveForeground || "210 40% 98%"};
+  --border: ${dark?.border || "217.2 32.6% 17.5%"};
+  --input: ${dark?.input || "217.2 32.6% 17.5%"};
+  --ring: ${dark?.ring || "212.7 26.8% 83.9%"};
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
 }
 
 @keyframes fade-in {

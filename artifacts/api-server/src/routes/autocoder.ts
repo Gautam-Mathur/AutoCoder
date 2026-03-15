@@ -604,6 +604,9 @@ export async function registerRoutes(
         }));
         donePayload.editType = result.editResult?.editType;
       }
+      if (result.validationSummary) {
+        donePayload.validationSummary = result.validationSummary;
+      }
       if (result.newPhase === 'approval') {
         donePayload.showApproval = true;
       }
