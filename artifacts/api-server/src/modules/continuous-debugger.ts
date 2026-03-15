@@ -239,8 +239,11 @@ const AUTO_FIXES: Array<{
 function findUnmatchedBrackets(code: string): DebugIssue[] {
   const issues: DebugIssue[] = [];
   const stack: Array<{ char: string; line: number; col: number }> = [];
-  const pairs: Record<string, string> = { '(': ')', '{': '}', '[': ']', '<': '>' };
-  const closers: Record<string, string> = { ')': '(', '}': '{', ']': '[', '>': '<' };
+  // Note: '<' and '>' are intentionally excluded — in TypeScript/JS they are
+  // generic brackets, comparison operators, and JSX tags, not paired brackets.
+  // Treating them as pairs produces hundreds of false positives on valid TS code.
+  const pairs: Record<string, string> = { '(': ')', '{': '}', '[': ']' };
+  const closers: Record<string, string> = { ')': '(', '}': '{', ']': '[' };
 
   const lines = code.split('\n');
   let inString = false;
