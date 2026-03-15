@@ -30,6 +30,17 @@ export interface SLMSystemConfig {
   endpoint?: string;
 }
 
+export function registerAllSLMTemplates(): void {
+  registerUnderstandingTemplate();
+  registerDesignTemplate();
+  registerSemanticTemplate();
+  registerQualityTemplate();
+  registerSchemaTemplate();
+  registerAPITemplate();
+  registerComponentTemplate();
+  registerCodegenTemplate();
+}
+
 export function initializeSLMSystem(config?: SLMSystemConfig): void {
   if (initialized) {
     console.log('[SLM Registry] Already initialized — skipping');
@@ -39,14 +50,7 @@ export function initializeSLMSystem(config?: SLMSystemConfig): void {
   initializeSLMEngine(config?.engine);
   initializeModelManager(config?.modelManager);
 
-  registerUnderstandingTemplate();
-  registerDesignTemplate();
-  registerSemanticTemplate();
-  registerQualityTemplate();
-  registerSchemaTemplate();
-  registerAPITemplate();
-  registerComponentTemplate();
-  registerCodegenTemplate();
+  registerAllSLMTemplates();
 
   if (config?.endpoint) {
     configureSLMEndpoint(config.endpoint);

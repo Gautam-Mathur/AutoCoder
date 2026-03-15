@@ -995,15 +995,7 @@ ${warningsList}
       }
     : undefined;
 
-  const orchSlmStages: string[] = [];
-  for (const step of thinkingSteps) {
-    if (step.label === 'SLM enhancement complete' && step.phase === 'understand') {
-      if (!orchSlmStages.includes('understand')) orchSlmStages.push('understand');
-    }
-    if (step.label === 'SLM code enhancement complete' && step.phase === 'generate') {
-      if (!orchSlmStages.includes('generate')) orchSlmStages.push('generate');
-    }
-  }
+  const orchSlmStages = orchestrationResult.context.slmStagesRun || [];
 
   return {
     responseContent,

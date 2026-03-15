@@ -130,6 +130,7 @@ export interface PipelineContext {
   dependencyManifest?: DependencyManifest;
   qualityReport?: QualityReport;
   validationSummary?: { passes: number; issuesFound: number; issuesFixed: number; unfixableIssues: string[] };
+  slmStagesRun: string[];
   testFiles: GeneratedFile[];
   metrics: PipelineMetrics;
   thinkingSteps: ThinkingStep[];
@@ -297,6 +298,7 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
     plan,
     files: [],
     testFiles: [],
+    slmStagesRun: [],
     metrics: createEmptyMetrics(),
     thinkingSteps: [],
     onStep,
@@ -336,6 +338,7 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
         if (slmResult.success && slmResult.data) {
           const merged = mergeUnderstandingResults(understanding, slmResult.data);
           Object.assign(understanding, merged);
+          ctx.slmStagesRun.push('understand');
           const implicitCount = slmResult.data.implicitRequirements?.length || 0;
           const newEntities = slmResult.data.entities?.filter((e: any) => e.isImplied)?.length || 0;
           emitStep(ctx, 'understand', 'SLM enhancement complete', `Added ${implicitCount} implicit requirements, ${newEntities} inferred entities (${slmResult.latencyMs}ms)`);
@@ -786,6 +789,7 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
         if (validEnhancements.length > 0) {
           const result = applyCodeEnhancements(ctx.files, validEnhancements);
           ctx.files = result.files;
+          ctx.slmStagesRun.push('generate');
           emitStep(ctx, 'generate', 'SLM code enhancement complete', `${result.applied} enhancements applied, ${result.rejected} rejected (${slmResult.latencyMs}ms)`);
         } else {
           emitStep(ctx, 'generate', 'SLM code enhancement skipped', 'No valid enhancements met safety criteria');
