@@ -184,6 +184,28 @@ const VITE_ERROR_PATTERNS: ErrorPattern[] = [
     type: 'runtime' as const,
     extract: () => ({}),
   },
+  // TypeScript LSP / tsc diagnostic errors (shown in IDE diagnostics panels)
+  {
+    pattern: /Mismatched brackets.*?expected ['"]([^'"]+)['"] but found ['"]([^'"]+)['"]\)?.*?(?:in |at )?([^\s(]+\.[jt]sx?)?(?:\s*\((?:line )?(\d+)\))?/i,
+    type: 'syntax' as const,
+    extract: (m) => ({ filePath: m[3], line: m[4] ? parseInt(m[4]) : undefined }),
+  },
+  {
+    pattern: /Unexpected closing ['"][)}\]]['"] without matching opening.*?(?:in |at )?([^\s(]+\.[jt]sx?)?(?:\s*\((?:line )?(\d+)\))?/i,
+    type: 'syntax' as const,
+    extract: (m) => ({ filePath: m[1], line: m[2] ? parseInt(m[2]) : undefined }),
+  },
+  {
+    pattern: /Expected ['"][)}\]]['"].*?(?:in |at )?([^\s(]+\.[jt]sx?)?(?:\s*\((?:line )?(\d+)\))?/i,
+    type: 'syntax' as const,
+    extract: (m) => ({ filePath: m[1], line: m[2] ? parseInt(m[2]) : undefined }),
+  },
+  {
+    // tsc: error TS1005: '}' expected.  src/server/auth.ts:31:5
+    pattern: /error TS\d+:.*?expected\.?\s+([^\s:]+\.[jt]sx?):(\d+)/i,
+    type: 'syntax' as const,
+    extract: (m) => ({ filePath: m[1], line: parseInt(m[2]) }),
+  },
 ];
 
 const COMMON_PACKAGES: Record<string, string> = {

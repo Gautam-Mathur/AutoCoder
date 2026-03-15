@@ -15,7 +15,7 @@ import { extractAssumptions, formatTransparencyReport } from "../modules/transpa
 import { extractIntelFromMessages, storeIntel, getIntel, generateIntelContext } from "../modules/intel-memory";
 import { analyzeDependencies, formatDependencyReport, generateEnvExample } from "../modules/dependency-intelligence";
 import { generateProjectExport, generateDownloadData } from "../modules/export-system";
-import { parseErrors, analyzeAndFix, validateImportPaths, addDependenciesToPackageJson } from "../modules/vite-error-fixer";
+import { parseErrors, analyzeAndFix, validateImportPaths, addDependenciesToPackageJson, fixTSGenericBracketMismatch } from "../modules/vite-error-fixer";
 import { analyzeAndPlan, formatReasoningAsMarkdown, quickAnalysis } from "../modules/advanced-reasoning";
 import { learnFromInteraction, getContextPreferences, applyContextPreferences, getRelevantContext, formatMemorySummary } from "../modules/context-memory";
 import { analyzeCode, diagnoseError, formatAnalysisAsMarkdown, autoFixCode } from "../modules/live-code-analysis";
@@ -988,14 +988,42 @@ export async function registerRoutes(
         language: f.language,
       }));
 
+      // Proactively fix TypeScript generic bracket mismatches on every TS/TSX file
+      // before parsing errors — catches `res: Response> =>` style LLM mistakes
+      // that don't match any Vite error pattern but show up in IDE diagnostics
+      const tsBracketFixes: { filePath: string; description: string; type: string }[] = [];
+      const tsFixedFiles = projectFiles.map(f => {
+        if (/\.(ts|tsx)$/.test(f.path)) {
+          const patched = fixTSGenericBracketMismatch(f.content);
+          if (patched !== f.content) {
+            tsBracketFixes.push({
+              filePath: f.path,
+              description: `Fixed TypeScript generic bracket mismatch in ${f.path}`,
+              type: 'patch_file',
+            });
+            return { ...f, content: patched };
+          }
+        }
+        return f;
+      });
+
+      // Persist TS bracket fixes immediately
+      for (const fix of tsBracketFixes) {
+        const original = files.find(f => f.path === fix.filePath);
+        const patched = tsFixedFiles.find(f => f.path === fix.filePath);
+        if (original && patched && patched.content !== original.content) {
+          await storage.updateProjectFile(original.id, patched.content);
+        }
+      }
+
       // Parse the error messages
       const parsedErrors = parseErrors(errorMessages);
 
-      // Analyze and generate fixes
-      const result = analyzeAndFix(parsedErrors, projectFiles);
+      // Analyze and generate fixes (use TS-fixed file list as base)
+      const result = analyzeAndFix(parsedErrors, tsFixedFiles);
 
       // Also run import path validation
-      const importFixes = validateImportPaths(projectFiles);
+      const importFixes = validateImportPaths(tsFixedFiles);
       const allFixes = [...result.fixes];
       for (const importFix of importFixes) {
         if (!allFixes.some(f => f.filePath === importFix.filePath && f.type === importFix.type)) {
@@ -1068,14 +1096,17 @@ export async function registerRoutes(
         // Non-critical, continue
       }
 
+      const allApplied = [...tsBracketFixes, ...appliedFixes];
       res.json({
-        fixes: appliedFixes,
+        fixes: allApplied,
         unfixable: result.unfixable.map(e => ({ type: e.type, message: e.message })),
         newDependencies,
-        summary: result.summary,
+        summary: tsBracketFixes.length > 0
+          ? `Fixed ${tsBracketFixes.length} TypeScript bracket mismatch(es); ${result.summary}`
+          : result.summary,
         attempt,
         totalErrors: parsedErrors.length,
-        totalFixed: appliedFixes.length,
+        totalFixed: allApplied.length,
       });
     } catch (error: any) {
       logger.error("Error running auto-fix:", String(error));
