@@ -252,8 +252,6 @@ export function analyzeRequest(userMessage: string, conversationContext?: string
   const level4 = detectWorkflows(lower, level3, level2);
 
   const wellKnownMatch = isWellKnownApp(userMessage);
-  const isSimpleRequest = userMessage.split(/\s+/).length <= 25;
-
   const level6 = detectTechnology(lower);
 
   if (wellKnownMatch && clarificationRound === 0) {
