@@ -1,4 +1,10 @@
-import "dotenv/config";
+import { config } from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+config({ path: path.resolve(__dirname, "../../../.env") });
+
 import express, { type Request, Response, NextFunction } from "express";
 import { createServer } from "http";
 import cors from "cors";
@@ -6,7 +12,6 @@ import cookieParser from "cookie-parser";
 import { registerRoutes } from "./routes/autocoder";
 import { initializeSLMSystem } from "./modules/slm-registry";
 import fs from "fs";
-import path from "path";
 
 const port = Number(process.env["PORT"]) || 3001;
 

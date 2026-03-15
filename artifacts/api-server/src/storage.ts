@@ -1,20 +1,18 @@
-import {
-  type Conversation, type Message, type InsertConversation, type InsertMessage,
-  type ProjectFile, type InsertProjectFile,
-  type ProjectPlan, type InsertProjectPlan,
-  type IntelRecord, type InsertIntelRecord,
-  type TestResult, type InsertTestResult,
-  type SecurityScan, type InsertSecurityScan,
-  type GenerationLog, type InsertGenerationLog,
-  type VaptAsset, type InsertVaptAsset,
-  type VaptVulnerability, type InsertVaptVulnerability,
-  type VaptScan, type InsertVaptScan,
-  type VaptSchedule, type InsertVaptSchedule,
-  type VaptAuditLog, type InsertVaptAuditLog,
-  type VaptTeamMember, type InsertVaptTeamMember,
-  conversations, messages, projectFiles, projectPlans, intelRecords, testResults, securityScans, generationLogs,
-  vaptAssets, vaptVulnerabilities, vaptScans, vaptSchedules, vaptAuditLogs, vaptTeamMembers
-} from "@workspace/db";
+import type {
+  Conversation, Message, InsertConversation, InsertMessage,
+  ProjectFile, InsertProjectFile,
+  ProjectPlan, InsertProjectPlan,
+  IntelRecord, InsertIntelRecord,
+  TestResult, InsertTestResult,
+  SecurityScan, InsertSecurityScan,
+  GenerationLog, InsertGenerationLog,
+  VaptAsset, InsertVaptAsset,
+  VaptVulnerability, InsertVaptVulnerability,
+  VaptScan, InsertVaptScan,
+  VaptSchedule, InsertVaptSchedule,
+  VaptAuditLog, InsertVaptAuditLog,
+  VaptTeamMember, InsertVaptTeamMember,
+} from "@workspace/db/schema";
 import { eq, desc, and } from "drizzle-orm";
 
 export interface ProjectContext {
@@ -443,302 +441,293 @@ export class MemStorage implements IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
-  private db: any;
+  private _db: any;
+  private _tables: any;
 
-  constructor() {
-    // Lazy load db to avoid errors when DATABASE_URL is not set
-    import("@workspace/db").then(module => {
-      this.db = module.db;
-    });
-  }
-
-  private async getDb() {
-    if (!this.db) {
-      const module = await import("@workspace/db");
-      this.db = module.db;
+  private async ctx() {
+    if (!this._db) {
+      const mod = await import("@workspace/db");
+      this._db = mod.db;
     }
-    return this.db;
+    if (!this._tables) {
+      this._tables = await import("@workspace/db/schema");
+    }
+    return { db: this._db, t: this._tables };
   }
 
   async getConversation(id: number): Promise<Conversation | undefined> {
-    const db = await this.getDb();
-    const [conversation] = await db.select().from(conversations).where(eq(conversations.id, id));
+    const { db, t } = await this.ctx();
+    const [conversation] = await db.select().from(t.conversations).where(eq(t.conversations.id, id));
     return conversation;
   }
 
   async getAllConversations(): Promise<Conversation[]> {
-    const db = await this.getDb();
-    return await db.select().from(conversations).orderBy(desc(conversations.createdAt));
+    const { db, t } = await this.ctx();
+    return await db.select().from(t.conversations).orderBy(desc(t.conversations.createdAt));
   }
 
   async createConversation(title: string): Promise<Conversation> {
-    const db = await this.getDb();
-    const [conversation] = await db.insert(conversations).values({ title }).returning();
+    const { db, t } = await this.ctx();
+    const [conversation] = await db.insert(t.conversations).values({ title }).returning();
     return conversation;
   }
 
   async updateProjectContext(id: number, context: ProjectContext): Promise<Conversation | undefined> {
-    const db = await this.getDb();
-    const [updated] = await db.update(conversations)
+    const { db, t } = await this.ctx();
+    const [updated] = await db.update(t.conversations)
       .set(context)
-      .where(eq(conversations.id, id))
+      .where(eq(t.conversations.id, id))
       .returning();
     return updated;
   }
 
   async deleteConversation(id: number): Promise<void> {
-    const db = await this.getDb();
-    await db.delete(conversations).where(eq(conversations.id, id));
+    const { db, t } = await this.ctx();
+    await db.delete(t.conversations).where(eq(t.conversations.id, id));
   }
 
   async getMessagesByConversation(conversationId: number): Promise<Message[]> {
-    const db = await this.getDb();
-    return await db.select().from(messages)
-      .where(eq(messages.conversationId, conversationId))
-      .orderBy(messages.createdAt);
+    const { db, t } = await this.ctx();
+    return await db.select().from(t.messages)
+      .where(eq(t.messages.conversationId, conversationId))
+      .orderBy(t.messages.createdAt);
   }
 
   async createMessage(conversationId: number, role: string, content: string, thinkingSteps?: any[]): Promise<Message> {
-    const db = await this.getDb();
-    const [message] = await db.insert(messages)
+    const { db, t } = await this.ctx();
+    const [message] = await db.insert(t.messages)
       .values({ conversationId, role, content, thinkingSteps: thinkingSteps || null })
       .returning();
     return message;
   }
 
   async getProjectFiles(conversationId: number): Promise<ProjectFile[]> {
-    const db = await this.getDb();
-    return await db.select().from(projectFiles)
-      .where(eq(projectFiles.conversationId, conversationId))
-      .orderBy(projectFiles.path);
+    const { db, t } = await this.ctx();
+    return await db.select().from(t.projectFiles)
+      .where(eq(t.projectFiles.conversationId, conversationId))
+      .orderBy(t.projectFiles.path);
   }
 
   async getProjectFile(id: number): Promise<ProjectFile | undefined> {
-    const db = await this.getDb();
-    const [file] = await db.select().from(projectFiles).where(eq(projectFiles.id, id));
+    const { db, t } = await this.ctx();
+    const [file] = await db.select().from(t.projectFiles).where(eq(t.projectFiles.id, id));
     return file;
   }
 
   async createProjectFile(file: InsertProjectFile): Promise<ProjectFile> {
-    const db = await this.getDb();
-    const [projectFile] = await db.insert(projectFiles).values(file).returning();
+    const { db, t } = await this.ctx();
+    const [projectFile] = await db.insert(t.projectFiles).values(file).returning();
     return projectFile;
   }
 
   async updateProjectFile(id: number, content: string): Promise<ProjectFile | undefined> {
-    const db = await this.getDb();
-    const [updated] = await db.update(projectFiles)
+    const { db, t } = await this.ctx();
+    const [updated] = await db.update(t.projectFiles)
       .set({ content, updatedAt: new Date() })
-      .where(eq(projectFiles.id, id))
+      .where(eq(t.projectFiles.id, id))
       .returning();
     return updated;
   }
 
   async deleteProjectFile(id: number): Promise<void> {
-    const db = await this.getDb();
-    await db.delete(projectFiles).where(eq(projectFiles.id, id));
+    const { db, t } = await this.ctx();
+    await db.delete(t.projectFiles).where(eq(t.projectFiles.id, id));
   }
 
   async deleteProjectFilesByConversation(conversationId: number): Promise<void> {
-    const db = await this.getDb();
-    await db.delete(projectFiles).where(eq(projectFiles.conversationId, conversationId));
+    const { db, t } = await this.ctx();
+    await db.delete(t.projectFiles).where(eq(t.projectFiles.conversationId, conversationId));
   }
 
   async upsertProjectFile(conversationId: number, path: string, content: string, language: string): Promise<ProjectFile> {
-    const db = await this.getDb();
-    const existing = await db.select().from(projectFiles)
-      .where(and(eq(projectFiles.conversationId, conversationId), eq(projectFiles.path, path)))
+    const { db, t } = await this.ctx();
+    const existing = await db.select().from(t.projectFiles)
+      .where(and(eq(t.projectFiles.conversationId, conversationId), eq(t.projectFiles.path, path)))
       .limit(1);
 
     if (existing.length > 0) {
-      const [updated] = await db.update(projectFiles)
+      const [updated] = await db.update(t.projectFiles)
         .set({ content, updatedAt: new Date() })
-        .where(eq(projectFiles.id, existing[0].id))
+        .where(eq(t.projectFiles.id, existing[0].id))
         .returning();
       return updated;
     } else {
-      const [created] = await db.insert(projectFiles)
+      const [created] = await db.insert(t.projectFiles)
         .values({ conversationId, path, content, language })
         .returning();
       return created;
     }
   }
 
-  // Project plans
   async getProjectPlan(conversationId: number): Promise<ProjectPlan | undefined> {
-    const db = await this.getDb();
-    const [plan] = await db.select().from(projectPlans)
-      .where(eq(projectPlans.conversationId, conversationId))
-      .orderBy(desc(projectPlans.createdAt))
+    const { db, t } = await this.ctx();
+    const [plan] = await db.select().from(t.projectPlans)
+      .where(eq(t.projectPlans.conversationId, conversationId))
+      .orderBy(desc(t.projectPlans.createdAt))
       .limit(1);
     return plan;
   }
 
   async createProjectPlan(plan: InsertProjectPlan): Promise<ProjectPlan> {
-    const db = await this.getDb();
-    const [created] = await db.insert(projectPlans).values(plan).returning();
+    const { db, t } = await this.ctx();
+    const [created] = await db.insert(t.projectPlans).values(plan).returning();
     return created;
   }
 
-  // Intel records
   async getIntelRecords(conversationId: number): Promise<IntelRecord[]> {
-    const db = await this.getDb();
-    return await db.select().from(intelRecords)
-      .where(eq(intelRecords.conversationId, conversationId))
-      .orderBy(desc(intelRecords.createdAt));
+    const { db, t } = await this.ctx();
+    return await db.select().from(t.intelRecords)
+      .where(eq(t.intelRecords.conversationId, conversationId))
+      .orderBy(desc(t.intelRecords.createdAt));
   }
 
   async createIntelRecord(record: InsertIntelRecord): Promise<IntelRecord> {
-    const db = await this.getDb();
-    const [created] = await db.insert(intelRecords).values(record).returning();
+    const { db, t } = await this.ctx();
+    const [created] = await db.insert(t.intelRecords).values(record).returning();
     return created;
   }
 
   async upsertIntelRecord(conversationId: number, key: string, category: string, value: string, type: string): Promise<IntelRecord> {
-    const db = await this.getDb();
-    const existing = await db.select().from(intelRecords)
+    const { db, t } = await this.ctx();
+    const existing = await db.select().from(t.intelRecords)
       .where(and(
-        eq(intelRecords.conversationId, conversationId),
-        eq(intelRecords.key, key),
-        eq(intelRecords.category, category)
+        eq(t.intelRecords.conversationId, conversationId),
+        eq(t.intelRecords.key, key),
+        eq(t.intelRecords.category, category)
       ))
       .limit(1);
 
     if (existing.length > 0) {
-      const [updated] = await db.update(intelRecords)
+      const [updated] = await db.update(t.intelRecords)
         .set({ value, usageCount: (existing[0].usageCount || 0) + 1 })
-        .where(eq(intelRecords.id, existing[0].id))
+        .where(eq(t.intelRecords.id, existing[0].id))
         .returning();
       return updated;
     } else {
-      const [created] = await db.insert(intelRecords)
+      const [created] = await db.insert(t.intelRecords)
         .values({ conversationId, key, category, value, type })
         .returning();
       return created;
     }
   }
 
-  // Test results
   async getTestResults(conversationId: number): Promise<TestResult[]> {
-    const db = await this.getDb();
-    return await db.select().from(testResults)
-      .where(eq(testResults.conversationId, conversationId))
-      .orderBy(desc(testResults.createdAt));
+    const { db, t } = await this.ctx();
+    return await db.select().from(t.testResults)
+      .where(eq(t.testResults.conversationId, conversationId))
+      .orderBy(desc(t.testResults.createdAt));
   }
 
   async createTestResult(result: InsertTestResult): Promise<TestResult> {
-    const db = await this.getDb();
-    const [created] = await db.insert(testResults).values(result).returning();
+    const { db, t } = await this.ctx();
+    const [created] = await db.insert(t.testResults).values(result).returning();
     return created;
   }
 
-  // Security scans
   async getSecurityScans(conversationId: number): Promise<SecurityScan[]> {
-    const db = await this.getDb();
-    return await db.select().from(securityScans)
-      .where(eq(securityScans.conversationId, conversationId))
-      .orderBy(desc(securityScans.createdAt));
+    const { db, t } = await this.ctx();
+    return await db.select().from(t.securityScans)
+      .where(eq(t.securityScans.conversationId, conversationId))
+      .orderBy(desc(t.securityScans.createdAt));
   }
 
   async createSecurityScan(scan: InsertSecurityScan): Promise<SecurityScan> {
-    const db = await this.getDb();
-    const [created] = await db.insert(securityScans).values(scan).returning();
+    const { db, t } = await this.ctx();
+    const [created] = await db.insert(t.securityScans).values(scan).returning();
     return created;
   }
 
   async getLatestSecurityScan(conversationId: number): Promise<SecurityScan | undefined> {
-    const db = await this.getDb();
-    const [scan] = await db.select().from(securityScans)
-      .where(eq(securityScans.conversationId, conversationId))
-      .orderBy(desc(securityScans.createdAt))
+    const { db, t } = await this.ctx();
+    const [scan] = await db.select().from(t.securityScans)
+      .where(eq(t.securityScans.conversationId, conversationId))
+      .orderBy(desc(t.securityScans.createdAt))
       .limit(1);
     return scan;
   }
 
-  // Generation logs
   async getGenerationLogs(conversationId: number): Promise<GenerationLog[]> {
-    const db = await this.getDb();
-    return await db.select().from(generationLogs)
-      .where(eq(generationLogs.conversationId, conversationId))
-      .orderBy(desc(generationLogs.createdAt));
+    const { db, t } = await this.ctx();
+    return await db.select().from(t.generationLogs)
+      .where(eq(t.generationLogs.conversationId, conversationId))
+      .orderBy(desc(t.generationLogs.createdAt));
   }
 
   async createGenerationLog(log: InsertGenerationLog): Promise<GenerationLog> {
-    const db = await this.getDb();
-    const [created] = await db.insert(generationLogs).values(log).returning();
+    const { db, t } = await this.ctx();
+    const [created] = await db.insert(t.generationLogs).values(log).returning();
     return created;
   }
 
-  // VAPT Methods
   async getVaptAssets(): Promise<VaptAsset[]> {
-    const db = await this.getDb();
-    return await db.select().from(vaptAssets).orderBy(desc(vaptAssets.createdAt));
+    const { db, t } = await this.ctx();
+    return await db.select().from(t.vaptAssets).orderBy(desc(t.vaptAssets.createdAt));
   }
 
   async createVaptAsset(asset: InsertVaptAsset): Promise<VaptAsset> {
-    const db = await this.getDb();
-    const [created] = await db.insert(vaptAssets).values(asset).returning();
+    const { db, t } = await this.ctx();
+    const [created] = await db.insert(t.vaptAssets).values(asset).returning();
     await this.createVaptAuditLog({ action: 'create', entityType: 'asset', entityId: created.id, details: `Created asset: ${asset.name}` });
     return created;
   }
 
   async updateVaptAsset(id: number, asset: Partial<InsertVaptAsset>): Promise<VaptAsset> {
-    const db = await this.getDb();
-    const [updated] = await db.update(vaptAssets).set({ ...asset, updatedAt: new Date() }).where(eq(vaptAssets.id, id)).returning();
+    const { db, t } = await this.ctx();
+    const [updated] = await db.update(t.vaptAssets).set({ ...asset, updatedAt: new Date() }).where(eq(t.vaptAssets.id, id)).returning();
     await this.createVaptAuditLog({ action: 'update', entityType: 'asset', entityId: id, details: `Updated asset` });
     return updated;
   }
 
   async deleteVaptAsset(id: number): Promise<void> {
-    const db = await this.getDb();
-    await db.delete(vaptAssets).where(eq(vaptAssets.id, id));
+    const { db, t } = await this.ctx();
+    await db.delete(t.vaptAssets).where(eq(t.vaptAssets.id, id));
     await this.createVaptAuditLog({ action: 'delete', entityType: 'asset', entityId: id, details: `Deleted asset` });
   }
 
   async getVaptVulnerabilities(): Promise<VaptVulnerability[]> {
-    const db = await this.getDb();
-    return await db.select().from(vaptVulnerabilities).orderBy(desc(vaptVulnerabilities.createdAt));
+    const { db, t } = await this.ctx();
+    return await db.select().from(t.vaptVulnerabilities).orderBy(desc(t.vaptVulnerabilities.createdAt));
   }
 
   async createVaptVulnerability(vuln: InsertVaptVulnerability): Promise<VaptVulnerability> {
-    const db = await this.getDb();
-    const [created] = await db.insert(vaptVulnerabilities).values(vuln).returning();
+    const { db, t } = await this.ctx();
+    const [created] = await db.insert(t.vaptVulnerabilities).values(vuln).returning();
     await this.createVaptAuditLog({ action: 'create', entityType: 'vulnerability', entityId: created.id, details: `Created vulnerability: ${vuln.title}` });
     return created;
   }
 
   async updateVaptVulnerability(id: number, vuln: Partial<InsertVaptVulnerability>): Promise<VaptVulnerability> {
-    const db = await this.getDb();
+    const { db, t } = await this.ctx();
     const updateData: any = { ...vuln };
     if (vuln.status === 'resolved' || vuln.status === 'verified') {
       updateData.resolvedAt = new Date();
     }
-    const [updated] = await db.update(vaptVulnerabilities).set(updateData).where(eq(vaptVulnerabilities.id, id)).returning();
+    const [updated] = await db.update(t.vaptVulnerabilities).set(updateData).where(eq(t.vaptVulnerabilities.id, id)).returning();
     await this.createVaptAuditLog({ action: 'update', entityType: 'vulnerability', entityId: id, details: `Updated vulnerability status to ${vuln.status || 'modified'}` });
     return updated;
   }
 
   async deleteVaptVulnerability(id: number): Promise<void> {
-    const db = await this.getDb();
-    await db.delete(vaptVulnerabilities).where(eq(vaptVulnerabilities.id, id));
+    const { db, t } = await this.ctx();
+    await db.delete(t.vaptVulnerabilities).where(eq(t.vaptVulnerabilities.id, id));
     await this.createVaptAuditLog({ action: 'delete', entityType: 'vulnerability', entityId: id, details: `Deleted vulnerability` });
   }
 
   async getVaptScans(): Promise<VaptScan[]> {
-    const db = await this.getDb();
-    return await db.select().from(vaptScans).orderBy(desc(vaptScans.createdAt));
+    const { db, t } = await this.ctx();
+    return await db.select().from(t.vaptScans).orderBy(desc(t.vaptScans.createdAt));
   }
 
   async createVaptScan(scan: InsertVaptScan): Promise<VaptScan> {
-    const db = await this.getDb();
-    const [created] = await db.insert(vaptScans).values({ ...scan, status: 'pending' }).returning();
+    const { db, t } = await this.ctx();
+    const [created] = await db.insert(t.vaptScans).values({ ...scan, status: 'pending' }).returning();
     await this.createVaptAuditLog({ action: 'create', entityType: 'scan', entityId: created.id, details: `Created scan` });
     return created;
   }
 
   async runVaptScan(id: number): Promise<VaptScan> {
-    const db = await this.getDb();
-    await db.update(vaptScans).set({ status: 'running', startedAt: new Date(), progress: 0 }).where(eq(vaptScans.id, id));
+    const { db, t } = await this.ctx();
+    await db.update(t.vaptScans).set({ status: 'running', startedAt: new Date(), progress: 0 }).where(eq(t.vaptScans.id, id));
 
     const demoVulns = [
       { title: 'SQL Injection', severity: 'critical', cvssScore: '9.8', cveId: 'CVE-2024-1234', component: 'Database Layer', owaspCategory: 'A03:2021 Injection', description: 'Potential SQL injection vulnerability detected in query parameters.', remediation: 'Use parameterized queries and prepared statements.' },
@@ -749,7 +738,7 @@ export class DatabaseStorage implements IStorage {
       { title: 'Information Disclosure', severity: 'low', cvssScore: '3.1', component: 'Error Handling', description: 'Detailed error messages expose internal system information.', remediation: 'Implement generic error messages for users.' },
     ];
 
-    const [scan] = await db.select().from(vaptScans).where(eq(vaptScans.id, id));
+    const [scan] = await db.select().from(t.vaptScans).where(eq(t.vaptScans.id, id));
     const severityCounts = { critical: 0, high: 0, medium: 0, low: 0 };
 
     for (const vuln of demoVulns) {
@@ -760,7 +749,7 @@ export class DatabaseStorage implements IStorage {
       else severityCounts.low++;
     }
 
-    const [updated] = await db.update(vaptScans).set({
+    const [updated] = await db.update(t.vaptScans).set({
       status: 'completed',
       completedAt: new Date(),
       progress: 100,
@@ -769,50 +758,50 @@ export class DatabaseStorage implements IStorage {
       highCount: severityCounts.high,
       mediumCount: severityCounts.medium,
       lowCount: severityCounts.low
-    }).where(eq(vaptScans.id, id)).returning();
+    }).where(eq(t.vaptScans.id, id)).returning();
 
     await this.createVaptAuditLog({ action: 'run', entityType: 'scan', entityId: id, details: `Completed scan with ${demoVulns.length} findings` });
     return updated;
   }
 
   async getVaptSchedules(): Promise<VaptSchedule[]> {
-    const db = await this.getDb();
-    return await db.select().from(vaptSchedules).orderBy(desc(vaptSchedules.createdAt));
+    const { db, t } = await this.ctx();
+    return await db.select().from(t.vaptSchedules).orderBy(desc(t.vaptSchedules.createdAt));
   }
 
   async createVaptSchedule(schedule: InsertVaptSchedule): Promise<VaptSchedule> {
-    const db = await this.getDb();
-    const [created] = await db.insert(vaptSchedules).values(schedule).returning();
+    const { db, t } = await this.ctx();
+    const [created] = await db.insert(t.vaptSchedules).values(schedule).returning();
     return created;
   }
 
   async getVaptTeamMembers(): Promise<VaptTeamMember[]> {
-    const db = await this.getDb();
-    return await db.select().from(vaptTeamMembers);
+    const { db, t } = await this.ctx();
+    return await db.select().from(t.vaptTeamMembers);
   }
 
   async createVaptTeamMember(member: InsertVaptTeamMember): Promise<VaptTeamMember> {
-    const db = await this.getDb();
-    const [created] = await db.insert(vaptTeamMembers).values(member).returning();
+    const { db, t } = await this.ctx();
+    const [created] = await db.insert(t.vaptTeamMembers).values(member).returning();
     return created;
   }
 
   async getVaptAuditLogs(): Promise<VaptAuditLog[]> {
-    const db = await this.getDb();
-    return await db.select().from(vaptAuditLogs).orderBy(desc(vaptAuditLogs.createdAt)).limit(100);
+    const { db, t } = await this.ctx();
+    return await db.select().from(t.vaptAuditLogs).orderBy(desc(t.vaptAuditLogs.createdAt)).limit(100);
   }
 
   async createVaptAuditLog(log: InsertVaptAuditLog): Promise<VaptAuditLog> {
-    const db = await this.getDb();
-    const [created] = await db.insert(vaptAuditLogs).values(log).returning();
+    const { db, t } = await this.ctx();
+    const [created] = await db.insert(t.vaptAuditLogs).values(log).returning();
     return created;
   }
 
   async getVaptDashboardStats(): Promise<any> {
-    const db = await this.getDb();
-    const assets = await db.select().from(vaptAssets);
-    const vulns = await db.select().from(vaptVulnerabilities);
-    const scans = await db.select().from(vaptScans);
+    const { db, t } = await this.ctx();
+    const assets = await db.select().from(t.vaptAssets);
+    const vulns = await db.select().from(t.vaptVulnerabilities);
+    const scans = await db.select().from(t.vaptScans);
 
     const severityCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
     const statusCounts = { open: 0, in_progress: 0, resolved: 0, verified: 0, false_positive: 0 };
@@ -853,11 +842,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async seedVaptDemoData(): Promise<void> {
-    const db = await this.getDb();
+    const { db, t } = await this.ctx();
 
-    const existingTeam = await db.select().from(vaptTeamMembers);
+    const existingTeam = await db.select().from(t.vaptTeamMembers);
     if (existingTeam.length === 0) {
-      await db.insert(vaptTeamMembers).values([
+      await db.insert(t.vaptTeamMembers).values([
         { name: 'Alex Chen', email: 'alex@example.com', role: 'admin' },
         { name: 'Sarah Miller', email: 'sarah@example.com', role: 'analyst' },
         { name: 'John Doe', email: 'john@example.com', role: 'analyst' },
@@ -865,17 +854,17 @@ export class DatabaseStorage implements IStorage {
       ]);
     }
 
-    const existingAssets = await db.select().from(vaptAssets);
+    const existingAssets = await db.select().from(t.vaptAssets);
     if (existingAssets.length === 0) {
-      const [asset1] = await db.insert(vaptAssets).values({ name: 'Production Web Server', type: 'ip', value: '192.168.1.100', criticality: 'critical', tags: ['production', 'web', 'external'], status: 'active' }).returning();
-      const [asset2] = await db.insert(vaptAssets).values({ name: 'API Gateway', type: 'domain', value: 'api.company.com', criticality: 'critical', tags: ['api', 'external', 'production'], status: 'active' }).returning();
-      const [asset3] = await db.insert(vaptAssets).values({ name: 'Internal Database', type: 'ip', value: '10.0.0.50', criticality: 'high', tags: ['database', 'internal'], status: 'active' }).returning();
-      const [asset4] = await db.insert(vaptAssets).values({ name: 'Corporate Website', type: 'url', value: 'https://www.company.com', criticality: 'medium', tags: ['web', 'public'], status: 'active' }).returning();
-      const [asset5] = await db.insert(vaptAssets).values({ name: 'Development Environment', type: 'network_range', value: '192.168.2.0/24', criticality: 'low', tags: ['dev', 'internal'], status: 'active' }).returning();
+      const [asset1] = await db.insert(t.vaptAssets).values({ name: 'Production Web Server', type: 'ip', value: '192.168.1.100', criticality: 'critical', tags: ['production', 'web', 'external'], status: 'active' }).returning();
+      const [asset2] = await db.insert(t.vaptAssets).values({ name: 'API Gateway', type: 'domain', value: 'api.company.com', criticality: 'critical', tags: ['api', 'external', 'production'], status: 'active' }).returning();
+      const [asset3] = await db.insert(t.vaptAssets).values({ name: 'Internal Database', type: 'ip', value: '10.0.0.50', criticality: 'high', tags: ['database', 'internal'], status: 'active' }).returning();
+      const [asset4] = await db.insert(t.vaptAssets).values({ name: 'Corporate Website', type: 'url', value: 'https://www.company.com', criticality: 'medium', tags: ['web', 'public'], status: 'active' }).returning();
+      const [asset5] = await db.insert(t.vaptAssets).values({ name: 'Development Environment', type: 'network_range', value: '192.168.2.0/24', criticality: 'low', tags: ['dev', 'internal'], status: 'active' }).returning();
 
-      const [scan1] = await db.insert(vaptScans).values({ assetId: asset1.id, scanType: 'deep', status: 'completed', progress: 100, startedAt: new Date(Date.now() - 86400000), completedAt: new Date(Date.now() - 82800000), findingsCount: 8, criticalCount: 2, highCount: 3, mediumCount: 2, lowCount: 1 }).returning();
+      const [scan1] = await db.insert(t.vaptScans).values({ assetId: asset1.id, scanType: 'deep', status: 'completed', progress: 100, startedAt: new Date(Date.now() - 86400000), completedAt: new Date(Date.now() - 82800000), findingsCount: 8, criticalCount: 2, highCount: 3, mediumCount: 2, lowCount: 1 }).returning();
 
-      await db.insert(vaptVulnerabilities).values([
+      await db.insert(t.vaptVulnerabilities).values([
         { assetId: asset1.id, scanId: scan1.id, title: 'Remote Code Execution', severity: 'critical', cvssScore: '9.8', cveId: 'CVE-2024-0001', component: 'Web Framework', owaspCategory: 'A03:2021 Injection', description: 'Critical RCE vulnerability allows attackers to execute arbitrary code.', status: 'open', remediation: 'Update framework to latest version immediately.' },
         { assetId: asset1.id, scanId: scan1.id, title: 'Authentication Bypass', severity: 'critical', cvssScore: '9.1', cveId: 'CVE-2024-0002', component: 'Auth Module', owaspCategory: 'A07:2021 Auth Failures', description: 'Authentication can be bypassed using crafted tokens.', status: 'in_progress', assignedTo: 'Sarah Miller', deadline: new Date(Date.now() + 172800000), remediation: 'Implement proper token validation.' },
         { assetId: asset2.id, title: 'API Rate Limiting Missing', severity: 'high', cvssScore: '7.5', component: 'API Gateway', owaspCategory: 'A04:2021 Insecure Design', description: 'No rate limiting on API endpoints allows DoS attacks.', status: 'open', remediation: 'Implement rate limiting middleware.' },
@@ -886,7 +875,7 @@ export class DatabaseStorage implements IStorage {
         { assetId: asset5.id, title: 'Default Credentials', severity: 'low', cvssScore: '3.0', component: 'Dev Servers', description: 'Some development servers use default credentials.', status: 'false_positive', remediation: 'Change default passwords.' },
       ]);
 
-      await db.insert(vaptSchedules).values([
+      await db.insert(t.vaptSchedules).values([
         { assetId: asset1.id, name: 'Weekly Production Scan', cronExpression: '0 2 * * 0', scanType: 'deep', enabled: true, nextRun: new Date(Date.now() + 604800000) },
         { assetId: asset2.id, name: 'Daily API Check', cronExpression: '0 3 * * *', scanType: 'quick', enabled: true, nextRun: new Date(Date.now() + 86400000) },
       ]);
