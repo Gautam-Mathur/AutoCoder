@@ -644,6 +644,15 @@ export function fixTSGenericBracketMismatch(content: string): string {
   });
   fixed = repairedLines.join('\n');
 
+  // Fix 5: Generic type argument closed with ) instead of >
+  // LLM writes `React.HTMLAttributes<HTMLSpanElement) {` instead of `<HTMLSpanElement> {`
+  // Pattern: <TypeArgs) followed by { or , or ; (type declaration context)
+  // [^<>()]* allows multi-arg generics like <HTMLButtonElement, ButtonProps)
+  fixed = fixed.replace(/<([A-Z][^<>()]*)\)(\s*[{,;])/g, '<$1>$2');
+
+  // Fix 6: Same pattern but followed by end-of-line or whitespace then extends/implements
+  fixed = fixed.replace(/<([A-Z][^<>()]*)\)(\s*(?:extends|implements|=|$))/gm, '<$1>$2');
+
   return fixed;
 }
 
