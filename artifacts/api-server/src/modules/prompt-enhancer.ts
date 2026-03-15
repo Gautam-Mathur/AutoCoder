@@ -107,6 +107,185 @@ const TOPIC_TEMPLATES: Record<string, { appName: string; intro: string; actors: 
     entities: ['members', 'workouts', 'exercises', 'workout plans', 'progress logs', 'goals'],
     features: ['search', 'progress charts', 'goal tracking', 'workout calendar', 'notifications'],
   },
+
+  // ── Cybersecurity ──────────────────────────────────────────────────────────
+  'vapt': {
+    appName: 'vulnerability assessment and penetration testing (VAPT) platform',
+    intro: 'for security teams to plan, execute, and document penetration tests and vulnerability assessments',
+    actors: ['security administrators', 'penetration testers', 'auditors', 'clients'],
+    coreActions: [
+      'Security teams create assessment projects with defined scope — target assets, IP ranges, and domains — and assign testers with deadlines',
+      'Testers log findings with severity ratings (Critical, High, Medium, Low, Informational), CVE references, proof-of-concept steps, affected assets, and remediation recommendations',
+      'Generate professional assessment reports with executive summaries, risk scoring, vulnerability breakdowns, and compliance status (OWASP, PCI-DSS, ISO 27001)',
+      'Track remediation progress: clients mark findings as fixed, testers re-test and close them, with full audit trail',
+    ],
+    entities: ['assessments', 'assets', 'vulnerabilities', 'findings', 'reports', 'remediation tasks'],
+    features: ['severity scoring (CVSS)', 'CVE tracking', 'PDF report generation', 'remediation workflow', 'risk dashboard', 'team assignment'],
+  },
+  'penetration test': {
+    appName: 'penetration testing management platform',
+    intro: 'for security professionals to manage pentest engagements from scoping to final report',
+    actors: ['pentesters', 'project managers', 'clients', 'administrators'],
+    coreActions: [
+      'Create engagement projects with scope definition, target IP ranges, rules of engagement, and test methodology (black-box, grey-box, white-box)',
+      'Document vulnerabilities found during testing with severity (CVSS score), exploitation steps, impact analysis, and remediation guidance',
+      'Track engagement progress through phases: reconnaissance, scanning, exploitation, post-exploitation, and reporting',
+    ],
+    entities: ['engagements', 'targets', 'vulnerabilities', 'findings', 'reports', 'evidence'],
+    features: ['CVSS scoring', 'finding templates', 'report generation', 'status tracking', 'evidence upload', 'client portal'],
+  },
+  'security scanner': {
+    appName: 'security vulnerability scanner and management platform',
+    intro: 'for continuously scanning infrastructure and applications for security vulnerabilities',
+    actors: ['security engineers', 'DevSecOps teams', 'compliance officers'],
+    coreActions: [
+      'Schedule and run automated scans against hosts, web applications, APIs, and cloud resources',
+      'Aggregate vulnerability findings from multiple scan sources, deduplicate results, and prioritize by risk score',
+      'Track patch status and remediation assignments, with SLA tracking and escalation alerts for overdue critical vulnerabilities',
+    ],
+    entities: ['scans', 'targets', 'vulnerabilities', 'findings', 'patches', 'scan schedules'],
+    features: ['automated scanning', 'risk prioritization', 'SLA tracking', 'integration with ticketing', 'trend charts', 'compliance reporting'],
+  },
+  'bug tracker': {
+    appName: 'bug and issue tracking platform',
+    intro: 'for development teams to report, prioritize, and resolve software defects',
+    actors: ['developers', 'QA engineers', 'project managers', 'stakeholders'],
+    coreActions: [
+      'QA and developers report bugs with title, description, steps to reproduce, severity, affected version, and screenshots',
+      'Project managers triage incoming bugs — assign priority, set target fix version, and assign to developers',
+      'Track bug lifecycle from New → In Progress → In Review → Fixed → Verified → Closed with time-to-resolve metrics',
+    ],
+    entities: ['bugs', 'projects', 'milestones', 'comments', 'attachments', 'users'],
+    features: ['filtering by severity and status', 'label tagging', 'activity feed', 'email notifications', 'sprint boards', 'burndown charts'],
+  },
+  'issue tracker': {
+    appName: 'issue and ticket tracking system',
+    intro: 'for teams to manage issues, tasks, and work items across projects',
+    actors: ['team members', 'project managers', 'reporters', 'administrators'],
+    coreActions: [
+      'Create and assign issues with type (bug, feature, task), priority, due date, and component area',
+      'Manage work in sprints or kanban boards with drag-and-drop status updates',
+      'Link related issues, track blockers, and see time estimates vs. actuals',
+    ],
+    entities: ['issues', 'projects', 'sprints', 'labels', 'comments', 'users'],
+    features: ['kanban board', 'sprint planning', 'priority filtering', 'activity log', 'time tracking', 'notifications'],
+  },
+
+  // ── DevOps / Infrastructure ────────────────────────────────────────────────
+  'ci/cd': {
+    appName: 'CI/CD pipeline management dashboard',
+    intro: 'for engineering teams to monitor builds, deployments, and pipeline health across all services',
+    actors: ['developers', 'DevOps engineers', 'release managers'],
+    coreActions: [
+      'View real-time status of all pipeline runs — builds, tests, and deployments — across repositories and environments',
+      'Configure pipeline triggers, environment variables, and deployment approvals with role-based gating',
+      'Drill into failed pipeline stages to see logs, error messages, and flaky test history',
+    ],
+    entities: ['pipelines', 'runs', 'stages', 'deployments', 'environments', 'repositories'],
+    features: ['build status monitoring', 'deployment approvals', 'log viewer', 'failure analytics', 'notifications', 'environment promotion'],
+  },
+  'monitoring': {
+    appName: 'infrastructure and application monitoring platform',
+    intro: 'for operations teams to observe system health, track metrics, and respond to alerts',
+    actors: ['site reliability engineers', 'DevOps teams', 'on-call responders'],
+    coreActions: [
+      'Collect and visualize metrics (CPU, memory, latency, error rates) from hosts, containers, and services with real-time dashboards',
+      'Set alert thresholds and notification rules — trigger PagerDuty, Slack, or email when metrics breach SLOs',
+      'Create and manage on-call schedules, track incidents from detection through postmortem, and record action items',
+    ],
+    entities: ['services', 'hosts', 'alerts', 'incidents', 'dashboards', 'on-call schedules'],
+    features: ['real-time dashboards', 'threshold alerting', 'incident management', 'on-call scheduling', 'SLO tracking', 'anomaly detection'],
+  },
+  'devops': {
+    appName: 'DevOps operations and deployment management platform',
+    intro: 'for engineering teams to manage infrastructure, deployments, and operational workflows',
+    actors: ['developers', 'DevOps engineers', 'system administrators'],
+    coreActions: [
+      'Manage infrastructure resources — servers, containers, databases — with provisioning and decommissioning workflows',
+      'Track deployments across environments (dev, staging, production) with rollback capability and change logs',
+      'Monitor service health with automated alerts and incident response runbooks',
+    ],
+    entities: ['services', 'deployments', 'environments', 'incidents', 'change requests', 'runbooks'],
+    features: ['deployment tracking', 'environment management', 'incident management', 'change approval', 'audit log', 'notifications'],
+  },
+
+  // ── Content / CMS ──────────────────────────────────────────────────────────
+  'cms': {
+    appName: 'content management system',
+    intro: 'for content teams to create, edit, schedule, and publish content across channels',
+    actors: ['content editors', 'authors', 'administrators', 'reviewers'],
+    coreActions: [
+      'Authors create and edit content using a rich text editor with media uploads, SEO metadata, and custom fields',
+      'Content goes through a review and approval workflow before being scheduled and published',
+      'Manage content taxonomy — categories, tags, and collections — with version history and rollback',
+    ],
+    entities: ['posts', 'pages', 'media', 'categories', 'tags', 'authors'],
+    features: ['rich text editor', 'media library', 'SEO fields', 'publish scheduling', 'version history', 'content workflow'],
+  },
+  'knowledge base': {
+    appName: 'knowledge base and documentation platform',
+    intro: 'for teams to write, organize, and search internal documentation and how-to guides',
+    actors: ['authors', 'editors', 'readers', 'administrators'],
+    coreActions: [
+      'Authors write articles with rich text, code blocks, images, and embedded videos organized into collections and categories',
+      'Full-text search across all articles with relevance ranking, tag filtering, and version diffs',
+      'Track article feedback, view counts, and helpfulness ratings to surface outdated or underperforming docs',
+    ],
+    entities: ['articles', 'collections', 'categories', 'comments', 'authors', 'revisions'],
+    features: ['full-text search', 'table of contents', 'version history', 'feedback rating', 'public/private visibility', 'notifications'],
+  },
+
+  // ── Finance / Business ─────────────────────────────────────────────────────
+  'expense': {
+    appName: 'expense management and reimbursement platform',
+    intro: 'for employees to submit expenses and for finance teams to review and process reimbursements',
+    actors: ['employees', 'managers', 'finance team', 'administrators'],
+    coreActions: [
+      'Employees submit expense reports with receipts, category, amount, currency, and business justification',
+      'Managers review and approve or reject expense reports with comments; multi-level approval for large amounts',
+      'Finance team processes approved expenses for reimbursement and tracks budget utilization by department and category',
+    ],
+    entities: ['expense reports', 'expenses', 'receipts', 'approvals', 'budgets', 'employees'],
+    features: ['receipt upload', 'multi-currency', 'approval workflow', 'budget tracking', 'export to CSV/PDF', 'policy enforcement'],
+  },
+  'erp': {
+    appName: 'enterprise resource planning (ERP) platform',
+    intro: 'for businesses to manage core operations including finance, inventory, procurement, and HR in one system',
+    actors: ['finance managers', 'inventory managers', 'HR staff', 'executives', 'administrators'],
+    coreActions: [
+      'Manage the complete procure-to-pay cycle: purchase requisitions, vendor quotes, purchase orders, goods receipt, and invoice matching',
+      'Track inventory levels, stock movements, and warehouse operations with automatic reorder point alerts',
+      'Handle HR operations including employee records, payroll, leave management, and performance reviews',
+    ],
+    entities: ['vendors', 'purchase orders', 'inventory items', 'employees', 'invoices', 'departments'],
+    features: ['procurement workflow', 'inventory tracking', 'financial reporting', 'HR management', 'audit trail', 'dashboard KPIs'],
+  },
+
+  // ── Support / Service ──────────────────────────────────────────────────────
+  'helpdesk': {
+    appName: 'helpdesk and customer support platform',
+    intro: 'for support teams to manage customer requests, track SLAs, and resolve tickets efficiently',
+    actors: ['support agents', 'team leads', 'customers', 'administrators'],
+    coreActions: [
+      'Customers submit support tickets via portal or email; agents are auto-assigned based on category and workload',
+      'Agents respond to tickets, escalate to specialists, and track resolution time against SLA targets',
+      'Build a self-service knowledge base so customers can find answers to common questions without submitting tickets',
+    ],
+    entities: ['tickets', 'customers', 'agents', 'categories', 'SLAs', 'knowledge articles'],
+    features: ['ticket assignment', 'SLA tracking', 'canned responses', 'escalation rules', 'satisfaction ratings', 'knowledge base'],
+  },
+  'lms': {
+    appName: 'learning management system (LMS)',
+    intro: 'for organizations to create, deliver, and track online training and courses',
+    actors: ['instructors', 'learners', 'administrators', 'managers'],
+    coreActions: [
+      'Instructors create courses with video lessons, quizzes, assignments, and downloadable resources organized into modules',
+      'Learners enroll in courses, track progress, complete assessments, and earn certificates upon completion',
+      'Managers monitor team completion rates, assessment scores, and assign mandatory training with deadlines',
+    ],
+    entities: ['courses', 'modules', 'lessons', 'enrollments', 'assessments', 'certificates'],
+    features: ['video player', 'progress tracking', 'quiz engine', 'certificates', 'completion reporting', 'assignment management'],
+  },
 };
 
 function capitalize(s: string): string {
@@ -330,7 +509,9 @@ function buildPromptFromKeywords(topic: string, options: PromptGenOptions): Prom
     }
   }
 
-  sentences.push(`Build ${scaleDesc} ${topic} management platform.`);
+  // Avoid "X management management platform" when topic already ends with "management"
+  const platformLabel = /\bmanagement\b/i.test(topic) ? 'platform' : 'management platform';
+  sentences.push(`Build ${scaleDesc} ${topic} ${platformLabel}.`);
   additions.push(`Core concept: ${topic}`);
 
   if (matchedEntities.length > 0) {
@@ -387,6 +568,7 @@ function inferEntitiesFromTopic(topic: string): string[] {
   const entities: string[] = [];
 
   const topicEntityMap: Record<string, string[]> = {
+    // General
     'adoption': ['pets', 'adopters', 'applications'],
     'pet': ['pets', 'owners', 'veterinary records'],
     'restaurant': ['menu items', 'orders', 'reservations', 'customers'],
@@ -422,6 +604,51 @@ function inferEntitiesFromTopic(topic: string): string[] {
     'fleet': ['vehicles', 'drivers', 'trips', 'maintenance records'],
     'real estate': ['properties', 'tenants', 'leases', 'maintenance requests'],
     'property': ['properties', 'tenants', 'leases', 'payments'],
+
+    // Cybersecurity
+    'vapt': ['assessments', 'vulnerabilities', 'assets', 'findings', 'reports', 'remediation tasks'],
+    'pentest': ['engagements', 'targets', 'vulnerabilities', 'findings', 'reports', 'evidence'],
+    'penetration test': ['engagements', 'targets', 'vulnerabilities', 'findings', 'reports'],
+    'vulnerability': ['vulnerabilities', 'assets', 'patches', 'remediations', 'scans'],
+    'vulnerability assessment': ['assessments', 'vulnerabilities', 'assets', 'findings', 'reports'],
+    'security audit': ['audits', 'findings', 'controls', 'risks', 'reports'],
+    'security scan': ['scans', 'targets', 'vulnerabilities', 'findings', 'patches'],
+    'soc': ['incidents', 'alerts', 'assets', 'threat intelligence', 'playbooks'],
+    'siem': ['events', 'alerts', 'incidents', 'correlation rules', 'dashboards'],
+    'cyber': ['incidents', 'assets', 'threats', 'vulnerabilities', 'alerts'],
+
+    // DevOps / Infrastructure
+    'devops': ['services', 'deployments', 'environments', 'incidents', 'change requests'],
+    'ci/cd': ['pipelines', 'runs', 'deployments', 'environments', 'repositories'],
+    'pipeline': ['pipelines', 'stages', 'runs', 'deployments', 'environments'],
+    'monitoring': ['services', 'hosts', 'alerts', 'incidents', 'dashboards'],
+    'observability': ['services', 'traces', 'metrics', 'logs', 'alerts'],
+    'infrastructure': ['servers', 'services', 'deployments', 'environments', 'change requests'],
+    'incident': ['incidents', 'services', 'alerts', 'postmortems', 'action items'],
+
+    // Content / Knowledge
+    'cms': ['posts', 'pages', 'media', 'categories', 'authors'],
+    'content management': ['posts', 'pages', 'media', 'categories', 'authors'],
+    'knowledge base': ['articles', 'collections', 'categories', 'authors', 'revisions'],
+    'documentation': ['articles', 'sections', 'categories', 'authors', 'revisions'],
+    'wiki': ['pages', 'categories', 'revisions', 'authors', 'comments'],
+
+    // Finance / Business
+    'expense': ['expense reports', 'expenses', 'receipts', 'approvals', 'budgets'],
+    'erp': ['vendors', 'purchase orders', 'inventory items', 'employees', 'invoices'],
+    'accounting': ['transactions', 'accounts', 'invoices', 'payments', 'reports'],
+    'procurement': ['purchase orders', 'vendors', 'requisitions', 'approvals', 'contracts'],
+
+    // Support / Learning
+    'helpdesk': ['tickets', 'customers', 'agents', 'categories', 'knowledge articles'],
+    'lms': ['courses', 'modules', 'lessons', 'enrollments', 'assessments'],
+    'learning management': ['courses', 'modules', 'learners', 'enrollments', 'assessments'],
+    'training': ['courses', 'trainees', 'sessions', 'assessments', 'certificates'],
+
+    // Bug / Issue
+    'bug tracker': ['bugs', 'projects', 'milestones', 'comments', 'attachments'],
+    'issue tracker': ['issues', 'projects', 'sprints', 'labels', 'comments'],
+    'defect': ['defects', 'projects', 'builds', 'comments', 'attachments'],
   };
 
   for (const [keyword, ents] of Object.entries(topicEntityMap)) {
@@ -433,15 +660,43 @@ function inferEntitiesFromTopic(topic: string): string[] {
   }
 
   if (entities.length === 0) {
-    // Extract nouns from the topic as a fallback
-    const words = lower.split(/\W+/).filter(w => w.length > 3);
-    const commonStopWords = ['build', 'create', 'system', 'platform', 'management', 'tracking', 'tracker', 'simple', 'comprehensive'];
-    const potentialEntities = words.filter(w => !commonStopWords.includes(w));
-    
-    if (potentialEntities.length > 0) {
-      entities.push(...potentialEntities.map(w => `${w} records`));
-    } else {
-      entities.push('records', 'categories', 'users');
+    // Smarter fallback: map well-known tech/domain acronyms to meaningful entities
+    // before resorting to the generic "$word records" pattern
+    const acronymEntityMap: Record<string, string[]> = {
+      'api': ['endpoints', 'services', 'api keys', 'usage logs'],
+      'sdk': ['packages', 'versions', 'documentation', 'releases'],
+      'saas': ['tenants', 'subscriptions', 'users', 'billing'],
+      'pos': ['sales', 'products', 'customers', 'receipts'],
+      'iot': ['devices', 'sensors', 'readings', 'alerts'],
+      'ai': ['models', 'datasets', 'experiments', 'predictions'],
+      'ml': ['models', 'datasets', 'experiments', 'metrics'],
+      'etl': ['pipelines', 'sources', 'jobs', 'logs'],
+      'crm': ['contacts', 'deals', 'companies', 'activities'],
+      'iam': ['users', 'roles', 'permissions', 'policies'],
+      'rbac': ['users', 'roles', 'permissions', 'resources'],
+      'sla': ['contracts', 'clients', 'metrics', 'incidents'],
+      'kpi': ['metrics', 'targets', 'departments', 'reports'],
+    };
+
+    for (const [acronym, ents] of Object.entries(acronymEntityMap)) {
+      if (lower.includes(acronym)) {
+        entities.push(...ents.filter(e => !entities.includes(e)));
+      }
+    }
+
+    if (entities.length === 0) {
+      // Last-resort: extract meaningful nouns from the topic.
+      // Use "entries" instead of "records" for better readability.
+      const words = lower.split(/\W+/).filter(w => w.length > 3);
+      const stopWords = new Set(['build', 'create', 'system', 'platform', 'management', 'tracking', 'tracker', 'simple', 'comprehensive', 'tool', 'tools', 'manager', 'dashboard', 'admin', 'panel', 'portal', 'application', 'software', 'solution', 'service']);
+      const potentialEntities = words.filter(w => !stopWords.has(w));
+
+      if (potentialEntities.length > 0) {
+        // Use "entries" suffix instead of "records", limit to first 3 meaningful words
+        entities.push(...potentialEntities.slice(0, 3).map(w => `${w} entries`));
+      } else {
+        entities.push('records', 'categories', 'users');
+      }
     }
   }
 
