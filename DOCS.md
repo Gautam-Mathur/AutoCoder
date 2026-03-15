@@ -7,25 +7,26 @@
 ## Table of Contents
 
 1. [Project Overview](#1-project-overview)
-2. [Monorepo Structure](#2-monorepo-structure)
-3. [Quick Start](#3-quick-start)
-4. [Environment Variables Reference](#4-environment-variables-reference)
-5. [High-Level Architecture](#5-high-level-architecture)
-6. [The 17-Stage Generation Pipeline](#6-the-17-stage-generation-pipeline)
-7. [SLM Subsystem](#7-slm-subsystem)
-8. [AI Backend — Local LLM & Fullstack Generator](#8-ai-backend--local-llm--fullstack-generator)
-9. [Domain Knowledge System](#9-domain-knowledge-system)
-10. [Quality Systems](#10-quality-systems)
-11. [Storage Layer](#11-storage-layer)
-12. [REST API Reference](#12-rest-api-reference)
-13. [Frontend Architecture](#13-frontend-architecture)
-14. [Generation Learning Engine](#14-generation-learning-engine)
-15. [Supporting Module Reference](#15-supporting-module-reference)
-16. [Database Schema](#16-database-schema)
-17. [Development Workflow](#17-development-workflow)
-18. [Adding a New Pipeline Stage](#18-adding-a-new-pipeline-stage)
-19. [Model Recommendations](#19-model-recommendations)
-20. [Troubleshooting](#20-troubleshooting)
+2. [Lines of Code](#2-lines-of-code)
+3. [Monorepo Structure](#3-monorepo-structure)
+4. [Quick Start](#4-quick-start)
+5. [Environment Variables Reference](#5-environment-variables-reference)
+6. [High-Level Architecture](#6-high-level-architecture)
+7. [The 17-Stage Generation Pipeline](#7-the-17-stage-generation-pipeline)
+8. [SLM Subsystem](#8-slm-subsystem)
+9. [AI Backend — Local LLM & Fullstack Generator](#9-ai-backend--local-llm--fullstack-generator)
+10. [Domain Knowledge System](#10-domain-knowledge-system)
+11. [Quality Systems](#11-quality-systems)
+12. [Storage Layer](#12-storage-layer)
+13. [REST API Reference](#13-rest-api-reference)
+14. [Frontend Architecture](#14-frontend-architecture)
+15. [Generation Learning Engine](#15-generation-learning-engine)
+16. [Supporting Module Reference](#16-supporting-module-reference)
+17. [Database Schema](#17-database-schema)
+18. [Development Workflow](#18-development-workflow)
+19. [Adding a New Pipeline Stage](#19-adding-a-new-pipeline-stage)
+20. [Model Recommendations](#20-model-recommendations)
+21. [Troubleshooting](#21-troubleshooting)
 
 ---
 
@@ -52,10 +53,58 @@ AutoCoder is a self-hosted AI-powered full-stack application generator. Given a 
 - In-browser execution: WebContainers API (`@webcontainer/api`)
 - Local AI: Ollama native API + OpenAI-compatible SDK
 - Monorepo: pnpm workspaces
-
 ---
 
-## 2. Monorepo Structure
+## 2. Lines of Code
+
+> Counted March 2026, excluding `node_modules`, `dist`, `.cache`, and lock files.
+
+### Summary
+
+| Metric | Count |
+|---|---|
+| **Total lines** | **~171,000** |
+| TypeScript (`.ts`) | 138,955 lines across 186 files |
+| TypeScript React (`.tsx`) | 27,999 lines across 281 files |
+| CSS | 481 lines |
+| Markdown (`.md`) | 1,848 lines |
+| JSON config | 1,580 lines |
+
+### By Package
+
+| Package | Lines |
+|---|---|
+| `artifacts/api-server/src` | ~93,900 |
+| `artifacts/autocoder/src` | ~64,400 |
+| `lib/` (shared) | ~3,000 |
+| Config, scripts, docs | ~9,700 |
+
+### API Server Module Count
+
+| Area | Files |
+|---|---|
+| Pipeline stages + orchestrator | 18 |
+| SLM engine, stages & registry | 10 |
+| AI backend (LLM clients, generators) | 6 |
+| Quality systems | 7 |
+| Domain knowledge | 4 |
+| Storage layer | 3 |
+| REST routes & middleware | 8 |
+| Utilities & supporting modules | ~50 |
+| **Total** | **106 `.ts` files** |
+
+### Frontend Module Count
+
+| Area | Files |
+|---|---|
+| Pages | 5 |
+| Components | ~60 |
+| Hooks | ~15 |
+| State stores | ~8 |
+| Utilities | ~10 |
+
+
+## 3. Monorepo Structure
 
 ```
 workspace/
@@ -95,7 +144,7 @@ workspace/
 
 ---
 
-## 3. Quick Start
+## 4. Quick Start
 
 ### Prerequisites
 
@@ -140,7 +189,7 @@ pnpm --filter @workspace/autocoder run dev    # Frontend only
 
 ---
 
-## 4. Environment Variables Reference
+## 5. Environment Variables Reference
 
 All variables are optional unless marked **required**. The app runs with sensible defaults.
 
@@ -199,7 +248,7 @@ These variables control the `local-llm-client.ts` module used by `ai-fullstack-g
 
 ---
 
-## 5. High-Level Architecture
+## 6. High-Level Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -257,7 +306,7 @@ These variables control the `local-llm-client.ts` module used by `ai-fullstack-g
 
 ---
 
-## 6. The 17-Stage Generation Pipeline
+## 7. The 17-Stage Generation Pipeline
 
 **Entry point:** `artifacts/api-server/src/modules/pipeline-orchestrator.ts`  
 **Main export:** `async function orchestratePipeline(plan, understanding, options): Promise<PipelineResult>`
@@ -348,7 +397,7 @@ After Stage 4 (`reason`) and before Stage 11 (`generate`), the plan is deep-clon
 
 ---
 
-## 7. SLM Subsystem
+## 8. SLM Subsystem
 
 The SLM subsystem provides AI enhancement on top of every rule-based stage. All 8 SLM calls are **non-fatal** — if the model is unavailable, times out, or returns malformed JSON, the pipeline continues with the rule-based output unchanged.
 
@@ -415,7 +464,7 @@ Internally it:
 
 ---
 
-#### 2. `reason` — Semantic Analysis Enhancement
+#### 3. `reason` — Semantic Analysis Enhancement
 
 **File:** `slm-stage-semantic.ts`  
 **Exported:** `SEMANTIC_STAGE_ID`, `registerSemanticTemplate()`, `mergeSemanticResults()`
@@ -426,7 +475,7 @@ Internally it:
 
 ---
 
-#### 3. `design` — Design System Enhancement
+#### 4. `design` — Design System Enhancement
 
 **File:** `slm-stage-design.ts`  
 **Exported:** `DESIGN_STAGE_ID`, `registerDesignTemplate()`, `mergeDesignResults()`
@@ -437,7 +486,7 @@ Internally it:
 
 ---
 
-#### 4. `schema` — Schema Design Enhancement
+#### 5. `schema` — Schema Design Enhancement
 
 **File:** `slm-stage-schema.ts`  
 **Exported:** `SCHEMA_STAGE_ID`, `registerSchemaTemplate()`, `validateSchemaPatch()`
@@ -448,7 +497,7 @@ Internally it:
 
 ---
 
-#### 5. `api` — API Design Enhancement
+#### 6. `api` — API Design Enhancement
 
 **File:** `slm-stage-api.ts`  
 **Exported:** `API_STAGE_ID`, `registerAPITemplate()`, `validateAPIPatch()`
@@ -459,7 +508,7 @@ Internally it:
 
 ---
 
-#### 6. `compose` — Component Tree Enhancement
+#### 7. `compose` — Component Tree Enhancement
 
 **File:** `slm-stage-components.ts`  
 **Exported:** `COMPONENT_STAGE_ID`, `registerComponentTemplate()`, `validateComponentPatch()`
@@ -470,7 +519,7 @@ Internally it:
 
 ---
 
-#### 7. `generate` — Code Enhancement (Micro-Writer)
+#### 8. `generate` — Code Enhancement (Micro-Writer)
 
 **File:** `slm-stage-codegen.ts`  
 **Exported:** `CODEGEN_STAGE_ID`, `registerCodegenTemplate()`, `applyCodeEnhancements()`, `validateCodeEnhancement()`
@@ -493,7 +542,7 @@ interface CodeEnhancement {
 
 ---
 
-#### 8. `deep-quality` — Final Quality Review
+#### 9. `deep-quality` — Final Quality Review
 
 **File:** `slm-stage-quality.ts`  
 **Exported:** `QUALITY_STAGE_ID`, `registerQualityTemplate()`, `processQualityResults()`
@@ -519,7 +568,7 @@ GET /api/slm/status   → health, win rates, recommendations
 
 ---
 
-## 8. AI Backend — Local LLM & Fullstack Generator
+## 9. AI Backend — Local LLM & Fullstack Generator
 
 ### `local-llm-client.ts`
 
@@ -583,7 +632,7 @@ Two generation paths for full-stack app creation:
 
 ---
 
-## 9. Domain Knowledge System
+## 10. Domain Knowledge System
 
 **Files:** `domain-knowledge.ts`, `domain-synthesis-engine.ts`, `entity-field-inference.ts`
 
@@ -637,7 +686,7 @@ The system recognizes 15+ pre-modeled industry domains. Each domain specifies:
 
 ---
 
-## 10. Quality Systems
+## 11. Quality Systems
 
 ### Code Quality Engine (`code-quality-engine.ts`)
 
@@ -744,7 +793,7 @@ Runs in Stage 16 Pass 3. Checks that TypeScript interfaces and types declared in
 
 ---
 
-## 11. Storage Layer
+## 12. Storage Layer
 
 **File:** `artifacts/api-server/src/storage.ts`
 
@@ -802,7 +851,7 @@ interface IStorage {
 
 ---
 
-## 12. REST API Reference
+## 13. REST API Reference
 
 All routes are registered in `artifacts/api-server/src/routes/autocoder.ts`. Base URL: `http://localhost:3001`.
 
@@ -984,7 +1033,7 @@ All routes are registered in `artifacts/api-server/src/routes/autocoder.ts`. Bas
 
 ---
 
-## 13. Frontend Architecture
+## 14. Frontend Architecture
 
 **Entry:** `artifacts/autocoder/src/App.tsx`  
 **Router:** Wouter with base path from `import.meta.env.BASE_URL`
@@ -1123,7 +1172,7 @@ Displays server-side generation logs in real time.
 
 ---
 
-## 14. Generation Learning Engine
+## 15. Generation Learning Engine
 
 **File:** `artifacts/api-server/src/modules/generation-learning-engine.ts`
 
@@ -1172,7 +1221,7 @@ Each pattern has a `successCount` and `failureCount`. `reliability = successCoun
 
 ---
 
-## 15. Supporting Module Reference
+## 16. Supporting Module Reference
 
 Complete reference of all modules in `artifacts/api-server/src/modules/`:
 
@@ -1280,7 +1329,7 @@ Complete reference of all modules in `artifacts/api-server/src/modules/`:
 
 ---
 
-## 16. Database Schema
+## 17. Database Schema
 
 **File:** `lib/db/src/schema.ts`  
 **ORM:** Drizzle ORM
@@ -1319,7 +1368,7 @@ Complete reference of all modules in `artifacts/api-server/src/modules/`:
 
 ---
 
-## 17. Development Workflow
+## 18. Development Workflow
 
 ### Starting services
 
@@ -1399,7 +1448,7 @@ pnpm --filter @workspace/api-server add -D <package>
 
 ---
 
-## 18. Adding a New Pipeline Stage
+## 19. Adding a New Pipeline Stage
 
 To add a new stage to the pipeline:
 
@@ -1411,7 +1460,7 @@ export interface MyOutput { ... }
 export function runMyStage(plan: ProjectPlan, ctx: any): MyOutput { ... }
 ```
 
-### 2. Add a stage definition
+### 3. Add a stage definition
 
 In `pipeline-orchestrator.ts`, add to `PIPELINE_STAGES`:
 
@@ -1422,7 +1471,7 @@ In `pipeline-orchestrator.ts`, add to `PIPELINE_STAGES`:
 
 Set `order` to place it in the sequence. Increment all subsequent stage `order` values.
 
-### 3. Call it in the orchestrator
+### 4. Call it in the orchestrator
 
 ```typescript
 const myStage = PIPELINE_STAGES.find(s => s.id === 'my-stage')!;
@@ -1434,7 +1483,7 @@ executeStage(ctx, myStage, () => {
 });
 ```
 
-### 4. Create an SLM stage template (optional)
+### 5. Create an SLM stage template (optional)
 
 ```typescript
 // src/modules/slm-stage-my-stage.ts
@@ -1458,7 +1507,7 @@ export function mergeMyResults(ruleResult: any, slmResult: any): any {
 }
 ```
 
-### 5. Register the template
+### 6. Register the template
 
 In `slm-registry.ts`:
 ```typescript
@@ -1467,7 +1516,7 @@ import { registerMyStageTemplate } from './slm-stage-my-stage.js';
 registerMyStageTemplate();
 ```
 
-### 6. Wire the SLM call in the orchestrator
+### 7. Wire the SLM call in the orchestrator
 
 After your `executeStage()` call:
 ```typescript
@@ -1484,7 +1533,7 @@ if (isSLMAvailable() && ctx.myOutput) {
 }
 ```
 
-### 7. Add the icon to the frontend
+### 8. Add the icon to the frontend
 
 In `src/components/thinking-steps.tsx`, add an entry to `phaseConfig`:
 ```typescript
@@ -1493,7 +1542,7 @@ In `src/components/thinking-steps.tsx`, add an entry to `phaseConfig`:
 
 ---
 
-## 19. Model Recommendations
+## 20. Model Recommendations
 
 The quality of generated code scales directly with model size and specialization. Use a code-specific model — general models (llama3.2, mistral) produce significantly worse code.
 
@@ -1554,7 +1603,7 @@ Higher context allows the SLM stages to see more of the pipeline's intermediate 
 
 ---
 
-## 20. Troubleshooting
+## 21. Troubleshooting
 
 ### "SLM system initialized (no endpoint — rules-only mode)"
 
