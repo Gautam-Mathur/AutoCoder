@@ -14,6 +14,7 @@
  */
 
 import type { ProjectPlan, PlannedEntity } from './plan-generator.js';
+import { getBestPractices, getDomainModel } from './knowledge-base.js';
 
 export interface GeneratedFile {
   path: string;
@@ -117,7 +118,7 @@ const FEATURE_PACKAGES: Record<string, string[]> = {
   'color-picker': ['react-colorful'],
 };
 
-export function resolveDependencies(plan: ProjectPlan, files: GeneratedFile[]): DependencyManifest {
+export function resolveDependencies(plan: ProjectPlan, files: GeneratedFile[], detectedDomain?: string): DependencyManifest {
   const dependencies: Record<string, string> = {};
   const devDependencies: Record<string, string> = {};
   const warnings: string[] = [];
@@ -125,6 +126,58 @@ export function resolveDependencies(plan: ProjectPlan, files: GeneratedFile[]): 
   const securityNotes: string[] = [];
 
   addCoreDependencies(dependencies, devDependencies);
+
+  if (detectedDomain) {
+    try {
+      const domainModel = getDomainModel(detectedDomain);
+      if (domainModel) {
+        const KB_FEATURE_TO_PACKAGE: Record<string, { pkg: string; version: string }> = {
+          'dashboard': { pkg: 'recharts', version: '^2.12.7' },
+          'chart': { pkg: 'recharts', version: '^2.12.7' },
+          'analytics': { pkg: 'recharts', version: '^2.12.7' },
+          'reporting': { pkg: 'recharts', version: '^2.12.7' },
+          'calendar': { pkg: 'date-fns', version: '^3.6.0' },
+          'scheduling': { pkg: 'date-fns', version: '^3.6.0' },
+          'timeline': { pkg: 'date-fns', version: '^3.6.0' },
+          'export': { pkg: 'papaparse', version: '^5.4.1' },
+          'csv': { pkg: 'papaparse', version: '^5.4.1' },
+          'drag': { pkg: '@dnd-kit/core', version: '^6.1.0' },
+          'kanban': { pkg: '@dnd-kit/core', version: '^6.1.0' },
+          'rich-text': { pkg: '@tiptap/react', version: '^2.4.0' },
+          'editor': { pkg: '@tiptap/react', version: '^2.4.0' },
+          'markdown': { pkg: 'react-markdown', version: '^9.0.1' },
+          'file-upload': { pkg: 'multer', version: '^1.4.5-lts.1' },
+          'upload': { pkg: 'multer', version: '^1.4.5-lts.1' },
+        };
+
+        for (const feature of domainModel.typicalFeatures || []) {
+          const featureLower = feature.toLowerCase();
+          for (const [keyword, pkgInfo] of Object.entries(KB_FEATURE_TO_PACKAGE)) {
+            if (featureLower.includes(keyword) && !dependencies[pkgInfo.pkg]) {
+              dependencies[pkgInfo.pkg] = pkgInfo.version;
+              optimizations.push(`KB: added "${pkgInfo.pkg}" for domain feature "${feature}"`);
+            }
+          }
+          if (!Object.keys(KB_FEATURE_TO_PACKAGE).some(k => featureLower.includes(k))) {
+            optimizations.push(`KB: domain "${detectedDomain}" typically requires "${feature}"`);
+          }
+        }
+
+        for (const note of domainModel.securityConsiderations || []) {
+          securityNotes.push(`KB: ${note}`);
+        }
+      }
+
+      const depBestPractices = getBestPractices('dependencies');
+      for (const bp of depBestPractices.slice(0, 3)) {
+        if (bp.description) {
+          securityNotes.push(`KB: ${bp.title || bp.id} — ${bp.description}`);
+        }
+      }
+    } catch (e) {
+      console.warn('[KB] dependency resolution KB enrichment failed:', e);
+    }
+  }
 
   const importedPackages = scanImports(files);
 

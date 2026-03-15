@@ -18,6 +18,7 @@ import type { ProjectPlan, PlannedEntity, PlannedPage, UXFlow, ErrorHandlingPlan
 import type { ReasoningResult } from './contextual-reasoning-engine.js';
 import type { FunctionalitySpec, EntityFeatureSpec } from './functionality-engine.js';
 import type { DesignSystem } from './design-system-engine.js';
+import { getAntiPatternChecklist, getBestPractices, getDomainModel, matchEntityToArchetype } from './knowledge-base.js';
 
 export interface ComponentTree {
   components: ComponentSpec[];
@@ -141,6 +142,7 @@ export function composeComponents(
   reasoning?: ReasoningResult | null,
   funcSpec?: FunctionalitySpec | null,
   designSystem?: DesignSystem | null,
+  detectedDomain?: string,
 ): ComponentTree {
   const entities = plan.dataModel || [];
   const pages = plan.pages || [];
@@ -153,6 +155,66 @@ export function composeComponents(
   const responsive = planResponsive(pages, components);
   const animations = planAnimations(designSystem);
   const reusabilityMap = analyzeReusability(components, entities);
+
+  try {
+    const antiPatternGuidance = getAntiPatternChecklist(['react', 'hooks', 'ux', 'rendering']);
+    if (antiPatternGuidance && antiPatternGuidance.length > 0) {
+      for (const component of components) {
+        if (component.props.length > 8) {
+          component.features.push('kb-warning:too-many-props');
+        }
+        if (component.type === 'container' && !component.hooks.some(h => h.includes('Query') || h.includes('Mutation'))) {
+          if (component.state.some(s => s.source === 'server')) {
+            component.features.push('kb-warning:prop-drilling-risk');
+          }
+        }
+        if (!component.accessibility.role && !['presentational'].includes(component.type)) {
+          component.features.push('kb-warning:missing-aria-role');
+        }
+      }
+    }
+
+    const uiBestPractices = getBestPractices('react');
+    if (uiBestPractices.length > 0) {
+      for (const component of components) {
+        if (component.type === 'form' && !component.features.includes('validation')) {
+          component.features.push('kb-recommendation:add-validation');
+        }
+      }
+    }
+
+    if (detectedDomain) {
+      const domainModel = getDomainModel(detectedDomain);
+      if (domainModel) {
+        for (const component of components) {
+          const entityName = component.name.replace(/(List|Detail|Form|Page|Card|Table)$/i, '');
+          const archetype = matchEntityToArchetype(entityName);
+          if (archetype) {
+            if (archetype.traits.includes('searchable') && !component.features.includes('search')) {
+              component.features.push('search');
+            }
+            if (archetype.traits.includes('pageable') && !component.features.includes('pagination')) {
+              component.features.push('pagination');
+            }
+            if (archetype.traits.includes('workflowable') && !component.features.includes('status-filter')) {
+              component.features.push('status-filter');
+            }
+            if (archetype.traits.includes('assignable') && !component.features.includes('assignee-filter')) {
+              component.features.push('assignee-filter');
+            }
+            if (archetype.traits.includes('taggable') && !component.features.includes('tag-filter')) {
+              component.features.push('tag-filter');
+            }
+            if (archetype.traits.includes('auditable') && !component.hooks.includes('useAuditLog')) {
+              component.hooks.push('useAuditLog');
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[KB] component composition enrichment failed:', e);
+  }
 
   return { components, layouts, contexts, sharedHooks, accessibility, responsive, animations, reusabilityMap };
 }

@@ -7,6 +7,7 @@ import type { APIDesign, RouteDesign, PaginationDesign } from './api-designer.js
 import type { ComponentTree } from './component-composer.js';
 import type { FunctionalitySpec, EntityFeatureSpec, PageFeatureSpec } from './functionality-engine.js';
 import { AVAILABLE_DEPS, DEV_DEPS } from './dependency-registry.js';
+import { getContextForGeneration } from './knowledge-base.js';
 import {
   getAllBaseComponents,
   resolveComponentDependencies,
@@ -35,6 +36,10 @@ export interface EnrichmentContext {
   reasoning?: ReasoningResult | null;
   designSystem?: DesignSystem;
   functionalitySpec?: FunctionalitySpec;
+  detectedDomain?: string;
+  entityNames?: string[];
+  features?: string[];
+  techStack?: string[];
 }
 
 interface GeneratedFile {
@@ -421,6 +426,24 @@ export function generateProject(
   const files: GeneratedFile[] = [];
   const emit = onProgress || (() => {});
 
+  let kbContext = '';
+  try {
+    const entityNames = plan.dataModel?.map(e => e.name) || [];
+    const features = plan.pages?.map(p => p.name || '').filter(Boolean) || [];
+    kbContext = getContextForGeneration({
+      domain: enrichment?.detectedDomain,
+      entities: entityNames,
+      features: features,
+      techStack: enrichment?.techStack || ['react', 'typescript', 'express', 'drizzle', 'tailwind'],
+      appType: plan.projectName || 'web-application',
+    });
+    if (kbContext) {
+      emit('kb', `KB context generated for domain "${enrichment?.detectedDomain || 'general'}" (${kbContext.length} chars)`);
+    }
+  } catch (e) {
+    console.warn('[KB] codegen context generation failed:', e);
+  }
+
   emit('components', 'Resolving component dependencies...');
   const allBaseComponents = getAllBaseComponents(plan);
   const requiredComponentIds = determineRequiredComponents(plan, reasoning);
@@ -463,10 +486,36 @@ export function generateProject(
   }
 
   emit('schema', 'Generating shared schema, database connection, and server routes...');
-  files.push(generateSharedSchema(plan, reasoning, enrichment?.schemaDesign));
+
+  let schemaKbContext = '';
+  let routeKbContext = '';
+  if (enrichment?.detectedDomain) {
+    try {
+      const entityNames = plan.dataModel?.map(e => e.name) || [];
+      schemaKbContext = getContextForGeneration({
+        domain: enrichment.detectedDomain,
+        entities: entityNames,
+        fileRole: 'schema',
+        fileExtension: 'ts',
+        hasDatabaseAccess: true,
+      });
+      routeKbContext = getContextForGeneration({
+        domain: enrichment.detectedDomain,
+        entities: entityNames,
+        fileRole: 'route',
+        fileExtension: 'ts',
+        hasDatabaseAccess: true,
+        isAuthRequired: planNeedsAuth(plan, enrichment),
+      });
+    } catch (e) {
+      console.warn('[KB] per-file-role context generation failed:', e);
+    }
+  }
+
+  files.push(generateSharedSchema(plan, reasoning, enrichment?.schemaDesign, schemaKbContext));
   files.push(generateDbFile());
   files.push(generateDrizzleConfig());
-  files.push(generateServerRoutes(plan, reasoning, enrichment?.apiDesign));
+  files.push(generateServerRoutes(plan, reasoning, enrichment?.apiDesign, routeKbContext || kbContext));
   files.push(generateServerIndex(plan, hasAuth));
   if (hasAuth) {
     emit('schema', 'Generating authentication module (passport + sessions)...');
@@ -501,7 +550,7 @@ export function generateProject(
     if (generatedPagePaths.has(pagePath)) continue;
     generatedPagePaths.add(pagePath);
     emit('pages', `[${i + 1}/${plan.pages.length}] Building ${page.componentName}...`);
-    const content = generatePageContent(page, plan, reasoning, enrichment?.functionalitySpec);
+    const content = generatePageContent(page, plan, reasoning, enrichment?.functionalitySpec, kbContext, enrichment?.detectedDomain);
 
     files.push({
       path: pagePath,
@@ -618,7 +667,7 @@ function fixMissingLocalImports(content: string, knownPaths: Set<string>): strin
   return result.join('\n');
 }
 
-function generatePageContent(page: PlannedPage, plan: ProjectPlan, reasoning: ReasoningResult | null, functionalitySpec?: FunctionalitySpec): string {
+function generatePageContent(page: PlannedPage, plan: ProjectPlan, reasoning: ReasoningResult | null, functionalitySpec?: FunctionalitySpec, kbContext?: string, detectedDomain?: string): string {
   const pageType = classifyPage(page, plan);
   const uiPattern = reasoning?.uiPatterns?.find(p => p.entityName === page.dataNeeded?.[0]);
 
@@ -635,26 +684,55 @@ function generatePageContent(page: PlannedPage, plan: ProjectPlan, reasoning: Re
     }
   }
 
+  let pageContent: string;
   switch (pageType) {
     case 'kanban':
-      return generateKanbanPage(page, plan, reasoning);
+      pageContent = generateKanbanPage(page, plan, reasoning);
+      break;
     case 'calendar':
-      return generateCalendarPage(page, plan, reasoning);
+      pageContent = generateCalendarPage(page, plan, reasoning);
+      break;
     case 'settings':
-      return generateSettingsPage(page, plan, reasoning);
+      pageContent = generateSettingsPage(page, plan, reasoning);
+      break;
     case 'timeline':
-      return generateTimelinePage(page, plan, reasoning);
+      pageContent = generateTimelinePage(page, plan, reasoning);
+      break;
     case 'gallery':
-      return generateGalleryPage(page, plan, reasoning);
+      pageContent = generateGalleryPage(page, plan, reasoning);
+      break;
     case 'list':
-      return generateListPage(page, plan, reasoning, uiPattern);
+      pageContent = generateListPage(page, plan, reasoning, uiPattern);
+      break;
     case 'detail':
-      return generateDetailPage(page, plan, reasoning);
+      pageContent = generateDetailPage(page, plan, reasoning);
+      break;
     case 'dashboard':
-      return generateDashboardPage(page, plan, reasoning);
+      pageContent = generateDashboardPage(page, plan, reasoning);
+      break;
     default:
-      return generateGenericPage(page);
+      pageContent = generateGenericPage(page);
   }
+
+  if (kbContext && entityName) {
+    try {
+      const entityKb = getContextForGeneration({
+        domain: detectedDomain,
+        entities: [entityName],
+        fileRole: 'component',
+        fileExtension: 'tsx',
+        primaryEntity: entityName,
+      });
+      if (entityKb) {
+        const kbLines = entityKb.split('\n').slice(0, 15).map(l => ` * ${l}`).join('\n');
+        pageContent = `/**\n * KB Entity Guidance for ${entityName}:\n${kbLines}\n */\n${pageContent}`;
+      }
+    } catch (e) {
+      console.warn(`[KB] Failed to generate entity context for ${entityName}:`, e);
+    }
+  }
+
+  return pageContent;
 }
 
 type PageType = 'list' | 'detail' | 'dashboard' | 'kanban' | 'calendar' | 'settings' | 'timeline' | 'gallery' | 'generic';
@@ -1067,7 +1145,7 @@ function generateSchemaEvolutionComment(plan: ProjectPlan, existingEntities?: st
   return lines.join('\n');
 }
 
-function generateSharedSchema(plan: ProjectPlan, reasoning: ReasoningResult | null, schemaDesign?: SchemaDesign): GeneratedFile {
+function generateSharedSchema(plan: ProjectPlan, reasoning: ReasoningResult | null, schemaDesign?: SchemaDesign, kbContext?: string): GeneratedFile {
   const drizzleImports = new Set<string>(['pgTable', 'serial', 'text']);
 
   const enumMap = new Map<string, string>();
@@ -1314,7 +1392,7 @@ export type Insert${entity.name} = z.infer<typeof insert${entity.name}Schema>;`;
   return {
     path: 'shared/schema.ts',
     language: 'typescript',
-    content: `${generateSchemaEvolutionComment(plan)}import { ${drizzleImportList} } from "drizzle-orm/pg-core";
+    content: `${generateSchemaEvolutionComment(plan)}${kbContext ? `/**\n * KB Schema Guidance:\n${kbContext.split('\n').slice(0, 15).map(l => ` * ${l}`).join('\n')}\n */\n\n` : ''}import { ${drizzleImportList} } from "drizzle-orm/pg-core";
 import { z } from "zod";
 ${enumDeclarations.length > 0 ? `
 // ============================================================================
@@ -1338,7 +1416,7 @@ ${zodSchemas}
   };
 }
 
-function generateServerRoutes(plan: ProjectPlan, reasoning: ReasoningResult | null, apiDesign?: APIDesign): GeneratedFile {
+function generateServerRoutes(plan: ProjectPlan, reasoning: ReasoningResult | null, apiDesign?: APIDesign, kbContext?: string): GeneratedFile {
   const paginationDesign = apiDesign?.pagination;
   const defaultPageSize = paginationDesign?.defaultPageSize || 20;
   const maxPageSize = paginationDesign?.maxPageSize || 100;
@@ -1473,6 +1551,84 @@ ${validationBlock}      const [updated] = await db.update(${tableVar}).set({ ...
   });`;
   }).join('\n\n');
 
+  const kbRouteBlocks: string[] = [];
+  if (apiDesign?.routes) {
+    const planEntityMap = new Map(plan.dataModel.map(e => [e.name, e]));
+    const kbRoutes = apiDesign.routes.filter(r => r.operation === 'custom' && r.description?.startsWith('KB-prescribed'));
+    for (const route of kbRoutes) {
+      const entity = route.entity ? planEntityMap.get(route.entity) : null;
+      if (!entity) continue;
+      const tableVar = `${toCamel(entity.name)}s`;
+      const zodSchema = `insert${entity.name}Schema`;
+
+      if (route.method === 'GET' && route.path.includes(':id')) {
+        kbRouteBlocks.push(`  // KB-prescribed: ${route.description}
+  app.get("${route.path}", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: true, message: "Invalid ID", code: "VALIDATION_ERROR" });
+      const [item] = await db.select().from(${tableVar}).where(eq(${tableVar}.id, id));
+      if (!item) return res.status(404).json({ error: true, message: "${entity.name} not found", code: "NOT_FOUND" });
+      res.json(item);
+    } catch (error: any) {
+      res.status(500).json({ error: true, message: error.message, code: "INTERNAL_ERROR" });
+    }
+  });`);
+      } else if (route.method === 'GET') {
+        kbRouteBlocks.push(`  // KB-prescribed: ${route.description}
+  app.get("${route.path}", async (_req, res) => {
+    try {
+      const items = await db.select().from(${tableVar}).orderBy(desc(${tableVar}.id));
+      res.json(items);
+    } catch (error: any) {
+      res.status(500).json({ error: true, message: error.message, code: "INTERNAL_ERROR" });
+    }
+  });`);
+      } else if (route.method === 'POST') {
+        kbRouteBlocks.push(`  // KB-prescribed: ${route.description}
+  app.post("${route.path}", async (req, res) => {
+    try {
+      const data = ${zodSchema}.parse(req.body);
+      const [item] = await db.insert(${tableVar}).values(data).returning();
+      res.status(201).json(item);
+    } catch (error: any) {
+      res.status(400).json({ error: true, message: error.message, code: "VALIDATION_ERROR" });
+    }
+  });`);
+      } else if (route.method === 'PATCH' || route.method === 'PUT') {
+        kbRouteBlocks.push(`  // KB-prescribed: ${route.description}
+  app.${route.method.toLowerCase()}("${route.path}", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: true, message: "Invalid ID", code: "VALIDATION_ERROR" });
+      const data = ${zodSchema}.partial().parse(req.body);
+      const [updated] = await db.update(${tableVar}).set({ ...data, updatedAt: new Date() }).where(eq(${tableVar}.id, id)).returning();
+      if (!updated) return res.status(404).json({ error: true, message: "${entity.name} not found", code: "NOT_FOUND" });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ error: true, message: error.message, code: "VALIDATION_ERROR" });
+    }
+  });`);
+      } else if (route.method === 'DELETE') {
+        kbRouteBlocks.push(`  // KB-prescribed: ${route.description}
+  app.delete("${route.path}", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: true, message: "Invalid ID", code: "VALIDATION_ERROR" });
+      const [deleted] = await db.delete(${tableVar}).where(eq(${tableVar}.id, id)).returning();
+      if (!deleted) return res.status(404).json({ error: true, message: "${entity.name} not found", code: "NOT_FOUND" });
+      res.status(204).end();
+    } catch (error: any) {
+      res.status(500).json({ error: true, message: error.message, code: "INTERNAL_ERROR" });
+    }
+  });`);
+      }
+    }
+  }
+  const kbRoutesSection = kbRouteBlocks.length > 0
+    ? `\n\n  // ── KB-Prescribed Domain Endpoints ──────────────────────────\n${kbRouteBlocks.join('\n\n')}`
+    : '';
+
   const needsOr = plan.dataModel.some(entity => {
     const searchableFields = entity.fields.filter(f => {
       const n = f.name.toLowerCase();
@@ -1509,16 +1665,20 @@ ${validationBlock}      const [updated] = await db.update(${tableVar}).set({ ...
   if (needsIlike) drizzleOrmImports.push('ilike');
   if (needsSql) drizzleOrmImports.push('sql');
 
+  const kbHeader = kbContext
+    ? `/**\n * KB Domain Guidance (auto-injected):\n${kbContext.split('\n').slice(0, 20).map(l => ` * ${l}`).join('\n')}\n */\n\n`
+    : '';
+
   return {
     path: 'server/routes.ts',
     language: 'typescript',
-    content: `import type { Express } from "express";
+    content: `${kbHeader}import type { Express } from "express";
 import { ${drizzleOrmImports.join(', ')} } from "drizzle-orm";
 import { db } from "./db";
 import { ${tableImports}, ${zodImports} } from "../shared/schema";
 
 export function registerRoutes(app: Express) {
-${routeBlocks}
+${routeBlocks}${kbRoutesSection}
 }
 `,
   };

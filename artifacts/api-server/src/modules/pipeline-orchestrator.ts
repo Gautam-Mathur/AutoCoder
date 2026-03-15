@@ -126,6 +126,7 @@ export interface PipelineContext {
   frozenPlan?: ProjectPlan;
   entityIntelligenceCtx?: EntityIntelligenceContext;
   reasoning?: ReasoningResult;
+  detectedDomain?: string;
   architecture?: ArchitecturePlan;
   designSystem?: DesignSystem;
   functionalitySpec?: FunctionalitySpec;
@@ -359,6 +360,10 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
     emitStep(ctx, 'understand', 'Skipping re-analysis', 'No prior understanding data available — the plan will be used as-is');
     skippedStages.push('understand');
   }
+
+  ctx.detectedDomain = understanding?.level2_domain?.primaryDomain?.id
+    || understanding?.level2_domain?.primaryDomain?.name
+    || undefined;
 
   // Stage 2: Planning (already done, validate)
   const planStage = PIPELINE_STAGES.find(s => s.id === 'plan')!;
@@ -634,7 +639,7 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
   emitStep(ctx, 'architect', 'System Architect designing application structure', `Analyzing ${entityCount} entities and ${pageCount} pages to determine the optimal folder structure, state management approach, authentication strategy, and data flow patterns`);
   emitStep(ctx, 'architect', 'Why architecture comes before code', 'Choosing the right patterns upfront (component vs page routing, local vs global state, REST vs nested resources) prevents costly refactoring later and ensures all generated files follow a consistent structure');
   executeStage(ctx, archStage, () => {
-    ctx.architecture = planArchitecture(ctx.plan!, ctx.reasoning);
+    ctx.architecture = planArchitecture(ctx.plan!, ctx.reasoning, ctx.detectedDomain);
     const decisions = Object.keys(ctx.architecture || {}).length;
     if (ctx.architecture) {
       emitStep(ctx, 'architect', 'Architecture decisions made', `Pattern: ${ctx.architecture.pattern || 'modular'} | State: ${ctx.architecture.stateManagement?.approach || 'context-based'} | Auth: ${ctx.architecture.authPattern?.type || 'session'} | ${decisions} total architectural decisions`);
@@ -713,7 +718,7 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
   emitStep(ctx, 'schema', 'Database Engineer designing normalized schema', `Converting ${entityCount} entities into production-grade database tables with proper column types, indexes, foreign keys, constraints, and audit trails`);
   emitStep(ctx, 'schema', 'Why schema design is separate from planning', 'The plan says "User has orders" — the schema engineer decides: integer vs UUID primary keys, created_at/updated_at timestamps, soft delete columns, composite indexes for common queries, and junction tables for many-to-many relationships');
   executeStage(ctx, schemaStage, () => {
-    ctx.schemaDesign = designSchema(ctx.plan!, ctx.reasoning);
+    ctx.schemaDesign = designSchema(ctx.plan!, ctx.reasoning, ctx.detectedDomain);
     const tableCount = ctx.schemaDesign?.tables?.length || 0;
     const indexCount = ctx.schemaDesign?.tables?.reduce((sum: number, t: { indexes?: unknown[] }) => sum + (t.indexes?.length || 0), 0) || 0;
     const junctionCount = ctx.schemaDesign?.junctionTables?.length || 0;
@@ -752,7 +757,7 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
   emitStep(ctx, 'api', 'API Architect designing RESTful endpoints', `Creating a complete API layer based on ${entityCount} entities — CRUD routes, search endpoints, nested resources, batch operations, validation schemas, and error handling`);
   emitStep(ctx, 'api', 'Why dedicated API design', 'Auto-generated CRUD is not enough — the API architect adds pagination, sorting, filtering, proper HTTP status codes, Zod validation, rate limiting, and standardized error responses that make the API production-ready');
   executeStage(ctx, apiStage, () => {
-    ctx.apiDesign = designAPI(ctx.plan!, ctx.reasoning, ctx.schemaDesign);
+    ctx.apiDesign = designAPI(ctx.plan!, ctx.reasoning, ctx.schemaDesign, ctx.detectedDomain);
     const routeCount = ctx.apiDesign?.routes?.length || 0;
     const middlewareCount = ctx.apiDesign?.middleware?.length || 0;
     emitStep(ctx, 'api', 'API structure', `${routeCount} routes designed with ${middlewareCount} middleware layers | Includes validation, error handling, and pagination for all list endpoints`);
@@ -786,7 +791,7 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
   emitStep(ctx, 'compose', 'UI Engineer composing component tree', `Planning the complete React component hierarchy — layout wrappers, shared presentational components, per-entity containers, context boundaries, custom hooks, and accessibility attributes`);
   emitStep(ctx, 'compose', 'Why component composition before code generation', 'Deciding component boundaries first prevents code duplication — shared components (SearchBar, DataTable, FormField) are identified now so the generator creates them once and imports them everywhere instead of copy-pasting code');
   executeStage(ctx, composeStage, () => {
-    ctx.componentTree = composeComponents(ctx.plan!, ctx.reasoning, ctx.functionalitySpec, ctx.designSystem);
+    ctx.componentTree = composeComponents(ctx.plan!, ctx.reasoning, ctx.functionalitySpec, ctx.designSystem, ctx.detectedDomain);
     const componentCount = ctx.componentTree?.components?.length || 0;
     const layoutCount = ctx.componentTree?.layouts?.length || 0;
     emitStep(ctx, 'compose', 'Component tree built', `${componentCount} components planned across ${layoutCount} layout templates | Shared components identified for reuse, per-entity containers for isolation`);
@@ -832,6 +837,7 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
       reasoning: ctx.reasoning,
       designSystem: ctx.designSystem,
       functionalitySpec: ctx.functionalitySpec,
+      detectedDomain: ctx.detectedDomain,
     };
     const planForGeneration = ctx.frozenPlan || ctx.plan!;
     ctx.files = generateProjectFromPlan(planForGeneration, (phase, detail) => {
@@ -884,7 +890,7 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
   emitStep(ctx, 'resolve', 'DevOps Engineer resolving dependencies', 'Scanning all generated files to detect every imported package, verify version compatibility, estimate bundle size, and ensure no conflicting versions exist');
   emitStep(ctx, 'resolve', 'Why dependency resolution matters', 'A missing or wrong-version dependency causes immediate build failure — this module cross-references every import statement against a known package registry to catch issues before the user tries to run the app');
   executeStage(ctx, resolveStage, () => {
-    ctx.dependencyManifest = resolveDependencies(ctx.plan!, ctx.files);
+    ctx.dependencyManifest = resolveDependencies(ctx.plan!, ctx.files, ctx.detectedDomain);
     const pkgFile = ctx.files.find(f => f.path === 'package.json');
     if (pkgFile && ctx.dependencyManifest) {
       try {
@@ -921,7 +927,7 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
   emitStep(ctx, 'quality', 'Code Reviewer performing quality analysis', `Scanning ${ctx.files.length} files across 8 quality categories: TypeScript correctness, React patterns, error handling, UI states, performance, accessibility, code style, and security`);
   emitStep(ctx, 'quality', 'Why automated code review', 'Catches common mistakes before the user sees them — unused imports, missing error boundaries, unhandled loading states, unsafe innerHTML, missing alt text, and other issues that would fail a real code review');
   executeStage(ctx, qualityStage, () => {
-    ctx.qualityReport = analyzeCodeQuality(ctx.files, ctx.plan!);
+    ctx.qualityReport = analyzeCodeQuality(ctx.files, ctx.plan!, ctx.detectedDomain);
     if (ctx.qualityReport?.fixes && ctx.qualityReport.fixes.length > 0) {
       emitStep(ctx, 'quality', 'Auto-fixing issues', `Found ${ctx.qualityReport.fixes.length} fixable issues — applying automatic corrections to maintain quality standards`);
       ctx.files = applyQualityFixes(ctx.files, ctx.qualityReport.fixes);
@@ -942,7 +948,7 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
   emitStep(ctx, 'test', 'Why tests are generated automatically', 'Tests catch regressions when the user modifies code — API route tests verify CRUD operations, component tests check rendering, and validation tests ensure business rules are enforced');
   executeStage(ctx, testStage, () => {
     try {
-      ctx.testFiles = generateTestFiles(ctx.plan!, ctx.reasoning!);
+      ctx.testFiles = generateTestFiles(ctx.plan!, ctx.reasoning!, ctx.detectedDomain);
       emitStep(ctx, 'test', 'Test suite created', `${ctx.testFiles.length} test files generated — covering API endpoints, component rendering, data validation, and security assertions`);
       return {
         score: Math.min(100, 60 + ctx.testFiles.length * 5),
@@ -1040,6 +1046,7 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
             reasoning: ctx.reasoning,
             designSystem: ctx.designSystem,
             functionalitySpec: ctx.functionalitySpec,
+            detectedDomain: ctx.detectedDomain,
           };
           const regenFiles = generateProjectFromPlan(ctx.plan!, undefined, enrichment);
           const regenFile = regenFiles.find(f => f.path === affectedPath);
@@ -1102,6 +1109,7 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
         architecture: ctx.architecture,
         componentTree: ctx.componentTree,
         functionalitySpec: ctx.functionalitySpec,
+        detectedDomain: ctx.detectedDomain,
       };
       ctx.files = generateProjectFromPlan(ctx.plan!, (phase, detail) => {
         emitStep(ctx, 'generate-fallback', `[fallback:${phase}] ${detail}`, undefined);

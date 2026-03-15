@@ -14,6 +14,7 @@
 
 import type { ProjectPlan, PlannedEntity, PlannedPage, PlannedWorkflow } from './plan-generator.js';
 import type { ReasoningResult, EntityRelationship } from './contextual-reasoning-engine.js';
+import { getDomainModel, getBestPractices } from './knowledge-base.js';
 
 export interface ArchitecturePlan {
   pattern: AppPattern;
@@ -123,7 +124,7 @@ export interface ArchitectureDecision {
   tradeoffs: string[];
 }
 
-export function planArchitecture(plan: ProjectPlan, reasoning?: ReasoningResult | null): ArchitecturePlan {
+export function planArchitecture(plan: ProjectPlan, reasoning?: ReasoningResult | null, detectedDomain?: string): ArchitecturePlan {
   const entities = plan.dataModel || [];
   const pages = plan.pages || [];
   const workflows = plan.workflows || [];
@@ -139,6 +140,60 @@ export function planArchitecture(plan: ProjectPlan, reasoning?: ReasoningResult 
   const routing = planRouting(pages, authPattern, pattern);
   const codeOrganization = planCodeOrganization(entities);
   const decisions = collectDecisions(pattern, stateManagement, authPattern, dataFlow, performance);
+
+  if (detectedDomain) {
+    const domainModel = getDomainModel(detectedDomain);
+    if (domainModel) {
+      decisions.push({
+        area: 'Domain Architecture',
+        decision: `Applying ${domainModel.name} domain architecture idioms`,
+        rationale: `KB domain model "${domainModel.name}" prescribes patterns for ${domainModel.coreEntities?.join(', ') || 'this domain'}`,
+        tradeoffs: ['Domain-specific optimizations', 'Less generic but more appropriate patterns'],
+      });
+
+      if (domainModel.coreEntities.length > 5 && folderStructure.strategy !== 'feature-based') {
+        folderStructure.strategy = 'feature-based';
+        decisions.push({
+          area: 'Folder Structure',
+          decision: 'Switched to feature-based structure due to domain complexity',
+          rationale: `Domain "${domainModel.name}" has ${domainModel.coreEntities.length} core entities — feature-based grouping prevents flat directory sprawl`,
+          tradeoffs: ['Better entity isolation', 'More directories to navigate'],
+        });
+      }
+
+      for (const feature of domainModel.typicalFeatures.slice(0, 3)) {
+        const featureDir = feature.replace(/\s+/g, '-').toLowerCase();
+        if (!folderStructure.directories.some(d => d.purpose.toLowerCase().includes(featureDir))) {
+          folderStructure.directories.push({
+            path: `src/features/${featureDir}`,
+            purpose: `Domain feature: ${feature}`,
+            filePattern: '*.tsx',
+          });
+        }
+      }
+
+      if (domainModel.securityConsiderations.length > 0) {
+        decisions.push({
+          area: 'Security',
+          decision: domainModel.securityConsiderations[0],
+          rationale: `KB domain "${domainModel.name}" security consideration`,
+          tradeoffs: domainModel.securityConsiderations.slice(1, 3),
+        });
+      }
+    }
+
+    const archBestPractices = getBestPractices('architecture');
+    if (archBestPractices.length > 0) {
+      for (const bp of archBestPractices.slice(0, 3)) {
+        decisions.push({
+          area: 'KB Best Practice',
+          decision: bp.title || bp.id,
+          rationale: bp.description || '',
+          tradeoffs: bp.do?.slice(0, 2) || [],
+        });
+      }
+    }
+  }
 
   return {
     pattern,

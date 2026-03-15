@@ -14,6 +14,7 @@
 
 import type { ProjectPlan, PlannedEntity, SecurityPlan, PerformancePlan } from './plan-generator.js';
 import type { ReasoningResult, EntityRelationship } from './contextual-reasoning-engine.js';
+import { getSchemaSuggestions, matchEntityToArchetype, getWorkflowPattern } from './knowledge-base.js';
 
 export interface SchemaDesign {
   tables: TableDesign[];
@@ -101,11 +102,45 @@ export interface AuditStrategy {
   changeLog: boolean;
 }
 
-export function designSchema(plan: ProjectPlan, reasoning?: ReasoningResult | null): SchemaDesign {
+export function designSchema(plan: ProjectPlan, reasoning?: ReasoningResult | null, detectedDomain?: string): SchemaDesign {
   const entities = plan.dataModel || [];
   const relationships = reasoning?.relationships || [];
 
-  const tables = entities.map(entity => designTable(entity, relationships));
+  const enrichedEntities = entities.map(entity => {
+    try {
+      const archetype = matchEntityToArchetype(entity.name);
+      if (archetype) {
+        const enrichedFields = [...entity.fields];
+        const existingFieldNames = new Set(enrichedFields.map(f => f.name.toLowerCase()));
+        for (const sf of archetype.suggestedFields) {
+          if (!existingFieldNames.has(sf.name.toLowerCase())) {
+            enrichedFields.push({
+              name: sf.name,
+              type: sf.type,
+              required: !sf.nullable,
+              description: sf.description,
+            });
+          }
+        }
+
+        const wfPattern = getWorkflowPattern(archetype.id || entity.name);
+        if (wfPattern && !enrichedFields.some(f => f.name.toLowerCase() === 'status')) {
+          enrichedFields.push({
+            name: 'status',
+            type: 'string',
+            required: true,
+            description: `Workflow state (KB pattern: ${archetype.name})`,
+          });
+        }
+        return { ...entity, fields: enrichedFields };
+      }
+    } catch (e) {
+      console.warn(`[KB] schema enrichment failed for entity ${entity.name}:`, e);
+    }
+    return entity;
+  });
+
+  const tables = enrichedEntities.map(entity => designTable(entity, relationships));
   const junctionTables = detectJunctionTables(entities, relationships);
   const enums = extractEnums(entities);
   const indexes = planIndexes(tables, relationships);
@@ -113,6 +148,45 @@ export function designSchema(plan: ProjectPlan, reasoning?: ReasoningResult | nu
   const auditStrategy = determineAuditStrategy(entities);
   const softDelete = shouldUseSoftDelete(entities);
   const migrationNotes = generateMigrationNotes(tables, junctionTables);
+
+  for (const entity of enrichedEntities) {
+    try {
+      const archetype = matchEntityToArchetype(entity.name);
+      if (archetype?.suggestedIndexes) {
+        const tableName = entity.name.toLowerCase().replace(/\s+/g, '_') + 's';
+        for (const idxSpec of archetype.suggestedIndexes) {
+          const columns = idxSpec.replace(/[()]/g, '').split(',').map(c => c.trim()).filter(Boolean);
+          const indexName = `kb_idx_${tableName}_${columns.join('_')}`;
+          const exists = indexes.some(i => i.name === indexName || (i.table === tableName && JSON.stringify(i.columns.sort()) === JSON.stringify(columns.sort())));
+          if (!exists && columns.every(c => entity.fields.some(f => f.name.toLowerCase() === c.toLowerCase()))) {
+            indexes.push({
+              name: indexName,
+              table: tableName,
+              columns: columns,
+              unique: false,
+              type: 'btree',
+              comment: `KB-prescribed index for ${archetype.name} archetype`,
+            });
+          }
+        }
+      }
+
+      if (archetype?.traits?.includes('soft-deletable')) {
+        const table = tables.find(t => t.name.toLowerCase() === entity.name.toLowerCase().replace(/\s+/g, '_') + 's');
+        if (table && !table.hasSoftDelete) {
+          table.hasSoftDelete = true;
+          migrationNotes.push(`KB: ${entity.name} marked for soft-delete per "${archetype.name}" archetype trait`);
+        }
+      }
+
+      const suggestion = getSchemaSuggestions(entity.name, detectedDomain);
+      if (suggestion) {
+        migrationNotes.push(`KB: ${entity.name} — ${suggestion.split('\n')[0]}`);
+      }
+    } catch (e) {
+      console.warn(`[KB] schema enrichment failed for entity ${entity.name}:`, e);
+    }
+  }
 
   if (softDelete) {
     for (const table of tables) {

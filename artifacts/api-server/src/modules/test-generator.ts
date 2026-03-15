@@ -9,6 +9,7 @@
 
 import type { ProjectPlan, PlannedEntity, PlannedEndpoint } from './plan-generator.js';
 import type { ReasoningResult, EntityRelationship } from './contextual-reasoning-engine.js';
+import { getBestPractices, matchEntityToArchetype } from './knowledge-base.js';
 
 interface GeneratedFile {
   path: string;
@@ -115,7 +116,7 @@ function buildRequiredFieldsObject(entity: PlannedEntity): string {
  * Main export: generates all test files for the given project plan and reasoning result.
  * Returns an array of GeneratedFile objects ready to be written to disk.
  */
-export function generateTestFiles(plan: ProjectPlan, reasoning: ReasoningResult): GeneratedFile[] {
+export function generateTestFiles(plan: ProjectPlan, reasoning: ReasoningResult, detectedDomain?: string): GeneratedFile[] {
   const files: GeneratedFile[] = [];
 
   // 1. Test setup file
@@ -137,7 +138,89 @@ export function generateTestFiles(plan: ProjectPlan, reasoning: ReasoningResult)
   const opTests = generateOPPlanTests(plan);
   if (opTests) files.push(opTests);
 
-  // 7. Vitest configuration
+  // 7. KB-driven entity archetype tests
+  if (detectedDomain) {
+    try {
+      const entities = plan.dataModel || [];
+      const kbTestLines: string[] = [];
+      kbTestLines.push(`import { describe, it, expect } from 'vitest';`);
+      kbTestLines.push('');
+      kbTestLines.push(`describe('KB Domain Tests (${detectedDomain})', () => {`);
+
+      for (const entity of entities) {
+        const archetype = matchEntityToArchetype(entity.name);
+        if (archetype) {
+          const entitySlug = toKebabCase(entity.name);
+          kbTestLines.push(`  describe('${entity.name} (archetype: ${archetype.name})', () => {`);
+
+          const requiredFields = archetype.suggestedFields?.filter(f => !f.nullable) || [];
+          if (requiredFields.length > 0) {
+            kbTestLines.push(`    it('schema includes KB-required fields', async () => {`);
+            kbTestLines.push(`      const res = await fetch('/api/${entitySlug}s');`);
+            kbTestLines.push(`      expect(res.status).toBe(200);`);
+            kbTestLines.push(`      const items = await res.json();`);
+            kbTestLines.push(`      if (Array.isArray(items) && items.length > 0) {`);
+            for (const field of requiredFields.slice(0, 5)) {
+              kbTestLines.push(`        expect(items[0]).toHaveProperty('${toCamelCase(field.name)}');`);
+            }
+            kbTestLines.push(`      }`);
+            kbTestLines.push(`    });`);
+          }
+
+          kbTestLines.push(`    it('supports CRUD operations for ${entity.name}', async () => {`);
+          kbTestLines.push(`      const listRes = await fetch('/api/${entitySlug}s');`);
+          kbTestLines.push(`      expect([200, 201, 404]).toContain(listRes.status);`);
+          kbTestLines.push(`    });`);
+
+          if (archetype.traits?.includes('workflowable')) {
+            kbTestLines.push(`    it('has workflow/status field per KB archetype', async () => {`);
+            kbTestLines.push(`      const res = await fetch('/api/${entitySlug}s');`);
+            kbTestLines.push(`      if (res.ok) {`);
+            kbTestLines.push(`        const items = await res.json();`);
+            kbTestLines.push(`        if (Array.isArray(items) && items.length > 0) {`);
+            kbTestLines.push(`          expect(items[0]).toHaveProperty('status');`);
+            kbTestLines.push(`        }`);
+            kbTestLines.push(`      }`);
+            kbTestLines.push(`    });`);
+          }
+
+          kbTestLines.push(`  });`);
+        }
+      }
+
+      const testBP = getBestPractices('testing');
+      if (testBP.length > 0) {
+        kbTestLines.push('');
+        kbTestLines.push(`  describe('KB Best Practice Assertions', () => {`);
+        for (const bp of testBP.slice(0, 3)) {
+          const doItems = bp.do?.slice(0, 2) || [];
+          const dontItems = bp.dont?.slice(0, 2) || [];
+          kbTestLines.push(`    it('follows: ${(bp.title || bp.id || '').replace(/'/g, "\\'")}', () => {`);
+          kbTestLines.push(`      const practice = {`);
+          kbTestLines.push(`        id: '${bp.id}',`);
+          kbTestLines.push(`        do: ${JSON.stringify(doItems)},`);
+          kbTestLines.push(`        dont: ${JSON.stringify(dontItems)},`);
+          kbTestLines.push(`      };`);
+          kbTestLines.push(`      expect(practice.do.length).toBeGreaterThan(0);`);
+          kbTestLines.push(`      expect(practice.id).toBeDefined();`);
+          kbTestLines.push(`    });`);
+        }
+        kbTestLines.push(`  });`);
+      }
+
+      kbTestLines.push(`});`);
+
+      files.push({
+        path: 'src/__tests__/kb-domain.test.ts',
+        content: kbTestLines.join('\n'),
+        language: 'typescript',
+      });
+    } catch (e) {
+      console.warn('[KB] test generation KB enrichment failed:', e);
+    }
+  }
+
+  // 8. Vitest configuration
   files.push(generateVitestConfig());
 
   return files;

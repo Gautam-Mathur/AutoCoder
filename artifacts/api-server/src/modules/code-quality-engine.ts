@@ -15,6 +15,7 @@
  */
 
 import type { ProjectPlan, PlannedEntity } from './plan-generator.js';
+import { getAntiPatternChecklist, getBestPractices, EXPANDED_ANTI_PATTERNS, type AntiPattern } from './knowledge-base.js';
 
 export interface GeneratedFile {
   path: string;
@@ -94,10 +95,86 @@ const RULES = {
   },
 };
 
-export function analyzeCodeQuality(files: GeneratedFile[], plan: ProjectPlan): QualityReport {
+export function analyzeCodeQuality(files: GeneratedFile[], plan: ProjectPlan, detectedDomain?: string): QualityReport {
   const issues: QualityIssue[] = [];
   const fixes: QualityFix[] = [];
   const warnings: string[] = [];
+
+  try {
+    const TAG_TO_CATEGORY: Record<string, string> = {
+      'typescript': 'TypeScript Quality',
+      'react': 'React Patterns',
+      'hooks': 'React Patterns',
+      'rendering': 'Performance',
+      'performance': 'Performance',
+      'security': 'Security',
+      'ux': 'UI States',
+      'database': 'Structural Integrity',
+      'drizzle': 'Structural Integrity',
+      'api': 'Structural Integrity',
+    };
+
+    const relevantAntiPatterns: AntiPattern[] = EXPANDED_ANTI_PATTERNS.filter(
+      ap => ap.tags.some(t => ['typescript', 'react', 'hooks', 'security', 'performance', 'rendering'].includes(t))
+    );
+
+    for (const ap of relevantAntiPatterns) {
+      try {
+        const badSnippets = ap.badExample?.match(/`([^`]+)`/g)?.map(s => s.slice(1, -1)) || [];
+        const literalChecks = badSnippets
+          .filter(s => s.length > 3 && s.length < 60 && !/[{}\[\]()\\]/g.test(s))
+          .slice(0, 2);
+
+        for (const file of files) {
+          for (const literal of literalChecks) {
+            if (file.content.includes(literal)) {
+              const category = ap.tags.map(t => TAG_TO_CATEGORY[t]).find(Boolean) || 'Best Practices';
+              issues.push({
+                file: file.path,
+                line: 0,
+                rule: `kb:${ap.id}`,
+                message: `KB anti-pattern "${ap.name}": ${ap.fix || ap.description}`,
+                severity: ap.severity === 'critical' || ap.severity === 'high' ? 'error' : 'warning',
+                category,
+                autoFixable: false,
+              });
+              break;
+            }
+          }
+        }
+      } catch {}
+    }
+
+    const staticChecks: Array<{ pattern: RegExp; rule: string; message: string; severity: 'error' | 'warning'; category: string; glob?: string }> = [
+      { pattern: /: any[;\s,\)]/, rule: 'kb:no-explicit-any', message: 'Avoid "any" type — use specific types or "unknown"', severity: 'warning', category: 'TypeScript Quality', glob: '.ts' },
+      { pattern: /as any/, rule: 'kb:no-type-assertion-any', message: 'Avoid "as any" — use proper type narrowing', severity: 'warning', category: 'TypeScript Quality', glob: '.ts' },
+      { pattern: /innerHTML/, rule: 'kb:no-innerhtml', message: 'Avoid innerHTML — XSS risk. Use React JSX rendering', severity: 'error', category: 'Security', glob: '.tsx' },
+      { pattern: /eval\(/, rule: 'kb:no-eval', message: 'Never use eval() — security vulnerability', severity: 'error', category: 'Security' },
+    ];
+    for (const file of files) {
+      for (const check of staticChecks) {
+        if (check.glob && !file.path.endsWith(check.glob)) continue;
+        if (check.pattern.test(file.content)) {
+          issues.push({
+            file: file.path,
+            line: 0,
+            rule: check.rule,
+            message: `KB: ${check.message}`,
+            severity: check.severity,
+            category: check.category,
+            autoFixable: false,
+          });
+        }
+      }
+    }
+
+    const qualityBP = getBestPractices('code-quality');
+    for (const bp of qualityBP.slice(0, 3)) {
+      warnings.push(`KB quality guideline: ${bp.title || bp.id} — ${bp.description || ''}`);
+    }
+  } catch (e) {
+    console.warn('[KB] quality engine KB enrichment failed:', e);
+  }
 
   const categories: QualityCategory[] = [
     { name: 'TypeScript Quality', score: 0, maxScore: 20, issues: 0, description: 'Type safety and TS best practices' },

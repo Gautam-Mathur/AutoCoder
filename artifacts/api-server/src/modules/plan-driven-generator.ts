@@ -166,7 +166,7 @@ export function generateProjectFromPlan(plan: ProjectPlan, onProgress?: Progress
     console.warn('[CodeGen V2] Validation found errors — attempting to proceed anyway');
   }
 
-  const testFiles = generateTestFiles(enrichedPlan, reasoning);
+  const testFiles = generateTestFiles(enrichedPlan, reasoning, enrichment?.detectedDomain);
   files.push(...testFiles);
 
   return files;

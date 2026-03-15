@@ -17,6 +17,7 @@
 import type { ProjectPlan, PlannedEntity, PlannedEndpoint, SecurityPlan } from './plan-generator.js';
 import type { ReasoningResult, EntityRelationship } from './contextual-reasoning-engine.js';
 import type { SchemaDesign } from './schema-designer.js';
+import { getDomainModel, matchEntityToArchetype, getBestPractices } from './knowledge-base.js';
 
 export interface APIDesign {
   basePath: string;
@@ -173,7 +174,7 @@ export interface FileUploadRoute {
   allowedTypes: string[];
 }
 
-export function designAPI(plan: ProjectPlan, reasoning?: ReasoningResult | null, schema?: SchemaDesign | null): APIDesign {
+export function designAPI(plan: ProjectPlan, reasoning?: ReasoningResult | null, schema?: SchemaDesign | null, detectedDomain?: string): APIDesign {
   const entities = plan.dataModel || [];
   const relationships = reasoning?.relationships || [];
 
@@ -186,6 +187,64 @@ export function designAPI(plan: ProjectPlan, reasoning?: ReasoningResult | null,
   const responseFormat = designResponseFormat();
   const batchOperations = detectBatchOperations(entities);
   const fileUploadRoutes = detectFileUploadRoutes(entities);
+
+  if (detectedDomain) {
+    try {
+      const domainModel = getDomainModel(detectedDomain);
+      if (domainModel) {
+        for (const entity of entities) {
+          const archetype = matchEntityToArchetype(entity.name);
+          if (archetype?.typicalEndpoints) {
+            const entitySlug = entity.name.replace(/([A-Z])/g, '-$1').toLowerCase().replace(/^-/, '').replace(/[\s_]+/g, '-');
+            for (const ep of archetype.typicalEndpoints) {
+              const match = ep.match(/^(GET|POST|PUT|PATCH|DELETE)\s+(\/[^\s(]+)/i);
+              if (!match) continue;
+              const method = match[1].toUpperCase() as RouteDesign['method'];
+              let rawPath = match[2].split('?')[0].replace(/\s*\(.*$/, '').trim();
+              if (!rawPath.startsWith('/api/')) {
+                rawPath = `/api/${entitySlug}s${rawPath.startsWith('/') ? rawPath : '/' + rawPath}`;
+              }
+              rawPath = rawPath.replace(/[^a-zA-Z0-9/:_-]/g, '');
+              const exists = routes.some(r => r.method === method && r.path === rawPath);
+              if (!exists) {
+                routes.push({
+                  method,
+                  path: rawPath,
+                  handler: `kb_${entity.name}_${rawPath.replace(/[/:]/g, '_')}`,
+                  entity: entity.name,
+                  operation: 'custom',
+                  description: `KB-prescribed endpoint for ${entity.name}`,
+                  params: rawPath.includes(':id') ? [{ name: 'id', type: 'number', description: `${entity.name} ID`, required: true }] : [],
+                  queryParams: [],
+                  responseSchema: { statusCode: 200, contentType: 'application/json', shape: 'single', entityName: entity.name },
+                  middleware: ['validateRequest'],
+                  cacheable: method === 'GET',
+                  cacheTTL: method === 'GET' ? 30000 : undefined,
+                });
+              }
+            }
+          }
+        }
+      }
+
+      const apiBestPractices = getBestPractices('api');
+      if (apiBestPractices.length > 0) {
+        for (const bp of apiBestPractices.slice(0, 2)) {
+          const mwName = `kb_${bp.id?.replace(/[^a-zA-Z0-9]/g, '_') || 'practice'}`;
+          if (!middleware.some(m => m.name === mwName)) {
+            middleware.push({
+              name: mwName,
+              purpose: `KB best practice: ${bp.title || bp.id}`,
+              appliesTo: '*',
+              order: 50,
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[KB] API design enrichment failed:', e);
+    }
+  }
 
   return {
     basePath: '/api',
