@@ -532,7 +532,7 @@ export function runModularFix(
     file: filePath,
     originalContent: fileContent,
     fixedContent: currentContent,
-    iterations: iteration,
+    iterations: Math.min(iteration, MAX_FIX_ITERATIONS),
     fixesApplied: allFixes,
     remainingIssues,
     success: remainingIssues.filter(i => i.severity === 'critical' || i.severity === 'error').length === 0,

@@ -902,7 +902,31 @@ export default function Chat() {
                           </div>
                         )}
                       </>
-                    ) : !diagnostics && (
+                    ) : diagnostics && diagnostics.totalIssues === 0 ? (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Bug className="h-3 w-3 text-green-500 flex-shrink-0" />
+                        <span>No issues found</span>
+                        <button
+                          onClick={async () => {
+                            try {
+                              const resp = await fetch(`/api/modules/diagnostics`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ files: conversationFiles.map(f => ({ path: f.path, content: f.content })) }),
+                              });
+                              if (resp.ok) {
+                                const report = await resp.json();
+                                setDiagnostics(report);
+                                if (report.totalIssues > 0) setDiagnosticsOpen(true);
+                              }
+                            } catch {}
+                          }}
+                          className="text-[10px] text-primary hover:text-primary/80 ml-auto"
+                        >
+                          Re-run
+                        </button>
+                      </div>
+                    ) : (
                       <button
                         onClick={async () => {
                           try {
