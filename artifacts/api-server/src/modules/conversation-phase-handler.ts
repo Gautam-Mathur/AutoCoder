@@ -831,6 +831,11 @@ async function handleGeneration(
     ? ` (Grade: ${orchestrationResult.context.qualityReport.grade})`
     : '';
 
+  const valSummary = orchestrationResult.context.validationSummary;
+  const validationBlock = valSummary
+    ? `\n### Code Validation\n- **${valSummary.passes}** validation pass${valSummary.passes !== 1 ? 'es' : ''} completed\n- **${valSummary.issuesFixed}** issues auto-fixed${valSummary.unfixableIssues.length > 0 ? `\n- **${valSummary.unfixableIssues.length}** issues require manual review` : '\n- All imports, exports, and dependencies verified'}`
+    : '';
+
   const responseContent = `## ${plan.projectName} - Generated Successfully!
 
 Your project was built by a **${summary.totalStages}-module AI pipeline** with an overall quality score of **${summary.overallQuality}/100**${qualityGrade}.
@@ -841,6 +846,7 @@ Your project was built by a **${summary.totalStages}-module AI pipeline** with a
 - **${metrics.endpointCount} API endpoints** designed
 - **${metrics.componentCount} UI components** composed
 - Completed in **${(metrics.totalDurationMs / 1000).toFixed(1)}s**
+${validationBlock}
 
 ### Architecture Highlights
 ${highlightsList}

@@ -33,6 +33,7 @@ import { analyzeCodeQuality, applyQualityFixes } from './code-quality-engine.js'
 import { resolveDependencies } from './dependency-resolver.js';
 import { generateProjectFromPlan } from './plan-driven-generator.js';
 import { validateAndFix } from './post-generation-validator.js';
+import { parseErrors, analyzeAndFix as viteAnalyzeAndFix } from './vite-error-fixer.js';
 import { isSLMAvailable, runSLM } from './slm-inference-engine.js';
 import { UNDERSTANDING_STAGE_ID, mergeUnderstandingResults } from './slm-stage-understanding.js';
 import { CODEGEN_STAGE_ID, applyCodeEnhancements, validateCodeEnhancement } from './slm-stage-codegen.js';
@@ -128,6 +129,7 @@ export interface PipelineContext {
   files: GeneratedFile[];
   dependencyManifest?: DependencyManifest;
   qualityReport?: QualityReport;
+  validationSummary?: { passes: number; issuesFound: number; issuesFixed: number; unfixableIssues: string[] };
   testFiles: GeneratedFile[];
   metrics: PipelineMetrics;
   thinkingSteps: ThinkingStep[];
@@ -876,16 +878,66 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
   const validateStage = PIPELINE_STAGES.find(s => s.id === 'validate')!;
   emitStep(ctx, 'validate', 'Release Engineer running validation passes', `Multi-pass validation: checking all imports resolve, exports match, dependencies exist in package.json, TypeScript types align, and no circular references exist across ${ctx.files.length} files`);
   executeStage(ctx, validateStage, () => {
-    const result = validateAndFix(ctx.files);
-    ctx.files = result.files;
-    const fixCount = result.fixesApplied?.length || 0;
-    const issueCount = result.issues?.length || 0;
+    let currentResult = validateAndFix(ctx.files);
+    ctx.files = currentResult.files;
+    let totalFixCount = currentResult.fixesApplied?.length || 0;
+    let totalPasses = currentResult.iterations;
 
-    // Feedback loop: if validation found unfixable errors, attempt targeted file regeneration
-    const unfixedErrors = result.issues?.filter(i => i.severity === 'error') || [];
-    if (unfixedErrors.length > 0 && ctx.plan && ctx.reasoning) {
-      emitStep(ctx, 'validate', 'Feedback loop activated', `${unfixedErrors.length} unfixed errors detected — attempting targeted regeneration of affected files`);
-      const affectedPaths = Array.from(new Set(unfixedErrors.map(i => i.file).filter(Boolean)));
+    const unfixedErrorMessages = (currentResult.issues || [])
+      .filter(i => i.severity === 'error')
+      .map(i => i.message);
+    if (unfixedErrorMessages.length > 0) {
+      const parsedErrors = parseErrors(unfixedErrorMessages);
+      if (parsedErrors.length > 0) {
+        const projectFiles = ctx.files.map(f => ({
+          path: f.path,
+          content: f.content,
+          language: f.language || (f.path.split('.').pop() || ''),
+        }));
+        const viteFixResult = viteAnalyzeAndFix(parsedErrors, projectFiles);
+        if (viteFixResult.fixes.length > 0) {
+          let viteFixesApplied = 0;
+          for (const fix of viteFixResult.fixes) {
+            if (fix.type === 'patch_file' && fix.oldContent) {
+              const fileIdx = ctx.files.findIndex(f => f.path === fix.filePath);
+              if (fileIdx >= 0) {
+                ctx.files[fileIdx] = { ...ctx.files[fileIdx], content: ctx.files[fileIdx].content.replace(fix.oldContent, fix.newContent) };
+                viteFixesApplied++;
+              }
+            } else if (fix.type === 'create_file') {
+              ctx.files.push({ path: fix.filePath, content: fix.newContent, language: fix.filePath.split('.').pop() || '' });
+              viteFixesApplied++;
+            } else if (fix.type === 'add_dependency' && fix.packageName) {
+              const pkgIdx = ctx.files.findIndex(f => f.path === 'package.json');
+              if (pkgIdx >= 0) {
+                try {
+                  const pkg = JSON.parse(ctx.files[pkgIdx].content);
+                  if (!pkg.dependencies) pkg.dependencies = {};
+                  if (!pkg.dependencies[fix.packageName]) {
+                    pkg.dependencies[fix.packageName] = fix.packageVersion || 'latest';
+                    ctx.files[pkgIdx] = { ...ctx.files[pkgIdx], content: JSON.stringify(pkg, null, 2) };
+                    viteFixesApplied++;
+                  }
+                } catch {}
+              }
+            }
+          }
+          if (viteFixesApplied > 0) {
+            totalFixCount += viteFixesApplied;
+            emitStep(ctx, 'validate', 'Vite error fixer applied', `${viteFixesApplied} Vite-specific fixes applied`);
+            currentResult = validateAndFix(ctx.files);
+            ctx.files = currentResult.files;
+            totalFixCount += currentResult.fixesApplied?.length || 0;
+            totalPasses += currentResult.iterations;
+          }
+        }
+      }
+    }
+
+    const currentUnfixed = (currentResult.issues || []).filter(i => i.severity === 'error');
+    if (currentUnfixed.length > 0 && ctx.plan && ctx.reasoning) {
+      emitStep(ctx, 'validate', 'Feedback loop activated', `${currentUnfixed.length} unfixed errors detected — attempting targeted regeneration of affected files`);
+      const affectedPaths = Array.from(new Set(currentUnfixed.map(i => i.file).filter(Boolean)));
       let regenerated = 0;
       for (const affectedPath of affectedPaths) {
         const existingIdx = ctx.files.findIndex(f => f.path === affectedPath);
@@ -910,22 +962,36 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
       }
       if (regenerated > 0) {
         emitStep(ctx, 'validate', 'Feedback regeneration complete', `Re-generated ${regenerated} files — running re-validation`);
-        const revalidation = validateAndFix(ctx.files);
-        ctx.files = revalidation.files;
-        const newIssueCount = revalidation.issues?.length || 0;
-        emitStep(ctx, 'validate', 'Re-validation result', `${newIssueCount} issues remaining (was ${issueCount})`);
+        currentResult = validateAndFix(ctx.files);
+        ctx.files = currentResult.files;
+        totalFixCount += currentResult.fixesApplied?.length || 0;
+        totalPasses += currentResult.iterations;
+        const newErrorCount = (currentResult.issues || []).filter(i => i.severity === 'error').length;
+        emitStep(ctx, 'validate', 'Re-validation result', `${newErrorCount} errors remaining (was ${currentUnfixed.length})`);
       }
     }
 
-    emitStep(ctx, 'validate', 'Validation complete', `${result.iterations} pass${result.iterations !== 1 ? 'es' : ''} | ${issueCount} issues found, ${fixCount} auto-fixed | Result: ${result.valid ? 'All imports and exports verified' : 'Some issues remain — review recommended'}`);
-    if (fixCount > 0) {
-      const sampleFixes = result.fixesApplied.slice(0, 3).join('; ');
-      emitStep(ctx, 'validate', 'Fixes applied', sampleFixes + (fixCount > 3 ? ` + ${fixCount - 3} more` : ''));
+    const finalErrors = (currentResult.issues || []).filter(i => i.severity === 'error');
+    const isValid = finalErrors.length === 0;
+    const totalIssueCount = (currentResult.issues || []).length;
+
+    ctx.validationSummary = {
+      passes: totalPasses,
+      issuesFound: totalIssueCount,
+      issuesFixed: totalFixCount,
+      unfixableIssues: finalErrors.map(i => i.message),
+    };
+
+    emitStep(ctx, 'validate', 'Validation complete', `${totalPasses} pass${totalPasses !== 1 ? 'es' : ''} | ${totalIssueCount} issues found, ${totalFixCount} auto-fixed | Result: ${isValid ? 'All imports and exports verified' : `${finalErrors.length} issues remain — review recommended`}`);
+    if (totalFixCount > 0) {
+      const allFixes = currentResult.fixesApplied || [];
+      const sampleFixes = allFixes.slice(0, 3).join('; ');
+      emitStep(ctx, 'validate', 'Fixes applied', sampleFixes + (totalFixCount > 3 ? ` + ${totalFixCount - 3} more` : ''));
     }
     return {
-      score: result.valid ? 95 : 65,
-      warnings: result.issues?.filter(i => i.severity === 'warning').map(i => i.message) || [],
-      output: { valid: result.valid, fixes: fixCount, iterations: result.iterations },
+      score: isValid ? 95 : 65,
+      warnings: (currentResult.issues || []).filter(i => i.severity === 'warning').map(i => i.message),
+      output: { valid: isValid, fixes: totalFixCount, iterations: totalPasses },
     };
   }, 1);
 

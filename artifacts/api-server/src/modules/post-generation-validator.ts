@@ -239,6 +239,17 @@ function validateViteCompatibility(files: GeneratedFile[]): ValidationIssue[] {
         });
       }
     }
+    const hasSrcFiles = files.some(f => f.path.startsWith('src/'));
+    const usesAtAlias = files.some(f => f.content.includes("from '@/") || f.content.includes('from "@/'));
+    if (hasSrcFiles && usesAtAlias && !viteConfigFile.content.includes("'@'") && !viteConfigFile.content.includes('"@"') && !viteConfigFile.content.includes("'@/'")) {
+      issues.push({
+        type: 'syntax_hint',
+        severity: 'error',
+        file: viteConfigFile.path,
+        message: 'Project uses @/ path alias in imports but vite.config has no resolve.alias for "@"',
+        suggestion: 'Add resolve.alias: { "@": "/src" } to vite.config',
+      });
+    }
   } else {
     const hasVite = packageDeps.has('vite');
     if (hasVite) {
@@ -508,6 +519,9 @@ export function autoFixFiles(files: GeneratedFile[], issues: ValidationIssue[]):
         resolvedPath = 'src/' + issue.importPath.slice(2);
       } else if (issue.importPath.startsWith('@shared')) {
         resolvedPath = 'shared/' + issue.importPath.replace('@shared/', '').replace('@shared', 'index');
+      } else if (issue.importPath.startsWith('.')) {
+        const dir = issue.file.split('/').slice(0, -1).join('/');
+        resolvedPath = normalizePath(dir + '/' + issue.importPath);
       } else {
         continue;
       }
@@ -671,6 +685,37 @@ export default defineConfig({
 `;
         fileMap.set('vite.config.ts', { path: 'vite.config.ts', content: viteConfig, language: 'typescript' });
         fixesApplied.push('Created missing vite.config.ts');
+      }
+    }
+
+    if (issue.type === 'syntax_hint' && issue.message.includes('vite.config has no resolve.alias')) {
+      const f = fileMap.get(issue.file);
+      if (f) {
+        let patched = false;
+        if (f.content.includes('resolve:') || f.content.includes('resolve :')) {
+          const updated = f.content.replace(
+            /(resolve\s*:\s*\{)/,
+            `$1\n    alias: {\n      '@': '/src',\n    },`
+          );
+          if (updated !== f.content) { f.content = updated; patched = true; }
+        }
+        if (!patched) {
+          const updated = f.content.replace(
+            /(plugins\s*:\s*\[[^\]]*\]\s*,?)/,
+            `$1\n  resolve: {\n    alias: {\n      '@': '/src',\n    },\n  },`
+          );
+          if (updated !== f.content) { f.content = updated; patched = true; }
+        }
+        if (!patched) {
+          const updated = f.content.replace(
+            /(defineConfig\s*\(\s*\{)/,
+            `$1\n  resolve: {\n    alias: {\n      '@': '/src',\n    },\n  },`
+          );
+          if (updated !== f.content) { f.content = updated; patched = true; }
+        }
+        if (patched) {
+          fixesApplied.push(`Added @/ path alias to ${issue.file}`);
+        }
       }
     }
 
