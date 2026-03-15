@@ -39,8 +39,8 @@ All providers use the OpenAI-compatible `/v1/chat/completions` protocol. No API 
 | `deepseek-coder-v2:16b` | 16 GB+ | Excellent — near cloud quality |
 | `codellama:13b` | 12 GB | Good — strong at completion tasks |
 
-> General models like `llama3.2` produce significantly lower code quality.
-> Always prefer a code-specific model for best results.
+> General-purpose chat models produce significantly lower code quality.
+> Always use a code-specific model for best results.
 
 ## Run locally (without Replit)
 

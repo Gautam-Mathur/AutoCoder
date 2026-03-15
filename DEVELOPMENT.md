@@ -53,8 +53,9 @@ Code-specific models produce significantly better output than general models.
 | `deepseek-coder-v2:16b` | 16 GB+ | Excellent — near cloud quality |
 | `codellama:13b` | 12 GB | Good — strong at completion tasks |
 
-> **Do not use general models** like `llama3.2` or `mistral` for code generation.
-> They lack the coding-specific training data and produce lower quality, more error-prone output.
+> **Do not use general-purpose models** for code generation (e.g. general chat models).
+> They lack coding-specific training data and produce lower quality, more error-prone output.
+> Always use a code-specialized model from the table above.
 
 ## Environment Variables
 
