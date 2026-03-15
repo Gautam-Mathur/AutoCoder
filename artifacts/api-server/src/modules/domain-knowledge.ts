@@ -2172,6 +2172,133 @@ const INDUSTRY_DOMAINS: Record<string, IndustryDomain> = {
     defaultKPIs: ['Active Jobs', 'Applications This Week', 'Companies', 'Hired This Month'],
     commonIntegrations: ['LinkedIn', 'Email Service', 'Calendar'],
   },
+
+  'marketplace': {
+    id: 'marketplace',
+    name: 'Marketplace / Multi-Vendor Platform',
+    description: 'Multi-vendor marketplace for buying and selling goods or services',
+    keywords: ['marketplace', 'multi-vendor', 'sellers', 'buyers', 'listings', 'marketplace platform', 'peer-to-peer', 'p2p'],
+    modules: [
+      {
+        name: 'Listings Management',
+        description: 'Create, browse, and manage product or service listings',
+        entities: ['Listing', 'Category', 'User'],
+        pages: [
+          { name: 'Browse Listings', path: '/listings', description: 'Searchable listing catalog with filters', features: ['search', 'filter', 'card-grid'] },
+          { name: 'Listing Detail', path: '/listings/:id', description: 'Individual listing with gallery and seller info', features: ['image-gallery', 'contact-seller', 'add-to-cart'] },
+          { name: 'Create Listing', path: '/listings/new', description: 'Multi-step listing creation form', features: ['image-upload', 'category-select', 'pricing'] },
+        ],
+      },
+      {
+        name: 'Orders & Transactions',
+        description: 'Manage purchases, sales, and payment processing',
+        entities: ['Order', 'OrderItem', 'Payment'],
+        pages: [
+          { name: 'My Orders', path: '/orders', description: 'View and manage purchase/sale orders', features: ['order-list', 'status-filter', 'order-tracking'] },
+          { name: 'Order Detail', path: '/orders/:id', description: 'Single order details with status timeline', features: ['status-timeline', 'shipping-info', 'invoice'] },
+        ],
+      },
+      {
+        name: 'Reviews & Ratings',
+        description: 'Buyer reviews and seller ratings system',
+        entities: ['Review', 'User'],
+        pages: [
+          { name: 'Reviews', path: '/reviews', description: 'View and submit product reviews', features: ['star-rating', 'review-form', 'review-list'] },
+        ],
+      },
+      {
+        name: 'Dashboard',
+        description: 'Seller analytics and marketplace overview',
+        entities: ['User', 'Listing', 'Order'],
+        pages: [
+          { name: 'Seller Dashboard', path: '/dashboard', description: 'Sales analytics and listing performance', features: ['revenue-chart', 'order-stats', 'top-listings'] },
+        ],
+      },
+    ],
+    entities: [
+      {
+        name: 'Listing',
+        fields: [
+          { name: 'id', type: 'serial', required: true },
+          { name: 'title', type: 'string', required: true },
+          { name: 'description', type: 'string', required: true },
+          { name: 'price', type: 'number', required: true },
+          { name: 'sellerId', type: 'number', required: true, description: 'References User' },
+          { name: 'categoryId', type: 'number', description: 'References Category' },
+          { name: 'images', type: 'string[]' },
+          { name: 'status', type: 'enum:draft,active,sold,archived', required: true },
+          { name: 'createdAt', type: 'date', required: true },
+        ],
+        relationships: [
+          { entity: 'User', type: 'many-to-one', field: 'sellerId' },
+          { entity: 'Category', type: 'many-to-one', field: 'categoryId' },
+          { entity: 'Review', type: 'one-to-many' },
+        ],
+      },
+      {
+        name: 'Category',
+        fields: [
+          { name: 'id', type: 'serial', required: true },
+          { name: 'name', type: 'string', required: true },
+          { name: 'slug', type: 'string', required: true },
+          { name: 'parentId', type: 'number', description: 'Self-referencing parent category' },
+        ],
+      },
+      {
+        name: 'Order',
+        fields: [
+          { name: 'id', type: 'serial', required: true },
+          { name: 'buyerId', type: 'number', required: true, description: 'References User' },
+          { name: 'sellerId', type: 'number', required: true, description: 'References User' },
+          { name: 'listingId', type: 'number', required: true, description: 'References Listing' },
+          { name: 'amount', type: 'number', required: true },
+          { name: 'status', type: 'enum:pending,confirmed,shipped,delivered,cancelled,refunded', required: true },
+          { name: 'createdAt', type: 'date', required: true },
+        ],
+        relationships: [
+          { entity: 'User', type: 'many-to-one', field: 'buyerId' },
+          { entity: 'User', type: 'many-to-one', field: 'sellerId' },
+          { entity: 'Listing', type: 'many-to-one', field: 'listingId' },
+        ],
+      },
+      {
+        name: 'Review',
+        fields: [
+          { name: 'id', type: 'serial', required: true },
+          { name: 'reviewerId', type: 'number', required: true, description: 'References User' },
+          { name: 'listingId', type: 'number', required: true, description: 'References Listing' },
+          { name: 'rating', type: 'number', required: true },
+          { name: 'comment', type: 'string' },
+          { name: 'createdAt', type: 'date', required: true },
+        ],
+        relationships: [
+          { entity: 'User', type: 'many-to-one', field: 'reviewerId' },
+          { entity: 'Listing', type: 'many-to-one', field: 'listingId' },
+        ],
+      },
+    ],
+    workflows: [
+      { entity: 'Order', name: 'Order Lifecycle', states: ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled', 'refunded'], transitions: [
+        { from: 'pending', to: 'confirmed', action: 'Confirm', role: 'seller' },
+        { from: 'confirmed', to: 'shipped', action: 'Ship', role: 'seller' },
+        { from: 'shipped', to: 'delivered', action: 'Mark Delivered', role: 'buyer' },
+        { from: 'pending', to: 'cancelled', action: 'Cancel', role: 'buyer' },
+        { from: 'delivered', to: 'refunded', action: 'Refund', role: 'admin' },
+      ]},
+      { entity: 'Listing', name: 'Listing Lifecycle', states: ['draft', 'active', 'sold', 'archived'], transitions: [
+        { from: 'draft', to: 'active', action: 'Publish', role: 'seller' },
+        { from: 'active', to: 'sold', action: 'Mark Sold', role: 'seller' },
+        { from: 'active', to: 'archived', action: 'Archive', role: 'seller' },
+      ]},
+    ],
+    roles: [
+      { name: 'Admin', permissions: ['all'], description: 'Full system access' },
+      { name: 'Seller', permissions: ['create-listing', 'manage-listings', 'view-orders', 'manage-orders'], description: 'Sells items' },
+      { name: 'Buyer', permissions: ['browse', 'purchase', 'review', 'view-orders'], description: 'Purchases items' },
+    ],
+    defaultKPIs: ['Active Listings', 'Orders This Month', 'Revenue', 'Active Sellers'],
+    commonIntegrations: ['Stripe', 'S3/Object Storage', 'Email Service'],
+  },
 };
 
 export function getAllDomains(): IndustryDomain[] {

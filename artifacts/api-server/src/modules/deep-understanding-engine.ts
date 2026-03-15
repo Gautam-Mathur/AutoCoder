@@ -177,6 +177,28 @@ const WELL_KNOWN_APP_PATTERNS: Record<string, { domain: string; modules: string[
   'employee directory': { domain: 'hr', modules: ['Employees', 'Departments', 'Dashboard'], description: 'Employee directory application' },
   'employee manager': { domain: 'hr', modules: ['Employees', 'Departments', 'Dashboard'], description: 'Employee management application' },
   'budget tracker': { domain: 'finance', modules: ['Budget', 'Expenses', 'Dashboard'], description: 'Budget tracking application' },
+  'portfolio': { domain: 'portfolio', modules: ['Projects', 'About', 'Contact', 'Skills'], description: 'Portfolio website' },
+  'portfolio website': { domain: 'portfolio', modules: ['Projects', 'About', 'Contact', 'Skills'], description: 'Portfolio website' },
+  'portfolio site': { domain: 'portfolio', modules: ['Projects', 'About', 'Contact', 'Skills'], description: 'Portfolio website' },
+  'personal portfolio': { domain: 'portfolio', modules: ['Projects', 'About', 'Contact', 'Skills'], description: 'Personal portfolio website' },
+  'personal website': { domain: 'portfolio', modules: ['Projects', 'About', 'Contact', 'Skills'], description: 'Personal website' },
+  'landing page': { domain: 'landing-page', modules: ['Hero', 'Features', 'Pricing', 'FAQ', 'CTA'], description: 'Landing page' },
+  'chat app': { domain: 'chat-messaging', modules: ['Messages', 'Conversations', 'Users', 'Dashboard'], description: 'Chat application' },
+  'chat application': { domain: 'chat-messaging', modules: ['Messages', 'Conversations', 'Users', 'Dashboard'], description: 'Chat application' },
+  'messaging app': { domain: 'chat-messaging', modules: ['Messages', 'Conversations', 'Users', 'Dashboard'], description: 'Messaging application' },
+  'ecommerce': { domain: 'retail', modules: ['Products', 'Cart', 'Checkout', 'Orders', 'Dashboard'], description: 'E-commerce store' },
+  'online store': { domain: 'retail', modules: ['Products', 'Cart', 'Checkout', 'Orders', 'Dashboard'], description: 'Online store' },
+  'e-commerce': { domain: 'retail', modules: ['Products', 'Cart', 'Checkout', 'Orders', 'Dashboard'], description: 'E-commerce store' },
+  'fitness tracker': { domain: 'fitness', modules: ['Workouts', 'Exercises', 'Goals', 'Dashboard'], description: 'Fitness tracking application' },
+  'workout tracker': { domain: 'fitness', modules: ['Workouts', 'Exercises', 'Goals', 'Dashboard'], description: 'Workout tracking application' },
+  'social media': { domain: 'social-network', modules: ['Profiles', 'Posts', 'Feed', 'Followers'], description: 'Social media platform' },
+  'social network': { domain: 'social-network', modules: ['Profiles', 'Posts', 'Feed', 'Followers'], description: 'Social network' },
+  'job board': { domain: 'job-board', modules: ['Jobs', 'Applications', 'Companies', 'Dashboard'], description: 'Job board platform' },
+  'marketplace': { domain: 'marketplace', modules: ['Listings', 'Orders', 'Users', 'Dashboard'], description: 'Marketplace platform' },
+  'wiki': { domain: 'documentation', modules: ['Articles', 'Categories', 'Search', 'Dashboard'], description: 'Wiki/knowledge base' },
+  'knowledge base': { domain: 'documentation', modules: ['Articles', 'Categories', 'Search', 'Dashboard'], description: 'Knowledge base' },
+  'analytics dashboard': { domain: 'analytics', modules: ['Charts', 'Metrics', 'Reports', 'Dashboard'], description: 'Analytics dashboard' },
+  'admin dashboard': { domain: 'saas-dashboard', modules: ['Charts', 'Metrics', 'Reports', 'Dashboard'], description: 'Admin dashboard' },
 };
 
 const WELL_KNOWN_APP_SIGNALS: string[] = Object.keys(WELL_KNOWN_APP_PATTERNS);
@@ -229,6 +251,34 @@ export function analyzeRequest(userMessage: string, conversationContext?: string
       assumptions.push(`Key modules: ${level2.detectedModules.join(', ')}`);
     } else {
       assumptions.push(`Key modules: ${appInfo.modules.join(', ')}`);
+    }
+    const allEntities = [...level3.mentionedEntities, ...level3.inferredEntities];
+    if (allEntities.length > 0) {
+      assumptions.push(`Key data: ${allEntities.slice(0, 5).join(', ')}`);
+    }
+
+    const boostedConfidence = Math.max(calculateOverallConfidence(level1, level2, level3, level4), 0.85);
+
+    return {
+      level1_intent: level1,
+      level2_domain: { ...level2, confidence: Math.max(level2.confidence, 0.8) },
+      level3_entities: level3,
+      level4_workflows: level4,
+      level5_clarification: { needsClarification: false, questions: [], assumptions },
+      level6_technology: level6,
+      confidence: boostedConfidence,
+      readyForPlan: true,
+    };
+  }
+
+  const highConfidenceDomain = level2.primaryDomain && level2.confidence >= 0.70 && isSimpleRequest && clarificationRound === 0;
+  if (highConfidenceDomain) {
+    const assumptions: string[] = [];
+    assumptions.push(`This is for the ${level2.primaryDomain!.name} industry`);
+    if (level2.detectedModules.length > 0) {
+      assumptions.push(`Key modules: ${level2.detectedModules.join(', ')}`);
+    } else if (level2.suggestedModules.length > 0) {
+      assumptions.push(`Suggested modules: ${level2.suggestedModules.slice(0, 5).join(', ')}`);
     }
     const allEntities = [...level3.mentionedEntities, ...level3.inferredEntities];
     if (allEntities.length > 0) {
@@ -777,9 +827,13 @@ function generateClarifications(
               aq.impact === 'high' ? 'important' as const : 'nice-to-have' as const,
   }));
 
-  if (complexity.level === 'trivial' && clarificationRound >= 1) {
+  if (complexity.level === 'trivial') {
     if (domain.primaryDomain) assumptions.push(`This is for the ${domain.primaryDomain.name} industry`);
     if (intent.scale !== 'unknown') assumptions.push(`Scale: ${intent.scale}`);
+    const allEntities = [...entities.mentionedEntities, ...entities.inferredEntities];
+    if (allEntities.length > 0) {
+      assumptions.push(`Key data: ${allEntities.slice(0, 5).join(', ')}`);
+    }
     return { needsClarification: false, questions: [], assumptions };
   }
 
