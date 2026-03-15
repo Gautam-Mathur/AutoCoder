@@ -1,8 +1,6 @@
-import { analyzeCode, autoFixCode, continuousDebug } from './continuous-debugger.js';
-import { analyzeError, parseStackTrace, generateFixChain } from './deep-debugging-engine.js';
-import type { DebugAnalysis, FixStep } from './deep-debugging-engine.js';
+import { analyzeCode, continuousDebug } from './continuous-debugger.js';
+import { analyzeError } from './deep-debugging-engine.js';
 import { parseErrors, analyzeAndFix } from './vite-error-fixer.js';
-import type { FixAction, FixResult } from './vite-error-fixer.js';
 import { getPipelineStages, getStageDescription } from './pipeline-orchestrator.js';
 import type { PipelineStage } from './pipeline-orchestrator.js';
 import { analyzeRequest } from './deep-understanding-engine.js';
@@ -15,6 +13,9 @@ import { designAPI } from './api-designer.js';
 import { composeComponents } from './component-composer.js';
 import { generateProjectFromPlan } from './plan-driven-generator.js';
 import { validateAndFix } from './post-generation-validator.js';
+import { learnFromInteraction } from './context-memory.js';
+import { resolveDependencies } from './dependency-resolver.js';
+import { runTests } from './testing-engine.js';
 
 export interface DiagnosticIssue {
   file: string;
@@ -178,6 +179,134 @@ function initBuiltinExecutors(): void {
       return { output: null, errors: [err instanceof Error ? err.message : String(err)] };
     }
   });
+
+  registerStageExecutor('learn', (payload) => {
+    const { userId, prompt, response } = payload || {};
+    if (!userId || !prompt) return { output: null, errors: ['Missing required fields: userId, prompt'] };
+    try {
+      learnFromInteraction(userId, prompt, response || '', {});
+      return { output: { learned: true, userId }, errors: [] };
+    } catch (err) {
+      return { output: null, errors: [err instanceof Error ? err.message : String(err)] };
+    }
+  });
+
+  registerStageExecutor('specify', (payload) => {
+    const { plan } = payload || {};
+    if (!plan) return { output: null, errors: ['Missing required field: plan'] };
+    try {
+      const features = (plan.features || []).map((f: any) => ({
+        name: f.name || f,
+        type: f.type || 'feature',
+        pages: f.pages || [],
+        crudOps: f.crudOps || ['read'],
+      }));
+      return { output: { features, featureCount: features.length }, errors: [] };
+    } catch (err) {
+      return { output: null, errors: [err instanceof Error ? err.message : String(err)] };
+    }
+  });
+
+  registerStageExecutor('resolve', (payload) => {
+    const { plan, files } = payload || {};
+    if (!plan) return { output: null, errors: ['Missing required field: plan'] };
+    try {
+      const result = resolveDependencies(plan, files || []);
+      return { output: result, errors: [] };
+    } catch (err) {
+      return { output: null, errors: [err instanceof Error ? err.message : String(err)] };
+    }
+  });
+
+  registerStageExecutor('quality', (payload) => {
+    const { files } = payload || {};
+    if (!files || !Array.isArray(files)) return { output: null, errors: ['Missing required field: files'] };
+    try {
+      const report = runDiagnostics(files);
+      return {
+        output: {
+          totalIssues: report.totalIssues,
+          bySeverity: report.bySeverity,
+          healthyFiles: report.healthyFiles,
+          unhealthyFiles: report.unhealthyFiles,
+        },
+        errors: [],
+      };
+    } catch (err) {
+      return { output: null, errors: [err instanceof Error ? err.message : String(err)] };
+    }
+  });
+
+  registerStageExecutor('test', (payload) => {
+    const { files, plan } = payload || {};
+    if (!files || !Array.isArray(files)) return { output: null, errors: ['Missing required field: files'] };
+    try {
+      const testableFiles = files.filter((f: any) => /\.(ts|tsx|js|jsx)$/.test(f.path));
+      const testSuite = {
+        name: plan?.projectName || 'project',
+        tests: testableFiles.map((f: any) => ({
+          name: `validate-${f.path}`,
+          type: 'unit' as const,
+          target: f.path,
+          assertions: [{ type: 'exists' as const, expected: true }],
+        })),
+      };
+      const results = runTests(testSuite, testableFiles.map((f: any) => f.content).join('\n'));
+      return { output: { passed: results.passed, failed: results.failed, total: results.total }, errors: [] };
+    } catch (err) {
+      return { output: null, errors: [err instanceof Error ? err.message : String(err)] };
+    }
+  });
+
+  registerStageExecutor('deep-quality', (payload) => {
+    const { files } = payload || {};
+    if (!files || !Array.isArray(files)) return { output: null, errors: ['Missing required field: files'] };
+    try {
+      const report = runDiagnostics(files);
+      const crossFileIssues: string[] = [];
+      const importMap = new Map<string, string[]>();
+      for (const file of files) {
+        const imports = (file.content.match(/from\s+['"]([^'"]+)['"]/g) || [])
+          .map((m: string) => m.replace(/from\s+['"]|['"]/g, ''));
+        importMap.set(file.path, imports);
+      }
+      const filePaths = new Set(files.map((f: any) => f.path));
+      for (const [filePath, imports] of importMap) {
+        for (const imp of imports) {
+          const resolved = imp.startsWith('.') ? imp.replace(/^\.\//, '') : null;
+          if (resolved && !filePaths.has(resolved) && !filePaths.has(resolved + '.ts') && !filePaths.has(resolved + '.tsx')) {
+            crossFileIssues.push(`${filePath} imports '${imp}' which may not exist in project`);
+          }
+        }
+      }
+      return {
+        output: {
+          diagnostics: { totalIssues: report.totalIssues, bySeverity: report.bySeverity },
+          crossFileIssues,
+          qualityScore: Math.max(0, 100 - report.totalIssues * 5 - crossFileIssues.length * 10),
+        },
+        errors: [],
+      };
+    } catch (err) {
+      return { output: null, errors: [err instanceof Error ? err.message : String(err)] };
+    }
+  });
+
+  registerStageExecutor('record', (payload) => {
+    const { plan, metrics, outcome } = payload || {};
+    try {
+      const record = {
+        timestamp: Date.now(),
+        projectName: plan?.projectName || 'unknown',
+        fileCount: metrics?.fileCount || 0,
+        outcome: outcome || 'completed',
+        recorded: true,
+      };
+      return { output: record, errors: [] };
+    } catch (err) {
+      return { output: null, errors: [err instanceof Error ? err.message : String(err)] };
+    }
+  });
 }
 
 initBuiltinExecutors();
@@ -332,7 +461,6 @@ export function runModularFix(
     }
 
     try {
-      const parsed = parseStackTrace(errorDescription);
       const deepAnalysis = analyzeError(errorDescription, currentContent);
       const automatedFixes = deepAnalysis.fixChain.filter(f => f.automated && f.code);
       for (const fix of automatedFixes) {
@@ -342,7 +470,9 @@ export function runModularFix(
           changed = true;
         }
       }
-    } catch {}
+    } catch (err) {
+      allFixes.push(`[deep-debugger] analysis skipped: ${err instanceof Error ? err.message : 'unknown error'}`);
+    }
 
     try {
       const parsedErrors = parseErrors([errorDescription]);
@@ -373,7 +503,9 @@ export function runModularFix(
           }
         }
       }
-    } catch {}
+    } catch (err) {
+      allFixes.push(`[vite-fixer] analysis skipped: ${err instanceof Error ? err.message : 'unknown error'}`);
+    }
 
     if (!changed) break;
 

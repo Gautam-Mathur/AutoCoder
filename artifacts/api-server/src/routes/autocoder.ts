@@ -623,7 +623,7 @@ export async function registerRoutes(
       if (result.diagnostics) {
         setImmediate(async () => {
           try {
-            await storage.updateProjectContext(conversationId, { diagnostics: result.diagnostics as any });
+            await storage.updateProjectContext(conversationId, { diagnostics: result.diagnostics });
           } catch (err) {
             console.error('[Diagnostics] Failed to persist diagnostics:', err);
           }
