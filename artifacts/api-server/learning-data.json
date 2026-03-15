@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "exportedAt": "2026-03-15T09:17:17.453Z",
+  "exportedAt": "2026-03-15T11:07:36.879Z",
   "patterns": [
     {
       "patternType": "entity-structure",
@@ -551,7 +551,7 @@
           "upcoming-deadlines"
         ]
       },
-      "successCount": 2,
+      "successCount": 3,
       "failureCount": 0,
       "reliability": 1
     },
@@ -620,7 +620,7 @@
       "patternType": "tech-choice",
       "patternKey": "file-structure-general",
       "patternValue": {
-        "fileCount": 63,
+        "fileCount": 60,
         "recentPaths": [
           "src/lib/utils.ts",
           "src/lib/queryClient.ts",
@@ -655,7 +655,7 @@
         ],
         "qualityScore": 90
       },
-      "successCount": 2,
+      "successCount": 3,
       "failureCount": 0,
       "reliability": 1
     },
@@ -708,11 +708,32 @@
       "reliability": 1
     },
     {
+      "id": 28,
       "patternType": "entity-structure",
-      "entityType": "Member",
       "domainId": "fitness",
+      "entityType": "Member",
       "patternKey": "entity-member",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "email": "text",
+          "phone": "text",
+          "avatar": "string",
+          "status": "enum(active,expired,frozen,cancelled)",
+          "fullName": "text",
+          "joinDate": "date",
+          "lastName": "text",
+          "password": "string",
+          "createdAt": "datetime",
+          "firstName": "text",
+          "expiryDate": "date",
+          "dateOfBirth": "date",
+          "membershipId": "integer",
+          "membershipType": "enum:basic,premium,vip",
+          "workoutLogCount": "text",
+          "workoutPlanCount": "text",
+          "classBookingCount": "text"
+        },
         "recommended": [
           "id",
           "firstName",
@@ -732,46 +753,19 @@
           "workoutPlanCount",
           "workoutLogCount",
           "password"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "firstName": "text",
-          "lastName": "text",
-          "email": "text",
-          "phone": "text",
-          "dateOfBirth": "date",
-          "membershipId": "integer",
-          "joinDate": "date",
-          "status": "enum(active,expired,frozen,cancelled)",
-          "membershipType": "enum:basic,premium,vip",
-          "expiryDate": "date",
-          "avatar": "string",
-          "createdAt": "datetime",
-          "fullName": "text",
-          "classBookingCount": "text",
-          "workoutPlanCount": "text",
-          "workoutLogCount": "text",
-          "password": "string"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 32,
       "patternType": "entity-structure",
-      "entityType": "Membership",
       "domainId": "fitness",
+      "entityType": "Membership",
       "patternKey": "entity-membership",
       "patternValue": {
-        "recommended": [
-          "id",
-          "name",
-          "price",
-          "duration",
-          "features",
-          "memberCount"
-        ],
         "fieldTypes": {
           "id": "serial (auto-increment)",
           "name": "text",
@@ -779,18 +773,38 @@
           "duration": "text",
           "features": "text[]",
           "memberCount": "text"
-        }
+        },
+        "recommended": [
+          "id",
+          "name",
+          "price",
+          "duration",
+          "features",
+          "memberCount"
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 37,
       "patternType": "entity-structure",
-      "entityType": "Class",
       "domainId": "fitness",
+      "entityType": "Class",
       "patternKey": "entity-class",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "time": "text",
+          "type": "text",
+          "capacity": "integer",
+          "duration": "integer",
+          "dayOfWeek": "text",
+          "instructor": "text",
+          "classBookingCount": "text"
+        },
         "recommended": [
           "id",
           "name",
@@ -801,29 +815,34 @@
           "capacity",
           "type",
           "classBookingCount"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "name": "text",
-          "instructor": "text",
-          "dayOfWeek": "text",
-          "time": "text",
-          "duration": "integer",
-          "capacity": "integer",
-          "type": "text",
-          "classBookingCount": "text"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 39,
       "patternType": "entity-structure",
-      "entityType": "ClassBooking",
       "domainId": "fitness",
+      "entityType": "ClassBooking",
       "patternKey": "entity-classbooking",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "date": "date",
+          "status": "enum(booked,attended,cancelled,no-show)",
+          "checkIn": "datetime",
+          "classId": "integer",
+          "checkOut": "datetime",
+          "duration": "text",
+          "memberId": "integer",
+          "lineTotal": "text",
+          "guestCount": "number",
+          "totalPrice": "number",
+          "bookingNumber": "string",
+          "specialRequests": "string"
+        },
         "recommended": [
           "id",
           "classId",
@@ -838,33 +857,34 @@
           "specialRequests",
           "lineTotal",
           "duration"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "classId": "integer",
-          "memberId": "integer",
-          "date": "date",
-          "status": "enum(booked,attended,cancelled,no-show)",
-          "bookingNumber": "string",
-          "checkIn": "datetime",
-          "checkOut": "datetime",
-          "guestCount": "number",
-          "totalPrice": "number",
-          "specialRequests": "string",
-          "lineTotal": "text",
-          "duration": "text"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 34,
       "patternType": "entity-structure",
-      "entityType": "WorkoutPlan",
       "domainId": "fitness",
+      "entityType": "WorkoutPlan",
       "patternKey": "entity-workoutplan",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "type": "enum:cardio,strength,flexibility,hiit,yoga,swimming",
+          "notes": "string",
+          "status": "enum:planned,in-progress,completed,skipped",
+          "duration": "number",
+          "createdAt": "datetime",
+          "exercises": "text[]",
+          "intensity": "enum:low,moderate,high,extreme",
+          "difficulty": "enum(beginner,intermediate,advanced)",
+          "completedAt": "datetime",
+          "description": "text",
+          "caloriesBurned": "number"
+        },
         "recommended": [
           "id",
           "name",
@@ -879,33 +899,36 @@
           "completedAt",
           "status",
           "createdAt"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "name": "text",
-          "description": "text",
-          "difficulty": "enum(beginner,intermediate,advanced)",
-          "exercises": "text[]",
-          "type": "enum:cardio,strength,flexibility,hiit,yoga,swimming",
-          "duration": "number",
-          "caloriesBurned": "number",
-          "intensity": "enum:low,moderate,high,extreme",
-          "notes": "string",
-          "completedAt": "datetime",
-          "status": "enum:planned,in-progress,completed,skipped",
-          "createdAt": "datetime"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 35,
       "patternType": "entity-structure",
-      "entityType": "WorkoutLog",
       "domainId": "fitness",
+      "entityType": "WorkoutLog",
       "patternKey": "entity-workoutlog",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "date": "date",
+          "name": "string",
+          "reps": "integer",
+          "sets": "integer",
+          "type": "enum:cardio,strength,flexibility,hiit,yoga,swimming",
+          "notes": "string",
+          "status": "enum:planned,in-progress,completed,skipped",
+          "weight": "integer",
+          "duration": "integer",
+          "exercise": "text",
+          "memberId": "integer",
+          "intensity": "enum:low,moderate,high,extreme",
+          "completedAt": "datetime",
+          "caloriesBurned": "number"
+        },
         "recommended": [
           "id",
           "memberId",
@@ -922,30 +945,14 @@
           "notes",
           "completedAt",
           "status"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "memberId": "integer",
-          "exercise": "text",
-          "sets": "integer",
-          "reps": "integer",
-          "weight": "integer",
-          "duration": "integer",
-          "date": "date",
-          "name": "string",
-          "type": "enum:cardio,strength,flexibility,hiit,yoga,swimming",
-          "caloriesBurned": "number",
-          "intensity": "enum:low,moderate,high,extreme",
-          "notes": "string",
-          "completedAt": "datetime",
-          "status": "enum:planned,in-progress,completed,skipped"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 40,
       "patternType": "page-structure",
       "patternKey": "page-layout-members",
       "patternValue": {
@@ -965,6 +972,7 @@
       "reliability": 1
     },
     {
+      "id": 26,
       "patternType": "page-structure",
       "patternKey": "page-layout-member-detail",
       "patternValue": {
@@ -981,6 +989,7 @@
       "reliability": 1
     },
     {
+      "id": 25,
       "patternType": "page-structure",
       "patternKey": "page-layout-workout-plans",
       "patternValue": {
@@ -997,6 +1006,7 @@
       "reliability": 1
     },
     {
+      "id": 38,
       "patternType": "page-structure",
       "patternKey": "page-layout-workout-tracker",
       "patternValue": {
@@ -1013,6 +1023,7 @@
       "reliability": 1
     },
     {
+      "id": 24,
       "patternType": "page-structure",
       "patternKey": "page-layout-schedule",
       "patternValue": {
@@ -1032,24 +1043,11 @@
       "reliability": 1
     },
     {
+      "id": 36,
       "patternType": "domain-mapping",
       "domainId": "fitness",
       "patternKey": "domain-fitness",
       "patternValue": {
-        "entities": [
-          "Member",
-          "Membership",
-          "Class",
-          "ClassBooking",
-          "WorkoutPlan",
-          "WorkoutLog"
-        ],
-        "modules": [
-          "Members",
-          "Classes",
-          "Workouts",
-          "Dashboard"
-        ],
         "kpis": [
           "Active Members",
           "Check-ins Today",
@@ -1060,19 +1058,182 @@
           "Classes This Week",
           "Avg Attendance"
         ],
+        "modules": [
+          "Members",
+          "Classes",
+          "Workouts",
+          "Dashboard"
+        ],
+        "entities": [
+          "Member",
+          "Membership",
+          "Class",
+          "ClassBooking",
+          "WorkoutPlan",
+          "WorkoutLog"
+        ],
         "pageCount": 6,
         "relationships": {
           "Member": [
             "belongsTo Membership"
           ],
+          "WorkoutLog": [
+            "belongsTo Member"
+          ],
           "ClassBooking": [
             "belongsTo Class",
             "belongsTo Member"
-          ],
-          "WorkoutLog": [
-            "belongsTo Member"
           ]
         }
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "Status",
+      "domainId": "synthesized-hr-logistics",
+      "patternKey": "entity-status",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "name",
+          "description",
+          "category",
+          "status",
+          "tags",
+          "createdAt"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "description": "text",
+          "category": "text",
+          "status": "enum(active,inactive,archived)",
+          "tags": "text[]",
+          "createdAt": "timestamp"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "Administrator",
+      "domainId": "synthesized-hr-logistics",
+      "patternKey": "entity-administrator",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "name",
+          "description",
+          "category",
+          "status",
+          "tags",
+          "createdAt"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "description": "text",
+          "category": "text",
+          "status": "enum(active,inactive,archived)",
+          "tags": "text[]",
+          "createdAt": "timestamp"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-status-list",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "search",
+          "filter-by-status",
+          "sort"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-status-detail",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "edit",
+          "delete",
+          "status-tracking"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-administrator-list",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "search",
+          "filter-by-status",
+          "sort"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-administrator-detail",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "edit",
+          "delete",
+          "status-tracking"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "domain-mapping",
+      "domainId": "synthesized-hr-logistics",
+      "patternKey": "domain-synthesized-hr-logistics",
+      "patternValue": {
+        "entities": [
+          "Status",
+          "Administrator"
+        ],
+        "modules": [
+          "Dashboard",
+          "Status Management",
+          "Administrator Management"
+        ],
+        "kpis": [
+          "Headcount",
+          "Turnover Rate",
+          "Pending Leave Requests",
+          "Open Positions",
+          "Payroll Cost",
+          "Active Shipments",
+          "On-Time Delivery %",
+          "Fleet Utilization"
+        ],
+        "pageCount": 5,
+        "relationships": {}
       },
       "successCount": 1,
       "failureCount": 0,
@@ -1084,12 +1245,12 @@
       "key": "quality-score-general",
       "value": "91",
       "category": "architecture",
-      "frequency": 2
+      "frequency": 3
     }
   ],
   "stats": {
-    "totalPatterns": 38,
-    "reliablePatterns": 38,
+    "totalPatterns": 45,
+    "reliablePatterns": 45,
     "totalPreferences": 1
   }
 }
