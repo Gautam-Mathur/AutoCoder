@@ -35,6 +35,7 @@ export interface ProjectContext {
   conversationPhase?: string | null;
   projectPlanData?: any;
   understandingData?: any;
+  diagnostics?: any;
 }
 
 export interface IStorage {

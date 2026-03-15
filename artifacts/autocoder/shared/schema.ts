@@ -41,6 +41,7 @@ export const conversations = pgTable("conversations", {
   projectPlanData: jsonb("project_plan_data"),
   understandingData: jsonb("understanding_data"),
   editHistory: jsonb("edit_history"),
+  diagnostics: jsonb("diagnostics"),
 });
 
 export const messages = pgTable("messages", {

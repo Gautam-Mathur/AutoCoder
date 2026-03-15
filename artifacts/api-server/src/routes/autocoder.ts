@@ -561,6 +561,7 @@ export async function registerRoutes(
           projectName: result.planData.projectName,
           planGenerated: true,
         } : {}),
+        ...(result.diagnostics ? { diagnostics: result.diagnostics as any } : {}),
       };
       if (result.fileEdits && result.fileEdits.length > 0) {
         const prevHistory = (conversation as any).editHistory || [];
@@ -3003,8 +3004,9 @@ Output ONLY the fixed code. No explanations.`;
     try {
       const schema = z.object({
         filePath: z.string().min(1),
-        fileContent: z.string().min(1),
+        fileContent: z.string(),
         error: z.string().min(1),
+        conversationId: z.number().optional(),
         allFiles: z.array(z.object({
           path: z.string(),
           content: z.string(),
@@ -3015,12 +3017,46 @@ Output ONLY the fixed code. No explanations.`;
         return res.status(400).json({ error: 'Invalid request', details: parsed.error.issues });
       }
 
+      let fileContent = parsed.data.fileContent;
+      let fileId: number | undefined;
+      const convId = parsed.data.conversationId;
+      if (!fileContent && convId) {
+        const projectFiles = await storage.getProjectFiles(convId);
+        const match = projectFiles.find(f => f.path === parsed.data.filePath);
+        if (match) {
+          fileContent = match.content;
+          fileId = match.id;
+        }
+      }
+      if (!fileContent) {
+        return res.status(400).json({ error: 'No file content provided and file not found in project' });
+      }
+
+      let allFiles = parsed.data.allFiles;
+      if (!allFiles && convId) {
+        const projectFiles = await storage.getProjectFiles(convId);
+        allFiles = projectFiles.map(f => ({ path: f.path, content: f.content }));
+      }
+
       const result = runModularFix(
         parsed.data.filePath,
-        parsed.data.fileContent,
+        fileContent,
         parsed.data.error,
-        parsed.data.allFiles
+        allFiles
       );
+
+      let persisted = false;
+      if (result.success && result.fixedContent !== fileContent && convId) {
+        if (fileId) {
+          await storage.updateProjectFile(fileId, result.fixedContent);
+          persisted = true;
+        } else {
+          const lang = inferLanguageFromPath(parsed.data.filePath);
+          await storage.upsertProjectFile(convId, parsed.data.filePath, result.fixedContent, lang);
+          persisted = true;
+        }
+      }
+
       res.json({
         success: true,
         file: result.file,
@@ -3029,6 +3065,7 @@ Output ONLY the fixed code. No explanations.`;
         fixesApplied: result.fixesApplied,
         remainingIssues: result.remainingIssues,
         fixed: result.success,
+        persisted,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Fix failed';

@@ -5,6 +5,16 @@ import { parseErrors, analyzeAndFix } from './vite-error-fixer.js';
 import type { FixAction, FixResult } from './vite-error-fixer.js';
 import { getPipelineStages, getStageDescription } from './pipeline-orchestrator.js';
 import type { PipelineStage } from './pipeline-orchestrator.js';
+import { analyzeRequest } from './deep-understanding-engine.js';
+import { generatePlan } from './plan-generator.js';
+import { analyzeSemantics } from './contextual-reasoning-engine.js';
+import { planArchitecture } from './architecture-planner.js';
+import { generateDesignSystem } from './design-system-engine.js';
+import { designSchema } from './schema-designer.js';
+import { designAPI } from './api-designer.js';
+import { composeComponents } from './component-composer.js';
+import { generateProjectFromPlan } from './plan-driven-generator.js';
+import { validateAndFix } from './post-generation-validator.js';
 
 export interface DiagnosticIssue {
   file: string;
@@ -50,6 +60,127 @@ const STAGE_EXECUTORS: Record<string, (payload: any) => { output: unknown; error
 export function registerStageExecutor(stageId: string, executor: (payload: any) => { output: unknown; errors: string[] }): void {
   STAGE_EXECUTORS[stageId] = executor;
 }
+
+function initBuiltinExecutors(): void {
+  registerStageExecutor('understand', (payload) => {
+    const { userRequest, conversationContext } = payload || {};
+    if (!userRequest) return { output: null, errors: ['Missing required field: userRequest'] };
+    try {
+      const result = analyzeRequest(userRequest, conversationContext);
+      return { output: result, errors: [] };
+    } catch (err) {
+      return { output: null, errors: [err instanceof Error ? err.message : String(err)] };
+    }
+  });
+
+  registerStageExecutor('plan', (payload) => {
+    const { understanding } = payload || {};
+    if (!understanding) return { output: null, errors: ['Missing required field: understanding'] };
+    try {
+      const result = generatePlan(understanding);
+      return { output: result, errors: [] };
+    } catch (err) {
+      return { output: null, errors: [err instanceof Error ? err.message : String(err)] };
+    }
+  });
+
+  registerStageExecutor('reason', (payload) => {
+    const { plan } = payload || {};
+    if (!plan) return { output: null, errors: ['Missing required field: plan'] };
+    try {
+      const result = analyzeSemantics(plan);
+      return { output: result, errors: [] };
+    } catch (err) {
+      return { output: null, errors: [err instanceof Error ? err.message : String(err)] };
+    }
+  });
+
+  registerStageExecutor('architect', (payload) => {
+    const { plan, reasoning } = payload || {};
+    if (!plan) return { output: null, errors: ['Missing required field: plan'] };
+    try {
+      const result = planArchitecture(plan, reasoning || null);
+      return { output: result, errors: [] };
+    } catch (err) {
+      return { output: null, errors: [err instanceof Error ? err.message : String(err)] };
+    }
+  });
+
+  registerStageExecutor('design', (payload) => {
+    const { plan, reasoning } = payload || {};
+    if (!plan) return { output: null, errors: ['Missing required field: plan'] };
+    try {
+      const result = generateDesignSystem(plan, reasoning);
+      return { output: result, errors: [] };
+    } catch (err) {
+      return { output: null, errors: [err instanceof Error ? err.message : String(err)] };
+    }
+  });
+
+  registerStageExecutor('schema', (payload) => {
+    const { plan, reasoning } = payload || {};
+    if (!plan) return { output: null, errors: ['Missing required field: plan'] };
+    try {
+      const result = designSchema(plan, reasoning || null);
+      return { output: result, errors: [] };
+    } catch (err) {
+      return { output: null, errors: [err instanceof Error ? err.message : String(err)] };
+    }
+  });
+
+  registerStageExecutor('api', (payload) => {
+    const { plan, reasoning, schema } = payload || {};
+    if (!plan) return { output: null, errors: ['Missing required field: plan'] };
+    try {
+      const result = designAPI(plan, reasoning || null, schema || null);
+      return { output: result, errors: [] };
+    } catch (err) {
+      return { output: null, errors: [err instanceof Error ? err.message : String(err)] };
+    }
+  });
+
+  registerStageExecutor('compose', (payload) => {
+    const { plan, reasoning, funcSpec, designSystem } = payload || {};
+    if (!plan) return { output: null, errors: ['Missing required field: plan'] };
+    try {
+      const result = composeComponents(plan, reasoning || null, funcSpec || null, designSystem || null);
+      return { output: result, errors: [] };
+    } catch (err) {
+      return { output: null, errors: [err instanceof Error ? err.message : String(err)] };
+    }
+  });
+
+  registerStageExecutor('generate', (payload) => {
+    const { plan } = payload || {};
+    if (!plan) return { output: null, errors: ['Missing required field: plan'] };
+    try {
+      const files = generateProjectFromPlan(plan);
+      return { output: { files: files.map(f => ({ path: f.path, language: f.language, lineCount: f.content.split('\n').length })), fileCount: files.length }, errors: [] };
+    } catch (err) {
+      return { output: null, errors: [err instanceof Error ? err.message : String(err)] };
+    }
+  });
+
+  registerStageExecutor('validate', (payload) => {
+    const { files } = payload || {};
+    if (!files || !Array.isArray(files)) return { output: null, errors: ['Missing required field: files (array of {path, content, language})'] };
+    try {
+      const result = validateAndFix(files, 1);
+      return {
+        output: {
+          issueCount: result.issues.length,
+          fixesApplied: result.fixesApplied,
+          issues: result.issues.slice(0, 20),
+        },
+        errors: [],
+      };
+    } catch (err) {
+      return { output: null, errors: [err instanceof Error ? err.message : String(err)] };
+    }
+  });
+}
+
+initBuiltinExecutors();
 
 export function runStageTest(stageId: string, payload: unknown): StageTestResult {
   const stage = getStageDescription(stageId);
