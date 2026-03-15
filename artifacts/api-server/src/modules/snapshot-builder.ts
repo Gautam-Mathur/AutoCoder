@@ -126,7 +126,9 @@ export function upgradePackageJson(input: string | object): UpgradeResult {
       } else {
         cleaned[pkg] = version;
         if (!canonicalVersion && !pkg.startsWith('@types/')) {
-          warnings.push(`Package "${pkg}" not in registry — kept as-is with version "${version}"`);
+          const msg = `Package "${pkg}" not in registry — kept as-is with version "${version}"`;
+          warnings.push(msg);
+          console.warn(`[UpgradePackageJson] ${msg}`);
         }
       }
     }

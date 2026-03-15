@@ -1,0 +1,708 @@
+{
+  "version": 1,
+  "exportedAt": "2026-03-15T07:11:03.993Z",
+  "patterns": [
+    {
+      "patternType": "entity-structure",
+      "patternKey": "person-entity-fields",
+      "patternValue": {
+        "recommended": [
+          "firstName",
+          "lastName",
+          "email",
+          "phone",
+          "status"
+        ],
+        "optional": [
+          "avatar",
+          "address",
+          "city",
+          "state",
+          "zipCode",
+          "notes"
+        ]
+      },
+      "successCount": 10,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "patternKey": "transaction-entity-fields",
+      "patternValue": {
+        "recommended": [
+          "amount",
+          "date",
+          "status",
+          "reference",
+          "type"
+        ],
+        "optional": [
+          "notes",
+          "dueDate",
+          "paidDate",
+          "category"
+        ]
+      },
+      "successCount": 8,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "workflow-design",
+      "patternKey": "order-workflow",
+      "patternValue": {
+        "states": [
+          "draft",
+          "pending",
+          "approved",
+          "in-progress",
+          "completed",
+          "cancelled"
+        ],
+        "commonTransitions": [
+          {
+            "from": "draft",
+            "to": "pending",
+            "action": "Submit"
+          },
+          {
+            "from": "pending",
+            "to": "approved",
+            "action": "Approve"
+          },
+          {
+            "from": "approved",
+            "to": "in-progress",
+            "action": "Start"
+          },
+          {
+            "from": "in-progress",
+            "to": "completed",
+            "action": "Complete"
+          }
+        ]
+      },
+      "successCount": 12,
+      "failureCount": 1,
+      "reliability": 0.92
+    },
+    {
+      "patternType": "ui-layout",
+      "patternKey": "dashboard-kpi-count",
+      "patternValue": {
+        "optimalCount": 4,
+        "maxCount": 6
+      },
+      "successCount": 15,
+      "failureCount": 2,
+      "reliability": 0.88
+    },
+    {
+      "patternType": "ui-layout",
+      "patternKey": "list-page-fields",
+      "patternValue": {
+        "optimalColumns": 5,
+        "maxColumns": 7
+      },
+      "successCount": 10,
+      "failureCount": 1,
+      "reliability": 0.91
+    },
+    {
+      "patternType": "tech-choice",
+      "patternKey": "form-validation",
+      "patternValue": {
+        "preferred": "zod",
+        "alternative": "inline"
+      },
+      "successCount": 20,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "validation-rule",
+      "patternKey": "email-validation",
+      "patternValue": {
+        "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$",
+        "errorMessage": "Invalid email format"
+      },
+      "successCount": 25,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "list-page-features",
+      "patternValue": {
+        "recommended": [
+          "search",
+          "create-dialog",
+          "delete-action",
+          "status-filter"
+        ],
+        "optional": [
+          "export",
+          "bulk-actions",
+          "pagination",
+          "sort"
+        ]
+      },
+      "successCount": 18,
+      "failureCount": 2,
+      "reliability": 0.9
+    },
+    {
+      "patternType": "field-naming",
+      "patternKey": "date-field-naming",
+      "patternValue": {
+        "patterns": {
+          "creation": "createdAt",
+          "update": "updatedAt",
+          "due": "dueDate",
+          "start": "startDate",
+          "end": "endDate",
+          "schedule": "scheduledDate",
+          "birth": "dateOfBirth"
+        }
+      },
+      "successCount": 30,
+      "failureCount": 1,
+      "reliability": 0.97
+    },
+    {
+      "patternType": "domain-mapping",
+      "patternKey": "veterinary",
+      "patternValue": {
+        "entities": [
+          "Pet",
+          "Owner",
+          "Appointment",
+          "Treatment",
+          "Prescription"
+        ],
+        "blendSources": [
+          "healthcare",
+          "crm"
+        ],
+        "kpis": [
+          "Total Patients",
+          "Appointments Today",
+          "Revenue",
+          "Pending Treatments"
+        ]
+      },
+      "successCount": 3,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "Project",
+      "domainId": "project-management",
+      "patternKey": "entity-project",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "name",
+          "description",
+          "status",
+          "ownerId",
+          "startDate",
+          "endDate",
+          "progress",
+          "budget",
+          "priority",
+          "tags",
+          "createdAt",
+          "duration",
+          "taskCount"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "description": "text",
+          "status": "enum(planning,active,on-hold,completed,archived)",
+          "ownerId": "integer",
+          "startDate": "date",
+          "endDate": "date",
+          "progress": "integer",
+          "budget": "number",
+          "priority": "enum:low,medium,high,critical",
+          "tags": "string[]",
+          "createdAt": "datetime",
+          "duration": "text",
+          "taskCount": "text"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "Task",
+      "domainId": "project-management",
+      "patternKey": "entity-task",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "projectId",
+          "title",
+          "description",
+          "assigneeId",
+          "status",
+          "priority",
+          "dueDate",
+          "labels",
+          "estimatedHours",
+          "actualHours",
+          "tags",
+          "createdAt",
+          "commentCount"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "projectId": "integer",
+          "title": "text",
+          "description": "text",
+          "assigneeId": "integer",
+          "status": "enum(backlog,todo,in-progress,review,done)",
+          "priority": "enum(low,medium,high,urgent)",
+          "dueDate": "date",
+          "labels": "text[]",
+          "estimatedHours": "integer",
+          "actualHours": "number",
+          "tags": "string[]",
+          "createdAt": "datetime",
+          "commentCount": "text"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "Comment",
+      "domainId": "project-management",
+      "patternKey": "entity-comment",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "taskId",
+          "authorId",
+          "content",
+          "parentId",
+          "likes",
+          "status",
+          "createdAt"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "taskId": "integer",
+          "authorId": "integer",
+          "content": "text",
+          "parentId": "number",
+          "likes": "number",
+          "status": "enum:visible,hidden,flagged",
+          "createdAt": "datetime"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "TeamMember",
+      "domainId": "project-management",
+      "patternKey": "entity-teammember",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "name",
+          "email",
+          "role",
+          "avatar",
+          "phone",
+          "position",
+          "department",
+          "hireDate",
+          "salary",
+          "status",
+          "createdAt",
+          "taskCount"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "email": "text",
+          "role": "enum(owner,admin,member,viewer)",
+          "avatar": "text",
+          "phone": "string",
+          "position": "string",
+          "department": "string",
+          "hireDate": "date",
+          "salary": "number",
+          "status": "enum:active,on-leave,terminated",
+          "createdAt": "datetime",
+          "taskCount": "text"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "workflow-design",
+      "patternKey": "workflow-task",
+      "patternValue": {
+        "states": [
+          "backlog",
+          "todo",
+          "in-progress",
+          "review",
+          "done"
+        ],
+        "commonTransitions": [
+          {
+            "to": "todo",
+            "from": "backlog",
+            "role": "member",
+            "action": "Move to Todo"
+          },
+          {
+            "to": "in-progress",
+            "from": "todo",
+            "role": "member",
+            "action": "Start Work"
+          },
+          {
+            "to": "review",
+            "from": "in-progress",
+            "role": "member",
+            "action": "Submit for Review"
+          },
+          {
+            "to": "done",
+            "from": "review",
+            "role": "manager",
+            "action": "Approve & Complete"
+          },
+          {
+            "to": "in-progress",
+            "from": "review",
+            "role": "manager",
+            "action": "Request Changes"
+          },
+          {
+            "to": "backlog",
+            "from": "todo",
+            "role": "member",
+            "action": "Move to Backlog"
+          }
+        ]
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "workflow-design",
+      "patternKey": "workflow-project",
+      "patternValue": {
+        "states": [
+          "planning",
+          "active",
+          "on-hold",
+          "completed",
+          "archived"
+        ],
+        "commonTransitions": [
+          {
+            "to": "active",
+            "from": "planning",
+            "role": "manager",
+            "action": "Start Project"
+          },
+          {
+            "to": "on-hold",
+            "from": "active",
+            "role": "manager",
+            "action": "Pause Project"
+          },
+          {
+            "to": "active",
+            "from": "on-hold",
+            "role": "manager",
+            "action": "Resume Project"
+          },
+          {
+            "to": "completed",
+            "from": "active",
+            "role": "manager",
+            "action": "Complete Project"
+          },
+          {
+            "to": "archived",
+            "from": "completed",
+            "role": "admin",
+            "action": "Archive"
+          }
+        ]
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-tasks",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "search",
+          "status-filter",
+          "priority-filter",
+          "assignee-filter",
+          "sort",
+          "create-task",
+          "kanban view",
+          "form-wizard view"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-task-detail",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "edit-task",
+          "status-update",
+          "comments",
+          "assignee",
+          "due-date",
+          "priority",
+          "labels"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-board-view",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "drag-drop-columns",
+          "assignee-filter",
+          "priority-filter",
+          "create-task",
+          "labels"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-my-tasks",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "grouped-by-project",
+          "due-today",
+          "overdue",
+          "quick-status-update"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-dashboard",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "kpi-cards",
+          "project-status-chart",
+          "my-tasks-summary",
+          "upcoming-deadlines"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-projects",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "search",
+          "status-filter",
+          "owner-filter",
+          "create-project",
+          "progress-bar",
+          "kanban view",
+          "master-detail view",
+          "form-wizard view",
+          "dashboard-widget view"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-project-detail",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "overview",
+          "task-board",
+          "timeline",
+          "team-members",
+          "files"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-team",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "member-list",
+          "workload-bar",
+          "role-filter",
+          "invite-member",
+          "card-grid view",
+          "form-wizard view",
+          "dashboard-widget view"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "tech-choice",
+      "patternKey": "file-structure-general",
+      "patternValue": {
+        "fileCount": 66,
+        "recentPaths": [
+          "src/lib/utils.ts",
+          "src/lib/queryClient.ts",
+          "src/hooks/use-toast.ts",
+          "src/components/ui/button.tsx",
+          "src/components/ui/card.tsx",
+          "src/components/ui/input.tsx",
+          "src/components/ui/label.tsx",
+          "src/components/ui/dialog.tsx",
+          "src/components/ui/toaster.tsx",
+          "src/components/ui/badge.tsx",
+          "src/components/ui/tabs.tsx",
+          "src/components/ui/select.tsx",
+          "src/components/ui/textarea.tsx",
+          "src/components/confirm-dialog.tsx",
+          "src/components/loading-skeleton.tsx",
+          "src/components/theme-provider.tsx",
+          "src/components/data-table.tsx",
+          "src/components/search-bar.tsx",
+          "src/components/empty-state.tsx",
+          "src/components/status-badge.tsx",
+          "src/components/kpi-card.tsx",
+          "package.json",
+          "index.html",
+          "src/main.tsx",
+          "vite.config.ts",
+          "tailwind.config.ts",
+          "postcss.config.js",
+          "tsconfig.json",
+          "tsconfig.node.json",
+          "src/index.css"
+        ],
+        "qualityScore": 90
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "domain-mapping",
+      "domainId": "project-management",
+      "patternKey": "domain-project-management",
+      "patternValue": {
+        "entities": [
+          "Project",
+          "Task",
+          "Comment",
+          "TeamMember"
+        ],
+        "modules": [
+          "Projects",
+          "Tasks",
+          "Team",
+          "Dashboard"
+        ],
+        "kpis": [
+          "Active Projects",
+          "Tasks Due Today",
+          "Completion Rate",
+          "Team Velocity",
+          "On-Track %",
+          "Overdue Tasks",
+          "Completed This Week",
+          "In Progress"
+        ],
+        "pageCount": 8,
+        "relationships": {
+          "Project": [
+            "belongsTo Owner"
+          ],
+          "Task": [
+            "belongsTo Project",
+            "belongsTo Assignee"
+          ],
+          "Comment": [
+            "belongsTo Task",
+            "belongsTo Author",
+            "belongsTo Parent"
+          ]
+        }
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    }
+  ],
+  "preferences": [
+    {
+      "key": "quality-score-general",
+      "value": "90",
+      "category": "architecture",
+      "frequency": 1
+    }
+  ],
+  "stats": {
+    "totalPatterns": 26,
+    "reliablePatterns": 26,
+    "totalPreferences": 1
+  }
+}

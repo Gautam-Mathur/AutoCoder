@@ -3976,7 +3976,7 @@ Output ONLY the fixed code. No explanations.`;
     }
   });
 
-  // Snapshot build/status endpoints for WebContainer prewarm
+  // Per-project snapshot build/status endpoints
   app.post("/api/cache/build-snapshot", async (req, res) => {
     try {
       const { packageJsonContent, hash } = req.body;
