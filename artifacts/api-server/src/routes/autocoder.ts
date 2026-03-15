@@ -4536,7 +4536,9 @@ Output ONLY the fixed code. No explanations.`;
       try {
         const { reconfigureGenerator } = await import("../modules/ai-fullstack-generator");
         reconfigureGenerator({ baseUrl, apiKey, model });
-      } catch {}
+      } catch (syncErr: any) {
+        console.warn(`[AI Config] Generator sync failed: ${syncErr?.message || syncErr}`);
+      }
 
       if (baseUrl) {
         connectSLMEndpoint(baseUrl);
