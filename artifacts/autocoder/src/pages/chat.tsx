@@ -471,24 +471,23 @@ export default function Chat() {
 
               if (data.type === 'thinking' && data.step) {
                 setStreamingThinkingSteps(prev => [...prev, data.step]);
-                if (data.step.label) {
-                  const stageMap: Record<string, string> = {
-                    'understanding': 'Understanding',
-                    'analyzing': 'Understanding',
-                    'planning': 'Schema',
-                    'schema': 'Schema',
-                    'designing': 'Architecture',
-                    'architecture': 'Architecture',
-                    'generating': 'Code',
-                    'coding': 'Code',
-                    'writing': 'Code',
-                    'reviewing': 'Quality',
-                    'quality': 'Quality',
-                    'validating': 'Quality',
-                  };
-                  const raw = data.step.label.toLowerCase();
-                  const canonical = Object.entries(stageMap).find(([k]) => raw.includes(k))?.[1] || data.step.label;
-                  setGenerationStage(canonical);
+                const phaseMap: Record<string, string> = {
+                  'orchestrator': 'Understanding',
+                  'understand': 'Understanding',
+                  'plan': 'Schema',
+                  'learn': 'Schema',
+                  'schema': 'Schema',
+                  'kb': 'Schema',
+                  'architect': 'Architecture',
+                  'generate': 'Code',
+                  'deep-quality': 'Quality',
+                  'record': 'Quality',
+                };
+                const phase = data.step.phase;
+                if (phase) {
+                  setGenerationStage(phaseMap[phase] || phase);
+                } else if (data.step.label) {
+                  setGenerationStage(data.step.label);
                 }
                 continue;
               }

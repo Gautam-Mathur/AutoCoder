@@ -809,12 +809,36 @@ export async function registerRoutes(
         return res.status(404).json({ error: "File not found in project" });
       }
 
-      const regeneratePrompt = `Please regenerate the file "${filePath}" while keeping all other project files intact. Maintain the same interfaces, exports, and integration points. Improve the implementation quality.`;
+      const siblingFiles = allFiles
+        .filter((f: any) => f.path !== filePath)
+        .map((f: any) => `// ${f.path}\n${f.content.slice(0, 200)}${f.content.length > 200 ? '\n// ...(truncated)' : ''}`)
+        .join('\n\n');
+
+      const contextBlock = siblingFiles.length > 0
+        ? `\n\nHere are the other files in this project for interface/import context (keep these unchanged):\n\n${siblingFiles}`
+        : '';
+
+      const regeneratePrompt = [
+        `Regenerate ONLY the file "${filePath}". Output the complete improved file content.`,
+        `Current content of ${filePath}:`,
+        '```',
+        targetFile.content,
+        '```',
+        contextBlock,
+        '',
+        'Requirements:',
+        '- Maintain ALL existing exports, interfaces, and function signatures',
+        '- Keep the same import paths and integration points with sibling files',
+        '- Improve implementation quality: better error handling, clearer logic, proper typing',
+        '- Do NOT change the file path or rename exports',
+        '- Output ONLY the complete regenerated file content',
+      ].join('\n');
 
       res.json({
         success: true,
         prompt: regeneratePrompt,
         filePath,
+        currentContent: targetFile.content,
       });
     } catch (error: any) {
       console.error("Error preparing file regeneration:", error);
