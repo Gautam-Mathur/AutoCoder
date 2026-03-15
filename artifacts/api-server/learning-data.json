@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "exportedAt": "2026-03-15T11:47:08.105Z",
+  "exportedAt": "2026-03-15T12:34:15.593Z",
   "patterns": [
     {
       "patternType": "entity-structure",
@@ -199,7 +199,7 @@
     {
       "id": 7,
       "patternType": "entity-structure",
-      "domainId": "project-management",
+      "domainId": "synthesized-project-management-consulting",
       "entityType": "Project",
       "patternKey": "entity-project",
       "patternValue": {
@@ -217,7 +217,8 @@
           "createdAt": "datetime",
           "startDate": "date",
           "taskCount": "text",
-          "description": "text"
+          "description": "text",
+          "milestoneCount": "text"
         },
         "recommended": [
           "id",
@@ -233,17 +234,18 @@
           "tags",
           "createdAt",
           "duration",
-          "taskCount"
+          "taskCount",
+          "milestoneCount"
         ]
       },
-      "successCount": 2,
+      "successCount": 4,
       "failureCount": 0,
       "reliability": 1
     },
     {
       "id": 9,
       "patternType": "entity-structure",
-      "domainId": "project-management",
+      "domainId": "synthesized-project-management-consulting",
       "entityType": "Task",
       "patternKey": "entity-task",
       "patternValue": {
@@ -280,7 +282,7 @@
           "commentCount"
         ]
       },
-      "successCount": 2,
+      "successCount": 4,
       "failureCount": 0,
       "reliability": 1
     },
@@ -319,7 +321,7 @@
     {
       "id": 16,
       "patternType": "entity-structure",
-      "domainId": "project-management",
+      "domainId": "synthesized-project-management-consulting",
       "entityType": "TeamMember",
       "patternKey": "entity-teammember",
       "patternValue": {
@@ -354,7 +356,7 @@
           "taskCount"
         ]
       },
-      "successCount": 2,
+      "successCount": 4,
       "failureCount": 0,
       "reliability": 1
     },
@@ -409,9 +411,9 @@
           }
         ]
       },
-      "successCount": 2,
-      "failureCount": 0,
-      "reliability": 1
+      "successCount": 3,
+      "failureCount": 1,
+      "reliability": 0.75
     },
     {
       "id": 17,
@@ -458,9 +460,9 @@
           }
         ]
       },
-      "successCount": 2,
-      "failureCount": 0,
-      "reliability": 1
+      "successCount": 3,
+      "failureCount": 1,
+      "reliability": 0.75
     },
     {
       "id": 12,
@@ -551,7 +553,7 @@
           "upcoming-deadlines"
         ]
       },
-      "successCount": 7,
+      "successCount": 8,
       "failureCount": 0,
       "reliability": 1
     },
@@ -573,7 +575,7 @@
           "dashboard-widget view"
         ]
       },
-      "successCount": 1,
+      "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
@@ -591,7 +593,7 @@
           "files"
         ]
       },
-      "successCount": 1,
+      "successCount": 3,
       "failureCount": 0,
       "reliability": 1
     },
@@ -611,7 +613,7 @@
           "dashboard-widget view"
         ]
       },
-      "successCount": 1,
+      "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
@@ -620,7 +622,7 @@
       "patternType": "tech-choice",
       "patternKey": "file-structure-general",
       "patternValue": {
-        "fileCount": 56,
+        "fileCount": 80,
         "recentPaths": [
           "src/lib/utils.ts",
           "src/lib/queryClient.ts",
@@ -655,7 +657,7 @@
         ],
         "qualityScore": 90
       },
-      "successCount": 7,
+      "successCount": 8,
       "failureCount": 0,
       "reliability": 1
     },
@@ -1249,7 +1251,7 @@
     {
       "id": 50,
       "patternType": "entity-structure",
-      "domainId": "custom-1773575176729",
+      "domainId": "custom-1773574197426",
       "entityType": "Record",
       "patternKey": "entity-record",
       "patternValue": {
@@ -2070,17 +2072,11 @@
       "reliability": 1
     },
     {
+      "id": 83,
       "patternType": "domain-mapping",
       "domainId": "custom-1773575176729",
       "patternKey": "domain-custom-1773575176729",
       "patternValue": {
-        "entities": [
-          "Record"
-        ],
-        "modules": [
-          "Dashboard",
-          "Record Management"
-        ],
         "kpis": [
           "Total Records",
           "Active Records",
@@ -2088,8 +2084,452 @@
           "Active Items",
           "Growth Rate"
         ],
+        "modules": [
+          "Dashboard",
+          "Record Management"
+        ],
+        "entities": [
+          "Record"
+        ],
         "pageCount": 3,
         "relationships": {}
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "Client",
+      "domainId": "synthesized-project-management-consulting",
+      "patternKey": "entity-client",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "companyName",
+          "contactName",
+          "email",
+          "phone",
+          "address",
+          "status",
+          "firstName",
+          "lastName",
+          "company",
+          "city",
+          "zipCode",
+          "notes",
+          "createdAt",
+          "fullName",
+          "contractCount"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "companyName": "text",
+          "contactName": "text",
+          "email": "text",
+          "phone": "text",
+          "address": "text",
+          "status": "enum(active,inactive)",
+          "firstName": "string",
+          "lastName": "string",
+          "company": "string",
+          "city": "string",
+          "zipCode": "string",
+          "notes": "string",
+          "createdAt": "datetime",
+          "fullName": "text",
+          "contractCount": "text"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "Milestone",
+      "domainId": "synthesized-project-management-consulting",
+      "patternKey": "entity-milestone",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "projectId",
+          "name",
+          "dueDate",
+          "status",
+          "description",
+          "completedDate",
+          "progress",
+          "createdAt"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "projectId": "integer",
+          "name": "text",
+          "dueDate": "date",
+          "status": "enum(pending,in-progress,completed)",
+          "description": "string",
+          "completedDate": "date",
+          "progress": "number",
+          "createdAt": "datetime"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "Contract",
+      "domainId": "synthesized-project-management-consulting",
+      "patternKey": "entity-contract",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "clientId",
+          "title",
+          "value",
+          "startDate",
+          "endDate",
+          "status",
+          "leaseNumber",
+          "monthlyRent",
+          "securityDeposit",
+          "terms",
+          "documentUrl",
+          "createdAt",
+          "duration"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "clientId": "integer",
+          "title": "text",
+          "value": "integer",
+          "startDate": "date",
+          "endDate": "date",
+          "status": "enum(draft,active,expired,terminated)",
+          "leaseNumber": "string",
+          "monthlyRent": "number",
+          "securityDeposit": "number",
+          "terms": "string",
+          "documentUrl": "string",
+          "createdAt": "datetime",
+          "duration": "text"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "Cve",
+      "domainId": "synthesized-project-management-consulting",
+      "patternKey": "entity-cve",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "name",
+          "description",
+          "category",
+          "status",
+          "assignedTo",
+          "dueDate",
+          "rating",
+          "createdAt"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "description": "text",
+          "category": "text",
+          "status": "enum(active,inactive,archived)",
+          "assignedTo": "text",
+          "dueDate": "date",
+          "rating": "integer",
+          "createdAt": "timestamp"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "Risk",
+      "domainId": "synthesized-project-management-consulting",
+      "patternKey": "entity-risk",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "name",
+          "description",
+          "category",
+          "status",
+          "assignedTo",
+          "dueDate",
+          "rating",
+          "createdAt"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "description": "text",
+          "category": "text",
+          "status": "enum(active,inactive,archived)",
+          "assignedTo": "text",
+          "dueDate": "date",
+          "rating": "integer",
+          "createdAt": "timestamp"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "Deadline",
+      "domainId": "synthesized-project-management-consulting",
+      "patternKey": "entity-deadline",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "name",
+          "description",
+          "category",
+          "status",
+          "assignedTo",
+          "dueDate",
+          "rating",
+          "createdAt"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "description": "text",
+          "category": "text",
+          "status": "enum(active,inactive,archived)",
+          "assignedTo": "text",
+          "dueDate": "date",
+          "rating": "integer",
+          "createdAt": "timestamp"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-projects-list",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "search",
+          "filter-by-status",
+          "filter-by-client",
+          "sort",
+          "kanban view",
+          "form-wizard view"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-kanban-board",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "drag-drop",
+          "assignee-filter",
+          "priority-labels"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-clients-list",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "search",
+          "filter-by-status",
+          "revenue-column",
+          "form-wizard view"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-client-detail",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "contact-info",
+          "project-list",
+          "billing-history",
+          "notes"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-cve-list",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "search",
+          "filter-by-status",
+          "sort",
+          "form-wizard view"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-cve-detail",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "edit",
+          "delete",
+          "status-tracking"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-risk-list",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "search",
+          "filter-by-status",
+          "sort",
+          "form-wizard view"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-risk-detail",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "edit",
+          "delete",
+          "status-tracking"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-deadline-list",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "search",
+          "filter-by-status",
+          "sort",
+          "form-wizard view"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-deadline-detail",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "edit",
+          "delete",
+          "status-tracking"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "domain-mapping",
+      "domainId": "synthesized-project-management-consulting",
+      "patternKey": "domain-synthesized-project-management-consulting",
+      "patternValue": {
+        "entities": [
+          "Project",
+          "Task",
+          "TeamMember",
+          "Client",
+          "Milestone",
+          "Contract",
+          "Cve",
+          "Risk",
+          "Deadline"
+        ],
+        "modules": [
+          "Projects",
+          "Team",
+          "Dashboard",
+          "Project Management",
+          "Client Management",
+          "Cve Management",
+          "Risk Management",
+          "Deadline Management"
+        ],
+        "kpis": [
+          "Active Projects",
+          "Tasks Due Today",
+          "Completion Rate",
+          "Team Velocity",
+          "Revenue",
+          "Utilization Rate",
+          "Outstanding Invoices",
+          "Billable Hours"
+        ],
+        "pageCount": 15,
+        "relationships": {
+          "Project": [
+            "belongsTo Owner"
+          ],
+          "Task": [
+            "belongsTo Project",
+            "belongsTo Assignee"
+          ],
+          "Milestone": [
+            "belongsTo Project"
+          ],
+          "Contract": [
+            "belongsTo Client"
+          ]
+        }
       },
       "successCount": 1,
       "failureCount": 0,
@@ -2101,12 +2541,12 @@
       "key": "quality-score-general",
       "value": "91",
       "category": "architecture",
-      "frequency": 7
+      "frequency": 8
     }
   ],
   "stats": {
-    "totalPatterns": 71,
-    "reliablePatterns": 71,
+    "totalPatterns": 88,
+    "reliablePatterns": 88,
     "totalPreferences": 1
   }
 }

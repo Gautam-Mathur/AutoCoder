@@ -9,6 +9,7 @@
  */
 
 import { registerStageTemplate } from './slm-inference-engine.js';
+import { getConfig } from './prompt-config.js';
 
 export const UNDERSTANDING_STAGE_ID = 'understand';
 
@@ -46,7 +47,25 @@ Reasoning:
 Output a structured JSON analysis.`,
 
     userPromptBuilder: (context: Record<string, any>) => {
+      const config = getConfig();
+
+      // Inject security and scope preferences so understanding picks up the right implicit requirements
+      let configHint = '';
+      if (config.securityFocus === 'heightened' || config.securityFocus === 'enterprise') {
+        configHint += `\nUser preference: HEIGHTENED security. Ensure implicit requirements include: input validation on all endpoints, rate limiting on auth routes, JWT with short expiry + refresh tokens, RBAC if multiple user roles exist.`;
+      }
+      if (config.securityFocus === 'enterprise') {
+        configHint += ` Also infer: audit log table, field-level permissions, session management.`;
+      }
+      if (config.alwaysPaginate) {
+        configHint += `\nUser preference: All list views require pagination — infer cursor-based or offset pagination.`;
+      }
+      if (config.errorHandling === 'result-type' || config.errorHandling === 'both') {
+        configHint += `\nUser preference: Result<T> error handling — infer that error states and empty states need explicit UI treatment.`;
+      }
+
       let prompt = `Analyze this software project request:\n\n"${context.userRequest || context.ruleOutput?.level1_intent?.primaryGoal || ''}"`;
+      if (configHint) prompt += `\n\nProject configuration:${configHint}`;
 
       if (context.ruleOutput) {
         prompt += `\n\nThe rule-based analyzer already detected:\n`;

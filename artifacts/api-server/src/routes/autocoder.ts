@@ -51,6 +51,7 @@ import { analyzeCodebase, type FileInfo as IngestionFileInfo } from "../modules/
 import { generatePlanFromCodebase, formatReversePlanSummary } from "../modules/reverse-plan-generator";
 import { traceCrossFileRelationships } from "../modules/cross-file-tracer";
 import { runStageTest, getAvailableStages, runModularFix, runDiagnostics } from "../modules/modular-test-engine";
+import { getConfig, saveConfig, applyPreset, buildPromptInstructions, getConfigSummary, PROMPT_PRESETS, DEFAULT_CONFIG } from "../modules/prompt-config";
 
 function sanitizeHtml(input: string): string {
   return input
@@ -2736,6 +2737,60 @@ Output ONLY the fixed code. No explanations.`;
       res.json({ success: true, path });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to get learning path';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // ── Prompt Configuration ──────────────────────────────────────────────────
+
+  app.get("/api/ai/prompt-config", (_req, res) => {
+    try {
+      const config = getConfig();
+      const summary = getConfigSummary(config);
+      const preview = buildPromptInstructions(config);
+      res.json({ success: true, config, summary, preview, presets: PROMPT_PRESETS });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to get prompt config';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.post("/api/ai/prompt-config", (req, res) => {
+    try {
+      const incoming = req.body as Partial<typeof DEFAULT_CONFIG>;
+      const current = getConfig();
+      const next = { ...current, ...incoming } as typeof DEFAULT_CONFIG;
+      saveConfig(next);
+      const summary = getConfigSummary(next);
+      const preview = buildPromptInstructions(next);
+      res.json({ success: true, config: next, summary, preview });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save prompt config';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.post("/api/ai/prompt-config/preset", (req, res) => {
+    try {
+      const { preset } = req.body as { preset: string };
+      if (!preset) return res.status(400).json({ error: 'preset is required' });
+      const config = applyPreset(preset as any);
+      const summary = getConfigSummary(config);
+      const preview = buildPromptInstructions(config);
+      res.json({ success: true, config, summary, preview });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to apply preset';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.get("/api/ai/prompt-config/preview", (req, res) => {
+    try {
+      const config = getConfig();
+      const preview = buildPromptInstructions(config);
+      res.json({ success: true, preview, charCount: preview.length, lineCount: preview.split('\n').length });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to build preview';
       res.status(500).json({ error: message });
     }
   });

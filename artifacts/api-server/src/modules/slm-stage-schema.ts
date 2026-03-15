@@ -8,6 +8,7 @@
  */
 
 import { registerStageTemplate } from './slm-inference-engine.js';
+import { getConfig } from './prompt-config.js';
 
 export const SCHEMA_STAGE_ID = 'schema';
 
@@ -37,7 +38,19 @@ You CANNOT:
 Output patches as an array. Each patch targets a specific table and field.`,
 
     userPromptBuilder: (context: Record<string, any>) => {
+      const config = getConfig();
       let prompt = `Review this Drizzle schema and propose improvement patches:\n\n`;
+
+      // Inject schema-relevant config preferences
+      if (config.securityFocus !== 'standard') {
+        prompt += `User preference: ${config.securityFocus} security — ensure password/token columns are NOT selected by default (use .select() without password), add indexes for email and auth-related columns.\n\n`;
+      }
+      if (config.typescriptStrictness === 'strict') {
+        prompt += `User preference: strict TypeScript — ensure all columns have explicit Drizzle types with correct notNull() or .default() declarations.\n\n`;
+      }
+      if (config.alwaysPaginate) {
+        prompt += `User preference: always paginate — suggest createdAt DESC + id indexes on all user-facing list tables.\n\n`;
+      }
 
       if (context.ruleOutput) {
         const schema = context.ruleOutput;

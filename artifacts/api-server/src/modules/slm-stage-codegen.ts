@@ -11,6 +11,7 @@
 
 import { registerStageTemplate } from './slm-inference-engine.js';
 import { getContextForGeneration, getAntiPatternChecklist } from './knowledge-base.js';
+import { buildPromptInstructions, getConfig } from './prompt-config.js';
 
 export const CODEGEN_STAGE_ID = 'generate';
 
@@ -65,7 +66,10 @@ ${getAntiPatternChecklist(['typescript', 'react', 'database', 'security', 'error
 Output an array of function-level enhancements targeting specific functions in specific files.`,
 
     userPromptBuilder: (context: Record<string, any>) => {
-      let prompt = `Enhance the function bodies in these generated files:\n\n`;
+      const config = getConfig();
+      const configInstructions = buildPromptInstructions(config);
+      let prompt = configInstructions ? `${configInstructions}\n\n---\n\n` : '';
+      prompt += `Enhance the function bodies in these generated files:\n\n`;
 
       if (context.files) {
         const files = context.files as Array<{ path: string; content: string }>;
