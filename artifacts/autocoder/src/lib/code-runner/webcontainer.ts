@@ -1037,7 +1037,7 @@ function stripAnsi(str: string): string {
 
 async function tryFetchAndMountSnapshot(container: WebContainer, url: string, label: string, onOutput?: (msg: string) => void): Promise<boolean> {
   try {
-    const emit = (msg: string) => { notifyPreWarm('installing', msg); onOutput?.(msg); };
+    const emit = (msg: string) => { onOutput?.(msg); };
     runnerLog.info('PreWarm', `Trying snapshot from ${label}...`);
     emit('Downloading package cache...');
 

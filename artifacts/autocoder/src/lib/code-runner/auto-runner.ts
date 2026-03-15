@@ -17,6 +17,7 @@ import {
   awaitPreWarm,
   fixBinPermissions,
   triggerSnapshotBuild,
+  onPreWarmProgress,
   type FileSystemTree,
   type RunResult
 } from './webcontainer';
@@ -477,6 +478,10 @@ export async function autoRunProject(
     state.logs.push(message);
     callbacks.onLog?.(message);
   };
+
+  const unsubPreWarm = onPreWarmProgress((_status, message) => {
+    log(message);
+  });
 
   const runPipeline = async (): Promise<{ success: boolean; previewUrl: string | null; error: string | null }> => {
   try {
@@ -1150,6 +1155,7 @@ export default {
   };
 
   activeRunPromise = runPipeline().finally(() => {
+    unsubPreWarm();
     activeRunId = null;
     activeRunPromise = null;
   });

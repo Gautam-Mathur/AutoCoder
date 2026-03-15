@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "exportedAt": "2026-03-15T07:11:03.993Z",
+  "exportedAt": "2026-03-15T09:17:17.453Z",
   "patterns": [
     {
       "patternType": "entity-structure",
@@ -197,11 +197,28 @@
       "reliability": 1
     },
     {
+      "id": 7,
       "patternType": "entity-structure",
-      "entityType": "Project",
       "domainId": "project-management",
+      "entityType": "Project",
       "patternKey": "entity-project",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "tags": "string[]",
+          "budget": "number",
+          "status": "enum(planning,active,on-hold,completed,archived)",
+          "endDate": "date",
+          "ownerId": "integer",
+          "duration": "text",
+          "priority": "enum:low,medium,high,critical",
+          "progress": "integer",
+          "createdAt": "datetime",
+          "startDate": "date",
+          "taskCount": "text",
+          "description": "text"
+        },
         "recommended": [
           "id",
           "name",
@@ -217,34 +234,35 @@
           "createdAt",
           "duration",
           "taskCount"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "name": "text",
-          "description": "text",
-          "status": "enum(planning,active,on-hold,completed,archived)",
-          "ownerId": "integer",
-          "startDate": "date",
-          "endDate": "date",
-          "progress": "integer",
-          "budget": "number",
-          "priority": "enum:low,medium,high,critical",
-          "tags": "string[]",
-          "createdAt": "datetime",
-          "duration": "text",
-          "taskCount": "text"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 9,
       "patternType": "entity-structure",
-      "entityType": "Task",
       "domainId": "project-management",
+      "entityType": "Task",
       "patternKey": "entity-task",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "tags": "string[]",
+          "title": "text",
+          "labels": "text[]",
+          "status": "enum(backlog,todo,in-progress,review,done)",
+          "dueDate": "date",
+          "priority": "enum(low,medium,high,urgent)",
+          "createdAt": "datetime",
+          "projectId": "integer",
+          "assigneeId": "integer",
+          "actualHours": "number",
+          "description": "text",
+          "commentCount": "text",
+          "estimatedHours": "integer"
+        },
         "recommended": [
           "id",
           "projectId",
@@ -260,34 +278,29 @@
           "tags",
           "createdAt",
           "commentCount"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "projectId": "integer",
-          "title": "text",
-          "description": "text",
-          "assigneeId": "integer",
-          "status": "enum(backlog,todo,in-progress,review,done)",
-          "priority": "enum(low,medium,high,urgent)",
-          "dueDate": "date",
-          "labels": "text[]",
-          "estimatedHours": "integer",
-          "actualHours": "number",
-          "tags": "string[]",
-          "createdAt": "datetime",
-          "commentCount": "text"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 19,
       "patternType": "entity-structure",
-      "entityType": "Comment",
       "domainId": "project-management",
+      "entityType": "Comment",
       "patternKey": "entity-comment",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "likes": "number",
+          "status": "enum:visible,hidden,flagged",
+          "taskId": "integer",
+          "content": "text",
+          "authorId": "integer",
+          "parentId": "number",
+          "createdAt": "datetime"
+        },
         "recommended": [
           "id",
           "taskId",
@@ -297,28 +310,34 @@
           "likes",
           "status",
           "createdAt"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "taskId": "integer",
-          "authorId": "integer",
-          "content": "text",
-          "parentId": "number",
-          "likes": "number",
-          "status": "enum:visible,hidden,flagged",
-          "createdAt": "datetime"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 16,
       "patternType": "entity-structure",
-      "entityType": "TeamMember",
       "domainId": "project-management",
+      "entityType": "TeamMember",
       "patternKey": "entity-teammember",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "role": "enum(owner,admin,member,viewer)",
+          "email": "text",
+          "phone": "string",
+          "avatar": "text",
+          "salary": "number",
+          "status": "enum:active,on-leave,terminated",
+          "hireDate": "date",
+          "position": "string",
+          "createdAt": "datetime",
+          "taskCount": "text",
+          "department": "string"
+        },
         "recommended": [
           "id",
           "name",
@@ -333,28 +352,14 @@
           "status",
           "createdAt",
           "taskCount"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "name": "text",
-          "email": "text",
-          "role": "enum(owner,admin,member,viewer)",
-          "avatar": "text",
-          "phone": "string",
-          "position": "string",
-          "department": "string",
-          "hireDate": "date",
-          "salary": "number",
-          "status": "enum:active,on-leave,terminated",
-          "createdAt": "datetime",
-          "taskCount": "text"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 18,
       "patternType": "workflow-design",
       "patternKey": "workflow-task",
       "patternValue": {
@@ -409,6 +414,7 @@
       "reliability": 1
     },
     {
+      "id": 17,
       "patternType": "workflow-design",
       "patternKey": "workflow-project",
       "patternValue": {
@@ -457,6 +463,7 @@
       "reliability": 1
     },
     {
+      "id": 12,
       "patternType": "page-structure",
       "patternKey": "page-layout-tasks",
       "patternValue": {
@@ -477,6 +484,7 @@
       "reliability": 1
     },
     {
+      "id": 20,
       "patternType": "page-structure",
       "patternKey": "page-layout-task-detail",
       "patternValue": {
@@ -496,6 +504,7 @@
       "reliability": 1
     },
     {
+      "id": 21,
       "patternType": "page-structure",
       "patternKey": "page-layout-board-view",
       "patternValue": {
@@ -513,6 +522,7 @@
       "reliability": 1
     },
     {
+      "id": 22,
       "patternType": "page-structure",
       "patternKey": "page-layout-my-tasks",
       "patternValue": {
@@ -529,6 +539,7 @@
       "reliability": 1
     },
     {
+      "id": 3,
       "patternType": "page-structure",
       "patternKey": "page-layout-dashboard",
       "patternValue": {
@@ -540,11 +551,12 @@
           "upcoming-deadlines"
         ]
       },
-      "successCount": 1,
+      "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 4,
       "patternType": "page-structure",
       "patternKey": "page-layout-projects",
       "patternValue": {
@@ -566,6 +578,7 @@
       "reliability": 1
     },
     {
+      "id": 5,
       "patternType": "page-structure",
       "patternKey": "page-layout-project-detail",
       "patternValue": {
@@ -583,6 +596,7 @@
       "reliability": 1
     },
     {
+      "id": 6,
       "patternType": "page-structure",
       "patternKey": "page-layout-team",
       "patternValue": {
@@ -602,10 +616,11 @@
       "reliability": 1
     },
     {
+      "id": 8,
       "patternType": "tech-choice",
       "patternKey": "file-structure-general",
       "patternValue": {
-        "fileCount": 66,
+        "fileCount": 63,
         "recentPaths": [
           "src/lib/utils.ts",
           "src/lib/queryClient.ts",
@@ -640,27 +655,16 @@
         ],
         "qualityScore": 90
       },
-      "successCount": 1,
+      "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 15,
       "patternType": "domain-mapping",
       "domainId": "project-management",
       "patternKey": "domain-project-management",
       "patternValue": {
-        "entities": [
-          "Project",
-          "Task",
-          "Comment",
-          "TeamMember"
-        ],
-        "modules": [
-          "Projects",
-          "Tasks",
-          "Team",
-          "Dashboard"
-        ],
         "kpis": [
           "Active Projects",
           "Tasks Due Today",
@@ -671,11 +675,20 @@
           "Completed This Week",
           "In Progress"
         ],
+        "modules": [
+          "Projects",
+          "Tasks",
+          "Team",
+          "Dashboard"
+        ],
+        "entities": [
+          "Project",
+          "Task",
+          "Comment",
+          "TeamMember"
+        ],
         "pageCount": 8,
         "relationships": {
-          "Project": [
-            "belongsTo Owner"
-          ],
           "Task": [
             "belongsTo Project",
             "belongsTo Assignee"
@@ -684,6 +697,380 @@
             "belongsTo Task",
             "belongsTo Author",
             "belongsTo Parent"
+          ],
+          "Project": [
+            "belongsTo Owner"
+          ]
+        }
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "Member",
+      "domainId": "fitness",
+      "patternKey": "entity-member",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "firstName",
+          "lastName",
+          "email",
+          "phone",
+          "dateOfBirth",
+          "membershipId",
+          "joinDate",
+          "status",
+          "membershipType",
+          "expiryDate",
+          "avatar",
+          "createdAt",
+          "fullName",
+          "classBookingCount",
+          "workoutPlanCount",
+          "workoutLogCount",
+          "password"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "firstName": "text",
+          "lastName": "text",
+          "email": "text",
+          "phone": "text",
+          "dateOfBirth": "date",
+          "membershipId": "integer",
+          "joinDate": "date",
+          "status": "enum(active,expired,frozen,cancelled)",
+          "membershipType": "enum:basic,premium,vip",
+          "expiryDate": "date",
+          "avatar": "string",
+          "createdAt": "datetime",
+          "fullName": "text",
+          "classBookingCount": "text",
+          "workoutPlanCount": "text",
+          "workoutLogCount": "text",
+          "password": "string"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "Membership",
+      "domainId": "fitness",
+      "patternKey": "entity-membership",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "name",
+          "price",
+          "duration",
+          "features",
+          "memberCount"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "price": "integer",
+          "duration": "text",
+          "features": "text[]",
+          "memberCount": "text"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "Class",
+      "domainId": "fitness",
+      "patternKey": "entity-class",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "name",
+          "instructor",
+          "dayOfWeek",
+          "time",
+          "duration",
+          "capacity",
+          "type",
+          "classBookingCount"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "instructor": "text",
+          "dayOfWeek": "text",
+          "time": "text",
+          "duration": "integer",
+          "capacity": "integer",
+          "type": "text",
+          "classBookingCount": "text"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "ClassBooking",
+      "domainId": "fitness",
+      "patternKey": "entity-classbooking",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "classId",
+          "memberId",
+          "date",
+          "status",
+          "bookingNumber",
+          "checkIn",
+          "checkOut",
+          "guestCount",
+          "totalPrice",
+          "specialRequests",
+          "lineTotal",
+          "duration"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "classId": "integer",
+          "memberId": "integer",
+          "date": "date",
+          "status": "enum(booked,attended,cancelled,no-show)",
+          "bookingNumber": "string",
+          "checkIn": "datetime",
+          "checkOut": "datetime",
+          "guestCount": "number",
+          "totalPrice": "number",
+          "specialRequests": "string",
+          "lineTotal": "text",
+          "duration": "text"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "WorkoutPlan",
+      "domainId": "fitness",
+      "patternKey": "entity-workoutplan",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "name",
+          "description",
+          "difficulty",
+          "exercises",
+          "type",
+          "duration",
+          "caloriesBurned",
+          "intensity",
+          "notes",
+          "completedAt",
+          "status",
+          "createdAt"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "description": "text",
+          "difficulty": "enum(beginner,intermediate,advanced)",
+          "exercises": "text[]",
+          "type": "enum:cardio,strength,flexibility,hiit,yoga,swimming",
+          "duration": "number",
+          "caloriesBurned": "number",
+          "intensity": "enum:low,moderate,high,extreme",
+          "notes": "string",
+          "completedAt": "datetime",
+          "status": "enum:planned,in-progress,completed,skipped",
+          "createdAt": "datetime"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "WorkoutLog",
+      "domainId": "fitness",
+      "patternKey": "entity-workoutlog",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "memberId",
+          "exercise",
+          "sets",
+          "reps",
+          "weight",
+          "duration",
+          "date",
+          "name",
+          "type",
+          "caloriesBurned",
+          "intensity",
+          "notes",
+          "completedAt",
+          "status"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "memberId": "integer",
+          "exercise": "text",
+          "sets": "integer",
+          "reps": "integer",
+          "weight": "integer",
+          "duration": "integer",
+          "date": "date",
+          "name": "string",
+          "type": "enum:cardio,strength,flexibility,hiit,yoga,swimming",
+          "caloriesBurned": "number",
+          "intensity": "enum:low,moderate,high,extreme",
+          "notes": "string",
+          "completedAt": "datetime",
+          "status": "enum:planned,in-progress,completed,skipped"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-members",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "search",
+          "membership-filter",
+          "status-filter",
+          "check-in",
+          "card-grid view",
+          "form-wizard view",
+          "dashboard-widget view"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-member-detail",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "profile-info",
+          "membership-status",
+          "attendance-log",
+          "payment-history"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-workout-plans",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "search",
+          "difficulty-filter",
+          "create-plan",
+          "form-wizard view"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-workout-tracker",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "exercise-entry",
+          "sets-reps-weight",
+          "timer",
+          "history"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-schedule",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "week-view",
+          "instructor-filter",
+          "class-type-filter",
+          "book-spot",
+          "calendar view",
+          "form-wizard view",
+          "dashboard-widget view"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "domain-mapping",
+      "domainId": "fitness",
+      "patternKey": "domain-fitness",
+      "patternValue": {
+        "entities": [
+          "Member",
+          "Membership",
+          "Class",
+          "ClassBooking",
+          "WorkoutPlan",
+          "WorkoutLog"
+        ],
+        "modules": [
+          "Members",
+          "Classes",
+          "Workouts",
+          "Dashboard"
+        ],
+        "kpis": [
+          "Active Members",
+          "Check-ins Today",
+          "Revenue",
+          "Class Attendance Rate",
+          "Total Members",
+          "New This Month",
+          "Classes This Week",
+          "Avg Attendance"
+        ],
+        "pageCount": 6,
+        "relationships": {
+          "Member": [
+            "belongsTo Membership"
+          ],
+          "ClassBooking": [
+            "belongsTo Class",
+            "belongsTo Member"
+          ],
+          "WorkoutLog": [
+            "belongsTo Member"
           ]
         }
       },
@@ -695,14 +1082,14 @@
   "preferences": [
     {
       "key": "quality-score-general",
-      "value": "90",
+      "value": "91",
       "category": "architecture",
-      "frequency": 1
+      "frequency": 2
     }
   ],
   "stats": {
-    "totalPatterns": 26,
-    "reliablePatterns": 26,
+    "totalPatterns": 38,
+    "reliablePatterns": 38,
     "totalPreferences": 1
   }
 }
