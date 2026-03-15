@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "exportedAt": "2026-03-15T11:35:34.969Z",
+  "exportedAt": "2026-03-15T11:43:02.127Z",
   "patterns": [
     {
       "patternType": "entity-structure",
@@ -551,7 +551,7 @@
           "upcoming-deadlines"
         ]
       },
-      "successCount": 5,
+      "successCount": 6,
       "failureCount": 0,
       "reliability": 1
     },
@@ -620,7 +620,7 @@
       "patternType": "tech-choice",
       "patternKey": "file-structure-general",
       "patternValue": {
-        "fileCount": 63,
+        "fileCount": 64,
         "recentPaths": [
           "src/lib/utils.ts",
           "src/lib/queryClient.ts",
@@ -655,7 +655,7 @@
         ],
         "qualityScore": 90
       },
-      "successCount": 5,
+      "successCount": 6,
       "failureCount": 0,
       "reliability": 1
     },
@@ -1335,11 +1335,36 @@
       "reliability": 1
     },
     {
+      "id": 54,
       "patternType": "entity-structure",
-      "entityType": "MenuItem",
       "domainId": "restaurant",
+      "entityType": "MenuItem",
       "patternKey": "entity-menuitem",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "tags": "string[]",
+          "price": "integer",
+          "rating": "number",
+          "status": "enum:draft,published,archived",
+          "cuisine": "string",
+          "calories": "number",
+          "category": "string",
+          "cookTime": "number",
+          "imageUrl": "text",
+          "prepTime": "integer",
+          "servings": "number",
+          "allergens": "text[]",
+          "available": "boolean",
+          "createdAt": "datetime",
+          "categoryId": "integer",
+          "difficulty": "enum:easy,medium,hard",
+          "description": "text",
+          "ingredients": "string",
+          "instructions": "string",
+          "orderItemCount": "text"
+        },
         "recommended": [
           "id",
           "name",
@@ -1363,42 +1388,30 @@
           "status",
           "createdAt",
           "orderItemCount"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "name": "text",
-          "description": "text",
-          "price": "integer",
-          "categoryId": "integer",
-          "imageUrl": "text",
-          "available": "boolean",
-          "allergens": "text[]",
-          "prepTime": "integer",
-          "category": "string",
-          "cuisine": "string",
-          "cookTime": "number",
-          "servings": "number",
-          "difficulty": "enum:easy,medium,hard",
-          "calories": "number",
-          "ingredients": "string",
-          "instructions": "string",
-          "tags": "string[]",
-          "rating": "number",
-          "status": "enum:draft,published,archived",
-          "createdAt": "datetime",
-          "orderItemCount": "text"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 58,
       "patternType": "entity-structure",
-      "entityType": "MenuCategory",
       "domainId": "restaurant",
+      "entityType": "MenuCategory",
       "patternKey": "entity-menucategory",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "slug": "string",
+          "status": "enum:active,inactive",
+          "imageUrl": "string",
+          "parentId": "number",
+          "createdAt": "datetime",
+          "sortOrder": "integer",
+          "description": "string"
+        },
         "recommended": [
           "id",
           "name",
@@ -1409,29 +1422,42 @@
           "imageUrl",
           "status",
           "createdAt"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "name": "text",
-          "sortOrder": "integer",
-          "slug": "string",
-          "description": "string",
-          "parentId": "number",
-          "imageUrl": "string",
-          "status": "enum:active,inactive",
-          "createdAt": "datetime"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 68,
       "patternType": "entity-structure",
+      "domainId": "retail",
       "entityType": "Order",
-      "domainId": "restaurant",
       "patternKey": "entity-order",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "type": "enum(dine-in,takeaway,delivery)",
+          "notes": "string",
+          "total": "number",
+          "status": "enum(pending,confirmed,processing,shipped,delivered,cancelled,refunded)",
+          "tableId": "integer",
+          "currency": "string",
+          "subtotal": "number",
+          "createdAt": "datetime",
+          "orderDate": "date",
+          "taxAmount": "number",
+          "grandTotal": "text",
+          "orderNumber": "text",
+          "totalAmount": "integer",
+          "customerName": "text",
+          "shippingCost": "number",
+          "orderItemCount": "text",
+          "trackingNumber": "string",
+          "shippingAddress": "text",
+          "customerId": "integer",
+          "paymentMethod": "text"
+        },
         "recommended": [
           "id",
           "orderNumber",
@@ -1451,40 +1477,36 @@
           "notes",
           "createdAt",
           "orderItemCount",
-          "grandTotal"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "orderNumber": "text",
-          "type": "enum(dine-in,takeaway,delivery)",
-          "tableId": "integer",
-          "status": "enum(received,preparing,ready,served,completed,cancelled)",
-          "totalAmount": "integer",
-          "customerName": "text",
-          "orderDate": "date",
-          "subtotal": "number",
-          "taxAmount": "number",
-          "shippingCost": "number",
-          "total": "number",
-          "currency": "string",
-          "shippingAddress": "string",
-          "trackingNumber": "string",
-          "notes": "string",
-          "createdAt": "datetime",
-          "orderItemCount": "text",
-          "grandTotal": "text"
-        }
+          "grandTotal",
+          "customerId",
+          "paymentMethod"
+        ]
       },
-      "successCount": 2,
+      "successCount": 4,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 64,
       "patternType": "entity-structure",
+      "domainId": "retail",
       "entityType": "OrderItem",
-      "domainId": "restaurant",
       "patternKey": "entity-orderitem",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "notes": "string",
+          "orderId": "integer",
+          "discount": "number",
+          "quantity": "integer",
+          "createdAt": "datetime",
+          "lineTotal": "text",
+          "unitPrice": "integer",
+          "menuItemId": "integer",
+          "totalPrice": "number",
+          "specialNotes": "text",
+          "productId": "integer"
+        },
         "recommended": [
           "id",
           "orderId",
@@ -1496,32 +1518,40 @@
           "discount",
           "notes",
           "createdAt",
-          "lineTotal"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "orderId": "integer",
-          "menuItemId": "integer",
-          "quantity": "integer",
-          "specialNotes": "text",
-          "unitPrice": "integer",
-          "totalPrice": "number",
-          "discount": "number",
-          "notes": "string",
-          "createdAt": "datetime",
-          "lineTotal": "text"
-        }
+          "lineTotal",
+          "productId"
+        ]
       },
-      "successCount": 2,
+      "successCount": 4,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 60,
       "patternType": "entity-structure",
-      "entityType": "Reservation",
       "domainId": "restaurant",
+      "entityType": "Reservation",
       "patternKey": "entity-reservation",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "date": "date",
+          "time": "text",
+          "notes": "text",
+          "phone": "text",
+          "status": "enum(confirmed,seated,completed,cancelled,no-show)",
+          "checkIn": "datetime",
+          "tableId": "integer",
+          "checkOut": "datetime",
+          "duration": "text",
+          "lineTotal": "text",
+          "partySize": "integer",
+          "guestCount": "number",
+          "totalPrice": "number",
+          "customerName": "text",
+          "bookingNumber": "string",
+          "specialRequests": "string"
+        },
         "recommended": [
           "id",
           "customerName",
@@ -1540,37 +1570,28 @@
           "specialRequests",
           "lineTotal",
           "duration"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "customerName": "text",
-          "phone": "text",
-          "date": "date",
-          "time": "text",
-          "partySize": "integer",
-          "tableId": "integer",
-          "status": "enum(confirmed,seated,completed,cancelled,no-show)",
-          "notes": "text",
-          "bookingNumber": "string",
-          "checkIn": "datetime",
-          "checkOut": "datetime",
-          "guestCount": "number",
-          "totalPrice": "number",
-          "specialRequests": "string",
-          "lineTotal": "text",
-          "duration": "text"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 62,
       "patternType": "entity-structure",
-      "entityType": "Table",
       "domainId": "restaurant",
+      "entityType": "Table",
       "patternKey": "entity-table",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "number": "integer",
+          "status": "enum(available,occupied,reserved,cleaning)",
+          "section": "text",
+          "capacity": "integer",
+          "orderCount": "text",
+          "reservationCount": "text"
+        },
         "recommended": [
           "id",
           "number",
@@ -1579,22 +1600,14 @@
           "section",
           "orderCount",
           "reservationCount"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "number": "integer",
-          "capacity": "integer",
-          "status": "enum(available,occupied,reserved,cleaning)",
-          "section": "text",
-          "orderCount": "text",
-          "reservationCount": "text"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 63,
       "patternType": "workflow-design",
       "patternKey": "workflow-order",
       "patternValue": {
@@ -1639,11 +1652,12 @@
           }
         ]
       },
-      "successCount": 2,
+      "successCount": 4,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 65,
       "patternType": "page-structure",
       "patternKey": "page-layout-menu",
       "patternValue": {
@@ -1664,6 +1678,7 @@
       "reliability": 1
     },
     {
+      "id": 70,
       "patternType": "page-structure",
       "patternKey": "page-layout-active-orders",
       "patternValue": {
@@ -1684,6 +1699,7 @@
       "reliability": 1
     },
     {
+      "id": 69,
       "patternType": "page-structure",
       "patternKey": "page-layout-order-history",
       "patternValue": {
@@ -1699,6 +1715,7 @@
       "reliability": 1
     },
     {
+      "id": 55,
       "patternType": "page-structure",
       "patternKey": "page-layout-reservations",
       "patternValue": {
@@ -1718,24 +1735,11 @@
       "reliability": 1
     },
     {
+      "id": 66,
       "patternType": "domain-mapping",
       "domainId": "restaurant",
       "patternKey": "domain-restaurant",
       "patternValue": {
-        "entities": [
-          "MenuItem",
-          "MenuCategory",
-          "Order",
-          "OrderItem",
-          "Reservation",
-          "Table"
-        ],
-        "modules": [
-          "Menu Management",
-          "Orders",
-          "Reservations",
-          "Dashboard"
-        ],
         "kpis": [
           "Revenue Today",
           "Orders Today",
@@ -1746,16 +1750,27 @@
           "Avg Price",
           "Items Unavailable"
         ],
+        "modules": [
+          "Menu Management",
+          "Orders",
+          "Reservations",
+          "Dashboard"
+        ],
+        "entities": [
+          "MenuItem",
+          "MenuCategory",
+          "Order",
+          "OrderItem",
+          "Reservation",
+          "Table"
+        ],
         "pageCount": 5,
         "relationships": {
-          "MenuItem": [
-            "belongsTo Category"
-          ],
-          "MenuCategory": [
-            "belongsTo Parent"
-          ],
           "Order": [
             "belongsTo Table"
+          ],
+          "MenuItem": [
+            "belongsTo Category"
           ],
           "OrderItem": [
             "belongsTo Order",
@@ -1763,6 +1778,281 @@
           ],
           "Reservation": [
             "belongsTo Table"
+          ],
+          "MenuCategory": [
+            "belongsTo Parent"
+          ]
+        }
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "Product",
+      "domainId": "retail",
+      "patternKey": "entity-product",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "name",
+          "sku",
+          "description",
+          "price",
+          "compareAtPrice",
+          "categoryId",
+          "imageUrl",
+          "stock",
+          "status",
+          "quantity",
+          "weight",
+          "tags",
+          "createdAt",
+          "lineTotal",
+          "orderItemCount",
+          "inventoryItemCount"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "sku": "text",
+          "description": "text",
+          "price": "integer",
+          "compareAtPrice": "integer",
+          "categoryId": "integer",
+          "imageUrl": "text",
+          "stock": "integer",
+          "status": "enum(active,draft,archived)",
+          "quantity": "number",
+          "weight": "number",
+          "tags": "string[]",
+          "createdAt": "datetime",
+          "lineTotal": "text",
+          "orderItemCount": "text",
+          "inventoryItemCount": "text"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "Category",
+      "domainId": "retail",
+      "patternKey": "entity-category",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "name",
+          "parentId",
+          "slug",
+          "description",
+          "imageUrl",
+          "sortOrder",
+          "status",
+          "createdAt",
+          "productCount"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "parentId": "integer",
+          "slug": "string",
+          "description": "string",
+          "imageUrl": "string",
+          "sortOrder": "number",
+          "status": "enum:active,inactive",
+          "createdAt": "datetime",
+          "productCount": "text"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "entity-structure",
+      "entityType": "InventoryItem",
+      "domainId": "retail",
+      "patternKey": "entity-inventoryitem",
+      "patternValue": {
+        "recommended": [
+          "id",
+          "productId",
+          "location",
+          "quantity",
+          "reorderPoint",
+          "name",
+          "sku",
+          "minQuantity",
+          "maxQuantity",
+          "unitCost",
+          "lastRestocked",
+          "expiryDate",
+          "status",
+          "createdAt",
+          "lineTotal"
+        ],
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "productId": "integer",
+          "location": "text",
+          "quantity": "integer",
+          "reorderPoint": "integer",
+          "name": "string",
+          "sku": "string",
+          "minQuantity": "number",
+          "maxQuantity": "number",
+          "unitCost": "number",
+          "lastRestocked": "date",
+          "expiryDate": "date",
+          "status": "enum:in-stock,low-stock,out-of-stock,discontinued",
+          "createdAt": "datetime",
+          "lineTotal": "text"
+        }
+      },
+      "successCount": 2,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-products",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "search",
+          "category-filter",
+          "price-sort",
+          "add-product",
+          "card-grid view",
+          "form-wizard view",
+          "dashboard-widget view"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-product-detail",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "image-gallery",
+          "variant-management",
+          "pricing-tiers",
+          "inventory-status"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-orders",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "search",
+          "status-filter",
+          "date-filter",
+          "export",
+          "kanban view",
+          "master-detail view",
+          "form-wizard view",
+          "dashboard-widget view"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-order-detail",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "line-items",
+          "shipping-tracker",
+          "payment-status",
+          "refund"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "page-structure",
+      "patternKey": "page-layout-inventory",
+      "patternValue": {
+        "layout": "table",
+        "features": [
+          "search",
+          "low-stock-alert",
+          "location-filter",
+          "adjust-stock",
+          "form-wizard view",
+          "dashboard-widget view"
+        ]
+      },
+      "successCount": 1,
+      "failureCount": 0,
+      "reliability": 1
+    },
+    {
+      "patternType": "domain-mapping",
+      "domainId": "retail",
+      "patternKey": "domain-retail",
+      "patternValue": {
+        "entities": [
+          "Product",
+          "Category",
+          "Order",
+          "OrderItem",
+          "InventoryItem"
+        ],
+        "modules": [
+          "Product Catalog",
+          "Order Management",
+          "Inventory",
+          "Dashboard"
+        ],
+        "kpis": [
+          "Revenue Today",
+          "Orders",
+          "Avg Order Value",
+          "Conversion Rate",
+          "Top Products",
+          "Total Products",
+          "Avg Price",
+          "Out of Stock Items"
+        ],
+        "pageCount": 6,
+        "relationships": {
+          "Product": [
+            "belongsTo Category"
+          ],
+          "Category": [
+            "belongsTo Parent"
+          ],
+          "Order": [
+            "belongsTo Customer",
+            "belongsTo Table"
+          ],
+          "OrderItem": [
+            "belongsTo Order",
+            "belongsTo Product",
+            "belongsTo MenuItem"
+          ],
+          "InventoryItem": [
+            "belongsTo Product"
           ]
         }
       },
@@ -1776,12 +2066,12 @@
       "key": "quality-score-general",
       "value": "91",
       "category": "architecture",
-      "frequency": 5
+      "frequency": 6
     }
   ],
   "stats": {
-    "totalPatterns": 61,
-    "reliablePatterns": 61,
+    "totalPatterns": 70,
+    "reliablePatterns": 70,
     "totalPreferences": 1
   }
 }
