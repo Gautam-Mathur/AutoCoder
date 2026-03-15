@@ -237,6 +237,11 @@ const AUTO_FIXES: Array<{
 
 // Strip strings and comments from code for accurate bracket counting.
 // Handles: // line comments, /* block comments */, "strings", 'strings', `template literals`
+//
+// Important: single-quote apostrophes in JSX text (Don't, won't, you're) must NOT
+// be treated as string delimiters. We only treat ' as a string opener when the
+// preceding character is not a word character (\w), since real string delimiters
+// follow operators, whitespace, or punctuation — never letters or digits.
 function stripStringsAndComments(code: string): string {
   let result = '';
   let i = 0;
@@ -253,16 +258,30 @@ function stripStringsAndComments(code: string): string {
       i += 2;
       continue;
     }
-    // String or template literal — skip entire contents
-    if (code[i] === '"' || code[i] === "'" || code[i] === '`') {
+    // Double-quoted string or template literal — always a string delimiter
+    if (code[i] === '"' || code[i] === '`') {
       const q = code[i];
       i++;
       while (i < code.length) {
-        if (code[i] === '\\') { i += 2; continue; }  // skip escape sequence
-        if (code[i] === q) { i++; break; }            // closing quote
+        if (code[i] === '\\') { i += 2; continue; }
+        if (code[i] === q) { i++; break; }
         i++;
       }
       continue;
+    }
+    // Single-quoted string — only treat as delimiter when preceded by a
+    // non-word character (i.e. not an apostrophe mid-word like "Don't")
+    if (code[i] === "'") {
+      const prevChar = result.length > 0 ? result[result.length - 1] : '';
+      if (!/\w/.test(prevChar)) {
+        i++;
+        while (i < code.length) {
+          if (code[i] === '\\') { i += 2; continue; }
+          if (code[i] === "'") { i++; break; }
+          i++;
+        }
+        continue;
+      }
     }
     result += code[i];
     i++;
