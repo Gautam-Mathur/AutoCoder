@@ -1,3 +1,5 @@
+process.env.NODE_ENV ??= "development";
+
 import { config } from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";

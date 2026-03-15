@@ -4,7 +4,7 @@
   "description": "AI-powered code generation platform — runs locally with Ollama or any OpenAI-compatible model server",
   "license": "MIT",
   "scripts": {
-    "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
+    "preinstall": "node -e \"if(!process.env.npm_config_user_agent?.startsWith('pnpm')){console.error('Use pnpm instead');process.exit(1)}\"",
     "dev": "pnpm -r --parallel --filter @workspace/api-server --filter @workspace/autocoder run dev",
     "dev:api": "pnpm --filter @workspace/api-server run dev",
     "dev:web": "pnpm --filter @workspace/autocoder run dev",
