@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Plus, MessageSquare, Trash2, MoreHorizontal, Terminal, PanelRightClose, PanelRight, Pencil, ShieldCheck, AlertTriangle, Sparkles } from "lucide-react";
+import { Plus, MessageSquare, Trash2, MoreHorizontal, Terminal, PanelRightClose, PanelRight, Pencil, ShieldCheck, AlertTriangle, Sparkles, Bug, ChevronDown, ChevronRight, Wrench } from "lucide-react";
 import { isWebContainerSupported, onPreWarmProgress, getPreWarmStatus } from "@/lib/code-runner/webcontainer";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -256,6 +256,16 @@ export default function Chat() {
   const [validationSummary, setValidationSummary] = useState<{passes: number; issuesFound: number; issuesFixed: number; unfixableIssues: string[]} | null>(null);
   const [slmEnhanced, setSlmEnhanced] = useState<boolean>(false);
   const [slmStagesRun, setSlmStagesRun] = useState<string[]>([]);
+  const [diagnostics, setDiagnostics] = useState<{
+    totalIssues: number;
+    bySeverity: { critical: number; error: number; warning: number; info: number };
+    byFile: Record<string, { file: string; severity: string; type: string; message: string; line?: number; autoFixable: boolean }[]>;
+    fileCount: number;
+    healthyFiles: number;
+    unhealthyFiles: number;
+  } | null>(null);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [fixingFiles, setFixingFiles] = useState<Set<string>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Prevent CMD+1/CMD+2 from interfering with the app
@@ -385,6 +395,8 @@ export default function Chat() {
     setValidationSummary(null);
     setSlmEnhanced(false);
     setSlmStagesRun([]);
+    setDiagnostics(null);
+    setDiagnosticsOpen(false);
     setStreamingThinkingSteps([]);
 
     queryClient.setQueryData<ConversationWithMessages>(
@@ -461,6 +473,12 @@ export default function Chat() {
                 }
                 setSlmEnhanced(data.slmEnhanced || false);
                 setSlmStagesRun(data.slmStagesRun || []);
+                if (data.diagnostics) {
+                  setDiagnostics(data.diagnostics);
+                  if (data.diagnostics.totalIssues > 0) {
+                    setDiagnosticsOpen(true);
+                  }
+                }
                 if (data.fileEdits && data.fileEdits.length > 0) {
                   setRecentEdits(data.fileEdits);
                   setTimeout(() => setRecentEdits([]), 10000);
@@ -728,6 +746,91 @@ export default function Chat() {
                     <span className="truncate">
                       AI-enhanced: {slmStagesRun.join(', ')}
                     </span>
+                  </div>
+                )}
+                {diagnostics && diagnostics.totalIssues > 0 && (
+                  <div className="mb-2" data-testid="diagnostics-panel">
+                    <button
+                      onClick={() => setDiagnosticsOpen(!diagnosticsOpen)}
+                      className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors w-full"
+                    >
+                      <Bug className="h-3 w-3 text-orange-500 flex-shrink-0" />
+                      <span>
+                        {diagnostics.totalIssues} diagnostic issue{diagnostics.totalIssues !== 1 ? 's' : ''} in {diagnostics.unhealthyFiles} file{diagnostics.unhealthyFiles !== 1 ? 's' : ''}
+                        {diagnostics.bySeverity.critical > 0 && ` (${diagnostics.bySeverity.critical} critical)`}
+                      </span>
+                      {diagnosticsOpen ? <ChevronDown className="h-3 w-3 ml-auto" /> : <ChevronRight className="h-3 w-3 ml-auto" />}
+                    </button>
+                    {diagnosticsOpen && (
+                      <div className="mt-1 pl-5 space-y-1 max-h-40 overflow-y-auto text-xs">
+                        <div className="flex gap-3 text-muted-foreground mb-1">
+                          {diagnostics.bySeverity.critical > 0 && <span className="text-red-500">{diagnostics.bySeverity.critical} critical</span>}
+                          {diagnostics.bySeverity.error > 0 && <span className="text-orange-500">{diagnostics.bySeverity.error} error</span>}
+                          {diagnostics.bySeverity.warning > 0 && <span className="text-yellow-500">{diagnostics.bySeverity.warning} warning</span>}
+                        </div>
+                        {Object.entries(diagnostics.byFile).map(([filePath, issues]) => (
+                          <div key={filePath} className="border border-border/50 rounded px-2 py-1">
+                            <div className="flex items-center justify-between">
+                              <span className="font-mono text-[11px] text-foreground/70 truncate">{filePath}</span>
+                              <button
+                                onClick={async () => {
+                                  setFixingFiles(prev => new Set(prev).add(filePath));
+                                  try {
+                                    const resp = await fetch(`/autocoder/api/modules/fix`, {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({
+                                        filePath,
+                                        fileContent: '',
+                                        error: issues.map(i => i.message).join('; '),
+                                      }),
+                                    });
+                                    if (resp.ok) {
+                                      const result = await resp.json();
+                                      if (result.fixed) {
+                                        setDiagnostics(prev => {
+                                          if (!prev) return prev;
+                                          const updated = { ...prev };
+                                          const remaining = result.remainingIssues || [];
+                                          if (remaining.length === 0) {
+                                            const { [filePath]: _, ...rest } = updated.byFile;
+                                            updated.byFile = rest;
+                                            updated.unhealthyFiles--;
+                                            updated.healthyFiles++;
+                                          } else {
+                                            updated.byFile[filePath] = remaining;
+                                          }
+                                          updated.totalIssues = Object.values(updated.byFile).reduce((sum, arr) => sum + arr.length, 0);
+                                          return updated;
+                                        });
+                                      }
+                                    }
+                                  } catch {}
+                                  setFixingFiles(prev => { const s = new Set(prev); s.delete(filePath); return s; });
+                                }}
+                                disabled={fixingFiles.has(filePath)}
+                                className="text-[10px] text-primary hover:text-primary/80 flex items-center gap-1 disabled:opacity-50"
+                              >
+                                <Wrench className="h-2.5 w-2.5" />
+                                {fixingFiles.has(filePath) ? 'Fixing...' : 'Fix'}
+                              </button>
+                            </div>
+                            {issues.slice(0, 3).map((issue, idx) => (
+                              <div key={idx} className="text-[11px] text-muted-foreground pl-1">
+                                <span className={issue.severity === 'critical' ? 'text-red-500' : issue.severity === 'error' ? 'text-orange-500' : 'text-yellow-500'}>
+                                  {issue.severity}
+                                </span>
+                                {' '}{issue.message}
+                                {issue.line ? ` (line ${issue.line})` : ''}
+                              </div>
+                            ))}
+                            {issues.length > 3 && (
+                              <div className="text-[11px] text-muted-foreground pl-1">...and {issues.length - 3} more</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
                 {recentEdits.length > 0 && (

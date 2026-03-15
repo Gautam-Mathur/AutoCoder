@@ -20,6 +20,7 @@ import { analyzeAndFix as viteAnalyzeAndFix, parseErrors as viteParseErrors, typ
 import { isSLMAvailable, runSLM } from './slm-inference-engine.js';
 import { UNDERSTANDING_STAGE_ID, mergeUnderstandingResults } from './slm-stage-understanding.js';
 import { CODEGEN_STAGE_ID, applyCodeEnhancements, validateCodeEnhancement, type CodeEnhancement } from './slm-stage-codegen.js';
+import { runDiagnostics } from './modular-test-engine.js';
 
 export type ConversationPhase = 'initial' | 'understanding' | 'clarifying' | 'planning' | 'approval' | 'generating' | 'complete' | 'editing';
 
@@ -28,6 +29,15 @@ export interface ValidationSummaryResult {
   issuesFound: number;
   issuesFixed: number;
   unfixableIssues: string[];
+}
+
+export interface DiagnosticsReport {
+  totalIssues: number;
+  bySeverity: { critical: number; error: number; warning: number; info: number };
+  byFile: Record<string, { file: string; severity: string; type: string; message: string; line?: number; autoFixable: boolean }[]>;
+  fileCount: number;
+  healthyFiles: number;
+  unhealthyFiles: number;
 }
 
 export interface PhaseHandlerResult {
@@ -44,6 +54,7 @@ export interface PhaseHandlerResult {
   validationSummary?: ValidationSummaryResult;
   slmEnhanced?: boolean;
   slmStagesRun?: string[];
+  diagnostics?: DiagnosticsReport;
 }
 
 export interface ThinkingStep {
@@ -898,6 +909,15 @@ async function handleGeneration(
     const validationSummary = fallbackValSummary.issuesFixed > 0
       ? `Auto-fixed **${fallbackValSummary.issuesFixed} issues** across ${fallbackValSummary.passes} validation pass(es).`
       : 'All imports, exports, and dependencies verified.';
+
+    let fallbackDiagnostics: DiagnosticsReport | undefined;
+    try {
+      fallbackDiagnostics = runDiagnostics(fallbackFiles.map(f => ({ path: f.path, content: f.content })));
+      if (fallbackDiagnostics.totalIssues > 0) {
+        emitStep('diagnostics', 'Post-generation diagnostics', `${fallbackDiagnostics.totalIssues} issues in ${fallbackDiagnostics.unhealthyFiles} file(s)`);
+      }
+    } catch {}
+
     return {
       responseContent: `## ${plan.projectName} - Generated Successfully!\n\nGenerated **${fallbackFiles.length} files** using fallback generation.\n\n${validationSummary}`,
       newPhase: 'complete',
@@ -907,6 +927,7 @@ async function handleGeneration(
       validationSummary: fallbackValSummary,
       slmEnhanced: fallbackSlmStages.length > 0,
       slmStagesRun: fallbackSlmStages,
+      diagnostics: fallbackDiagnostics,
     };
   }
 
@@ -997,6 +1018,14 @@ ${warningsList}
 
   const orchSlmStages = orchestrationResult.context.slmStagesRun || [];
 
+  let orchDiagnostics: DiagnosticsReport | undefined;
+  try {
+    orchDiagnostics = runDiagnostics(finalFiles.map(f => ({ path: f.path, content: f.content })));
+    if (orchDiagnostics.totalIssues > 0) {
+      emitStep('diagnostics', 'Post-generation diagnostics', `${orchDiagnostics.totalIssues} issues in ${orchDiagnostics.unhealthyFiles} file(s)`);
+    }
+  } catch {}
+
   return {
     responseContent,
     newPhase: 'complete',
@@ -1006,6 +1035,7 @@ ${warningsList}
     validationSummary: orchestrationValSummary,
     slmEnhanced: orchSlmStages.length > 0,
     slmStagesRun: orchSlmStages,
+    diagnostics: orchDiagnostics,
   };
 }
 

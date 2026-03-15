@@ -43,6 +43,7 @@ import { handleMessage as handlePhaseMessage, isProjectCreationRequest, type Con
 import { analyzeCodebase, type FileInfo as IngestionFileInfo } from "../modules/codebase-analyzer";
 import { generatePlanFromCodebase, formatReversePlanSummary } from "../modules/reverse-plan-generator";
 import { traceCrossFileRelationships } from "../modules/cross-file-tracer";
+import { runStageTest, getAvailableStages, runModularFix, runDiagnostics } from "../modules/modular-test-engine";
 
 function sanitizeHtml(input: string): string {
   return input
@@ -609,6 +610,9 @@ export async function registerRoutes(
       }
       donePayload.slmEnhanced = result.slmEnhanced || false;
       donePayload.slmStagesRun = result.slmStagesRun || [];
+      if (result.diagnostics) {
+        donePayload.diagnostics = result.diagnostics;
+      }
       if (result.newPhase === 'approval') {
         donePayload.showApproval = true;
       }
@@ -2958,6 +2962,97 @@ Output ONLY the fixed code. No explanations.`;
       res.json({ success: true, session });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Session lookup failed';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // ============================================
+  // MODULAR TEST & FIX ENGINE
+  // ============================================
+
+  app.get("/api/modules/stages", async (_req, res) => {
+    try {
+      const stages = getAvailableStages();
+      res.json({ success: true, stages });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to list stages';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.post("/api/modules/test", async (req, res) => {
+    try {
+      const schema = z.object({
+        stage: z.string().min(1),
+        payload: z.any(),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: 'Invalid request', details: parsed.error.issues });
+      }
+
+      const result = runStageTest(parsed.data.stage, parsed.data.payload);
+      res.json({ success: true, ...result });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Stage test failed';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.post("/api/modules/fix", async (req, res) => {
+    try {
+      const schema = z.object({
+        filePath: z.string().min(1),
+        fileContent: z.string().min(1),
+        error: z.string().min(1),
+        allFiles: z.array(z.object({
+          path: z.string(),
+          content: z.string(),
+        })).optional(),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: 'Invalid request', details: parsed.error.issues });
+      }
+
+      const result = runModularFix(
+        parsed.data.filePath,
+        parsed.data.fileContent,
+        parsed.data.error,
+        parsed.data.allFiles
+      );
+      res.json({
+        success: true,
+        file: result.file,
+        fixedContent: result.fixedContent,
+        iterations: result.iterations,
+        fixesApplied: result.fixesApplied,
+        remainingIssues: result.remainingIssues,
+        fixed: result.success,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Fix failed';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.post("/api/modules/diagnostics", async (req, res) => {
+    try {
+      const schema = z.object({
+        files: z.array(z.object({
+          path: z.string(),
+          content: z.string(),
+        })),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: 'Invalid request', details: parsed.error.issues });
+      }
+
+      const report = runDiagnostics(parsed.data.files);
+      res.json({ success: true, ...report });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Diagnostics failed';
       res.status(500).json({ error: message });
     }
   });
