@@ -182,8 +182,26 @@ function initBuiltinExecutors(): void {
 
 initBuiltinExecutors();
 
+const STAGE_ALIASES: Record<string, string> = {
+  'schema-design': 'schema',
+  'api-design': 'api',
+  'component-compose': 'compose',
+  'code-generate': 'generate',
+  'post-validate': 'validate',
+  'deep-understand': 'understand',
+  'plan-generate': 'plan',
+  'semantic-reason': 'reason',
+  'arch-plan': 'architect',
+  'design-system': 'design',
+};
+
+function resolveStageId(input: string): string {
+  return STAGE_ALIASES[input] || input;
+}
+
 export function runStageTest(stageId: string, payload: unknown): StageTestResult {
-  const stage = getStageDescription(stageId);
+  const resolvedId = resolveStageId(stageId);
+  const stage = getStageDescription(resolvedId);
   if (!stage) {
     return {
       stageId,
@@ -191,19 +209,19 @@ export function runStageTest(stageId: string, payload: unknown): StageTestResult
       durationMs: 0,
       success: false,
       output: null,
-      errors: [`Unknown stage: ${stageId}`],
+      errors: [`Unknown stage: ${stageId}${stageId !== resolvedId ? ` (resolved to ${resolvedId})` : ''}`],
     };
   }
 
-  const executor = STAGE_EXECUTORS[stageId];
+  const executor = STAGE_EXECUTORS[resolvedId];
   if (!executor) {
     return {
-      stageId,
+      stageId: resolvedId,
       stageName: stage.name,
       durationMs: 0,
       success: false,
       output: null,
-      errors: [`No executor registered for stage: ${stageId}`],
+      errors: [`No executor registered for stage: ${resolvedId}`],
     };
   }
 
@@ -211,7 +229,7 @@ export function runStageTest(stageId: string, payload: unknown): StageTestResult
   try {
     const result = executor(payload);
     return {
-      stageId,
+      stageId: resolvedId,
       stageName: stage.name,
       durationMs: Date.now() - start,
       success: result.errors.length === 0,
@@ -220,7 +238,7 @@ export function runStageTest(stageId: string, payload: unknown): StageTestResult
     };
   } catch (err) {
     return {
-      stageId,
+      stageId: resolvedId,
       stageName: stage.name,
       durationMs: Date.now() - start,
       success: false,
@@ -256,7 +274,7 @@ export function runDiagnostics(files: { path: string; content: string }[]): Diag
 
     const analysis = analyzeCode(file.content, ext === 'css' ? 'css' : 'javascript');
     for (const issue of analysis.issues) {
-      if (issue.severity === 'info') continue;
+      if (issue.severity === 'info' || issue.severity === 'warning') continue;
       issues.push({
         file: file.path,
         severity: issue.severity,

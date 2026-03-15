@@ -561,7 +561,6 @@ export async function registerRoutes(
           projectName: result.planData.projectName,
           planGenerated: true,
         } : {}),
-        ...(result.diagnostics ? { diagnostics: result.diagnostics as any } : {}),
       };
       if (result.fileEdits && result.fileEdits.length > 0) {
         const prevHistory = (conversation as any).editHistory || [];
@@ -620,6 +619,16 @@ export async function registerRoutes(
 
       res.write(`data: ${JSON.stringify(donePayload)}\n\n`);
       res.end();
+
+      if (result.diagnostics) {
+        setImmediate(async () => {
+          try {
+            await storage.updateProjectContext(conversationId, { diagnostics: result.diagnostics as any });
+          } catch (err) {
+            console.error('[Diagnostics] Failed to persist diagnostics:', err);
+          }
+        });
+      }
     } catch (error) {
       console.error("Error sending message:", error);
       if (res.headersSent) {
@@ -2985,14 +2994,22 @@ Output ONLY the fixed code. No explanations.`;
     try {
       const schema = z.object({
         stage: z.string().min(1),
-        payload: z.any(),
+        payload: z.any().optional(),
       });
       const parsed = schema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ error: 'Invalid request', details: parsed.error.issues });
       }
 
-      const result = runStageTest(parsed.data.stage, parsed.data.payload);
+      let stagePayload = parsed.data.payload;
+      if (!stagePayload || (typeof stagePayload === 'object' && Object.keys(stagePayload).length === 0)) {
+        const { stage, payload, ...rest } = req.body;
+        if (Object.keys(rest).length > 0) {
+          stagePayload = rest;
+        }
+      }
+
+      const result = runStageTest(parsed.data.stage, stagePayload || {});
       res.json({ success: true, ...result });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Stage test failed';
@@ -3004,7 +3021,7 @@ Output ONLY the fixed code. No explanations.`;
     try {
       const schema = z.object({
         filePath: z.string().min(1),
-        fileContent: z.string(),
+        fileContent: z.string().optional().default(''),
         error: z.string().min(1),
         conversationId: z.number().optional(),
         allFiles: z.array(z.object({
