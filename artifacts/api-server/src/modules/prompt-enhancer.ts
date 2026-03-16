@@ -56,7 +56,7 @@ const FEATURE_KEYWORDS: Record<string, string[]> = {
   'realtime': ['real-time', 'realtime', 'real time', 'live', 'instant', 'push', 'websocket'],
   'charts': ['chart', 'charts', 'graph', 'graphs', 'visualization', 'analytics', 'dashboard'],
   'mobile': ['mobile', 'responsive', 'phone', 'tablet'],
-  'import': ['import', 'upload', 'csv', 'bulk', 'batch'],
+  'import': ['import', 'csv import', 'bulk import', 'batch import'],
   'calendar': ['calendar', 'schedule', 'date picker', 'event', 'booking'],
   'kanban': ['kanban', 'board', 'drag and drop', 'columns', 'cards'],
   'multi-language': ['multi-language', 'multilingual', 'i18n', 'internationalization', 'localization', 'translate'],
@@ -886,28 +886,31 @@ function extractUserIntent(topic: string): UserIntent {
 function detectMultipleDomains(topic: string): IndustryDomain[] {
   const lower = topic.toLowerCase();
   const domains: IndustryDomain[] = [];
+  const domainIds = new Set<string>();
 
   const domainMatches = detectDomainFromText(lower);
-  if (domainMatches.length > 0 && domainMatches[0].confidence > 0.1) {
+  if (domainMatches.length > 0 && domainMatches[0].confidence > 0.3) {
     domains.push(domainMatches[0].domain);
+    domainIds.add(domainMatches[0].domain.id);
   }
 
   const domainPhrasePatterns = [
-    /\bwith\s+(\w[\w\s]*?)(?:\s+(?:management|tracking|system))\b/gi,
-    /\band\s+(\w[\w\s]*?)(?:\s+(?:management|tracking|system))\b/gi,
+    /\bwith\s+(\w[\w\s]*?)\s+(?:management|tracking|system)\b/gi,
+    /\band\s+(\w[\w\s]*?)\s+(?:management|tracking|system)\b/gi,
   ];
 
   const allDomains = getAllDomains();
-  const domainIds = new Set(domains.map(d => d.id));
 
   for (const pattern of domainPhrasePatterns) {
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(lower)) !== null) {
       const phrase = match[1].trim();
+      if (phrase.length < 3) continue;
       for (const domain of allDomains) {
         if (domainIds.has(domain.id)) continue;
-        const domainTerms = [domain.id, domain.name.toLowerCase(), ...domain.keywords];
-        if (domainTerms.some(t => phrase.includes(t) || t.includes(phrase))) {
+        const escaped = domain.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const nameEscaped = domain.name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        if (new RegExp(`\\b${escaped}\\b`).test(phrase) || new RegExp(`\\b${nameEscaped}\\b`).test(phrase)) {
           domains.push(domain);
           domainIds.add(domain.id);
           break;
@@ -919,38 +922,14 @@ function detectMultipleDomains(topic: string): IndustryDomain[] {
   const connectorSegments = lower.split(/\s+(?:with|and|plus|\+)\s+/);
   if (connectorSegments.length > 1) {
     for (const segment of connectorSegments.slice(1)) {
-      const segmentMatches = detectDomainFromText(segment.trim());
-      if (segmentMatches.length > 0 && segmentMatches[0].confidence > 0.1) {
+      const trimmed = segment.trim();
+      if (trimmed.length < 3) continue;
+      const segmentMatches = detectDomainFromText(trimmed);
+      if (segmentMatches.length > 0 && segmentMatches[0].confidence > 0.4) {
         const d = segmentMatches[0].domain;
         if (!domainIds.has(d.id)) {
           domains.push(d);
           domainIds.add(d.id);
-        }
-      }
-      for (const domain of allDomains) {
-        if (domainIds.has(domain.id)) continue;
-        const terms = [domain.id, domain.name.toLowerCase(), ...domain.keywords];
-        if (terms.some(t => segment.includes(t))) {
-          domains.push(domain);
-          domainIds.add(domain.id);
-          break;
-        }
-      }
-    }
-  }
-
-  for (const templateKey of Object.keys(TOPIC_TEMPLATES)) {
-    if (lower.includes(templateKey)) {
-      const entityMap = inferEntitiesFromTopic(templateKey);
-      if (entityMap.length > 0) {
-        for (const domain of allDomains) {
-          if (domainIds.has(domain.id)) continue;
-          const terms = [domain.id, domain.name.toLowerCase(), ...domain.keywords];
-          if (terms.some(t => templateKey.includes(t))) {
-            domains.push(domain);
-            domainIds.add(domain.id);
-            break;
-          }
         }
       }
     }
@@ -1138,53 +1117,70 @@ function buildPromptFromKeywordsEnhanced(topic: string, options: PromptGenOption
   return enrichWithIntent(result, intent, options);
 }
 
+function normalizeForComparison(text: string): string {
+  return text.toLowerCase().replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function promptContainsTerm(promptLower: string, term: string): boolean {
+  const normalized = normalizeForComparison(term);
+  const promptNorm = normalizeForComparison(promptLower);
+  return promptNorm.includes(normalized);
+}
+
 function enrichWithIntent(result: PromptEnhancerResult, intent: UserIntent, options: PromptGenOptions): PromptEnhancerResult {
   const extra: string[] = [];
+  const alreadyAdded = new Set<string>();
+  const promptLower = result.prompt.toLowerCase();
 
   const statedNotInPrompt = intent.statedFeatures.filter(f => {
-    const readable = f.replace(/-/g, ' ');
-    return !result.prompt.toLowerCase().includes(readable);
+    const norm = normalizeForComparison(f);
+    return !promptContainsTerm(promptLower, f) && !alreadyAdded.has(norm);
   });
   if (statedNotInPrompt.length > 0) {
+    for (const f of statedNotInPrompt) alreadyAdded.add(normalizeForComparison(f));
     extra.push(`Additionally include ${naturalList(statedNotInPrompt.map(f => f.replace(/-/g, ' ')))}.`);
     result.additions.push(`Preserved ${statedNotInPrompt.length} user-stated features`);
     result.featureCount += statedNotInPrompt.length;
   }
 
   const missingVerbWorkflows = intent.verbWorkflows.filter(w => {
-    const readable = w.replace(/-/g, ' ');
-    return !result.prompt.toLowerCase().includes(readable);
+    const norm = normalizeForComparison(w);
+    return !promptContainsTerm(promptLower, w) && !alreadyAdded.has(norm);
   });
   if (missingVerbWorkflows.length > 0) {
+    for (const w of missingVerbWorkflows) alreadyAdded.add(normalizeForComparison(w));
     extra.push(`Include workflows for ${naturalList(missingVerbWorkflows.map(w => w.replace(/-/g, ' ')))}.`);
     result.additions.push(`Added ${missingVerbWorkflows.length} verb-inferred workflows`);
   }
 
   const missingVerbFeatures = intent.verbFeatures.filter(f => {
-    const readable = f.replace(/-/g, ' ');
-    return !result.prompt.toLowerCase().includes(readable) && !intent.statedFeatures.includes(f);
+    const norm = normalizeForComparison(f);
+    return !promptContainsTerm(promptLower, f) && !alreadyAdded.has(norm);
   });
   if (missingVerbFeatures.length > 0) {
+    for (const f of missingVerbFeatures) alreadyAdded.add(normalizeForComparison(f));
     extra.push(`Support ${naturalList(missingVerbFeatures.map(f => f.replace(/-/g, ' ')))}.`);
     result.additions.push(`Added ${missingVerbFeatures.length} verb-inferred features`);
     result.featureCount += missingVerbFeatures.length;
   }
 
   const missingQualifierFeatures = intent.qualifierImpliedFeatures.filter(f => {
-    const readable = f.replace(/-/g, ' ');
-    return !result.prompt.toLowerCase().includes(readable) && !intent.statedFeatures.includes(f);
+    const norm = normalizeForComparison(f);
+    return !promptContainsTerm(promptLower, f) && !alreadyAdded.has(norm);
   });
   if (missingQualifierFeatures.length > 0) {
+    for (const f of missingQualifierFeatures) alreadyAdded.add(normalizeForComparison(f));
     extra.push(`Include ${naturalList(missingQualifierFeatures.map(f => f.replace(/-/g, ' ')))}.`);
     result.additions.push(`Added ${missingQualifierFeatures.length} qualifier-implied features`);
     result.featureCount += missingQualifierFeatures.length;
   }
 
   const missingQualifierWorkflows = intent.qualifierImpliedWorkflows.filter(w => {
-    const readable = w.replace(/-/g, ' ');
-    return !result.prompt.toLowerCase().includes(readable);
+    const norm = normalizeForComparison(w);
+    return !promptContainsTerm(promptLower, w) && !alreadyAdded.has(norm);
   });
   if (missingQualifierWorkflows.length > 0) {
+    for (const w of missingQualifierWorkflows) alreadyAdded.add(normalizeForComparison(w));
     extra.push(`Include workflows for ${naturalList(missingQualifierWorkflows.map(w => w.replace(/-/g, ' ')))}.`);
     result.additions.push(`Added ${missingQualifierWorkflows.length} qualifier-implied workflows`);
   }
