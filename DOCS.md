@@ -21,18 +21,19 @@
 13. [REST API Reference](#13-rest-api-reference)
 14. [Frontend Architecture](#14-frontend-architecture)
 15. [Generation Learning Engine](#15-generation-learning-engine)
-16. [Supporting Module Reference](#16-supporting-module-reference)
-17. [Database Schema](#17-database-schema)
-18. [Development Workflow](#18-development-workflow)
-19. [Adding a New Pipeline Stage](#19-adding-a-new-pipeline-stage)
-20. [Model Recommendations](#20-model-recommendations)
-21. [Troubleshooting](#21-troubleshooting)
+16. [Multi-Language Script Generator](#16-multi-language-script-generator)
+17. [Supporting Module Reference](#17-supporting-module-reference)
+18. [Database Schema](#18-database-schema)
+19. [Development Workflow](#19-development-workflow)
+20. [Adding a New Pipeline Stage](#20-adding-a-new-pipeline-stage)
+21. [Model Recommendations](#21-model-recommendations)
+22. [Troubleshooting](#22-troubleshooting)
 
 ---
 
 ## 1. Project Overview
 
-AutoCoder is a self-hosted AI-powered full-stack application generator. Given a plain-English description of an app, it runs a 17-stage deterministic pipeline enriched by local small language models (SLMs) to produce a complete, runnable codebase.
+AutoCoder is a self-hosted AI-powered full-stack application generator. Given a plain-English description of an app, it runs a 17-stage deterministic pipeline enriched by local small language models (SLMs) to produce a complete, runnable codebase. It also generates standalone scripts and CLI programs in Python, Go, Rust, Node.js, and TypeScript when the user requests a non-web project.
 
 **Key design goals:**
 
@@ -41,8 +42,9 @@ AutoCoder is a self-hosted AI-powered full-stack application generator. Given a 
 | Zero cloud API costs | Ollama/LM Studio local inference; cloud AI is optional |
 | Deterministic quality baseline | Rule-based stages run first; SLM only enhances |
 | Fault-tolerant | Every SLM call is wrapped in try/catch; pipeline never fails due to AI |
-| Transparent | Every pipeline decision is streamed as a "thinking step" to the UI |
+| Transparent | Every pipeline decision is streamed as a "thinking step" to the UI — friendly messages by default, expandable technical details |
 | Self-improving | GenerationLearningEngine records outcomes and feeds them into future generations |
+| Multi-language | Detects script/CLI requests and generates Python, Go, Rust, Node.js, or TypeScript projects instead of web apps |
 
 **Technology stack:**
 
@@ -127,7 +129,7 @@ workspace/
 │   │   │   │   ├── autocoder.ts      # All ~80 REST endpoints + WebSocket handlers
 │   │   │   │   ├── health.ts         # GET /api/health
 │   │   │   │   └── index.ts          # Route aggregator
-│   │   │   ├── modules/              # 108+ domain modules (see §16)
+│   │   │   ├── modules/              # 108+ domain modules (see §17)
 │   │   │   └── client-lib/
 │   │   │       └── code-generator/   # Shared validator + pro-generator (server-side)
 │   │   └── package.json
@@ -309,7 +311,7 @@ These variables control the `local-llm-client.ts` module used by `ai-fullstack-g
 3. The route calls `handlePhaseMessage()` from `conversation-phase-handler.ts`.
 4. If the message is a project creation request, `analyzeRequest()` from `deep-understanding-engine.ts` runs first.
 5. If understanding is ready, `orchestratePipeline()` in `pipeline-orchestrator.ts` starts the 17-stage run.
-6. Each stage's `emitStep()` calls are streamed to the client via SSE or returned in the final JSON.
+6. Each stage's `emitStep()` calls are streamed to the client via SSE or returned in the final JSON. Labels use the `"Friendly message|||Technical label"` format — the frontend shows the friendly text by default and reveals the technical label on expand.
 7. Generated files are stored via `storage.upsertProjectFile()`.
 8. The frontend renders files in the IDE panel and optionally mounts them in a WebContainer for live preview.
 
@@ -1120,18 +1122,24 @@ The Chat page (`pages/chat.tsx`) is the primary user interface. It is a multi-pa
 ### Key Components
 
 #### `ThinkingSteps`
-Renders the live pipeline progress. Each step has:
+Renders the live pipeline progress with friendly language for non-technical users. Each step has:
 - A phase-specific icon and color (e.g., `Brain` for understanding, `Palette` for design)
-- A label and optional detail string
-- Expandable/collapsible with a chevron button
-- Maps all 17 pipeline stage IDs to display names and icons
+- A **friendly label** shown by default (e.g., "Reading your description carefully") parsed from the `|||` separator format
+- Per-step **expand/collapse chevron** that reveals the technical label (e.g., "Deep Understanding Engine activated") and detail string
+- Header shows "Building your app (N steps)" when complete, or the latest friendly message while active
+- `parseFriendlyLabel(label)` splits on first `|||`: left side = friendly text, right side = technical label. Labels without `|||` display as-is.
+- Maps all 17 pipeline stage IDs + recovery to display names and icons via `phaseConfig`
 
 #### `ChatMessage`
 Renders a single message (user or assistant). For assistant messages:
 - Detects if the message contains a `<!--PROJECT:...-->` marker (generated by pipeline)
 - If project marker found: renders a `ProjectSummary` card instead of raw text
 - Otherwise: renders markdown + code blocks via `parseCodeBlocks()`
+- `parseCodeBlocks()` also renders `<details>/<summary>` HTML tags as native React `CollapsibleDetails` components (used by plan output)
 - Shows approval buttons ("Approve & Generate") when the pipeline is waiting for confirmation
+
+#### `CollapsibleDetails` (in `code-block.tsx`)
+A React component that replaces raw `<details>/<summary>` HTML tags in chat messages. Renders a clickable chevron + summary text; expanding reveals the content below. Used by `formatPlanAsMessage()` to hide technical plan sections (tech stack, data model, API endpoints, etc.) behind a "Technical details (click to expand)" toggle.
 
 #### `ProjectSummary`
 A visual card showing:
@@ -1269,7 +1277,43 @@ Each pattern has a `successCount` and `failureCount`. `reliability = successCoun
 
 ---
 
-## 16. Supporting Module Reference
+## 16. Multi-Language Script Generator
+
+**File:** `artifacts/autocoder/src/lib/code-generator/script-generator.ts`
+
+AutoCoder is not limited to web applications. When a user requests a standalone script, CLI tool, or program in a specific language, the **script generator** intercepts the request before any web-focused pipeline runs.
+
+### Detection: `detectStandaloneScript(prompt)`
+
+Returns `{ isScript: true, language, reason }` or `{ isScript: false }`.
+
+**Detection logic (priority order):**
+1. **Language detection** — scans for explicit language mentions: "Python script", "Go program", "Rust CLI", "Node.js tool", "TypeScript utility"
+2. **Web keyword blocklist** — if the prompt contains web-specific terms (React, frontend, dashboard, login page, REST API, etc.), it is routed to the web pipeline instead
+3. **Script keyword match** — looks for terms like "script", "CLI", "command-line", "automate", "parse", "scrape", "convert", "batch", "cron", "utility"
+4. **Priority rule** — explicit script intent keywords override web keywords when both are present (e.g., "Python script that scrapes a website" → script, not web app)
+
+### Generation: `generateStandaloneScript(prompt, language)`
+
+Produces a complete project structure appropriate for the detected language:
+
+| Language | Files Generated |
+|----------|----------------|
+| Python | `main.py`, `requirements.txt`, `README.md` |
+| Go | `main.go`, `go.mod`, `README.md` |
+| Rust | `src/main.rs`, `Cargo.toml`, `README.md` |
+| Node.js | `index.js`, `package.json`, `README.md` |
+| TypeScript | `src/index.ts`, `tsconfig.json`, `package.json`, `README.md` |
+
+Each template includes idiomatic boilerplate: argument parsing, error handling, and a main entry point. The prompt is embedded as the program description in comments and README.
+
+### Integration
+
+In `artifacts/autocoder/src/lib/code-generator/engine.ts`, both `generateCode()` and `generateCodeWithThinking()` call `detectStandaloneScript()` first (before any web routing). If detected, `generateStandaloneScript()` runs and returns immediately — the 17-stage web pipeline is never invoked.
+
+---
+
+## 17. Supporting Module Reference
 
 Complete reference of all modules in `artifacts/api-server/src/modules/`:
 
@@ -1295,7 +1339,7 @@ Complete reference of all modules in `artifacts/api-server/src/modules/`:
 | `contextual-reasoning-engine.ts` | Stage 4 — analyzes entity semantics, finds relationships, computed fields, business rules. Produces `ReasoningResult`. |
 | `continuous-debugger.ts` | Session-scoped debugger that tracks all errors across a conversation and provides cumulative analysis. Includes `findUnmatchedBrackets()` — a count-based bracket balance checker (not stack-based) that strips strings, template literals, and comments before counting `(`, `)`, `{`, `}`, `[`, `]`. Uses a custom `stripStringsAndComments()` that correctly handles apostrophes in JSX text (`Don't`, `won't`) by only treating `'` as a string delimiter when preceded by a non-word character. `<` and `>` are excluded from bracket pairs — they are TypeScript generics and comparison operators, not paired delimiters. |
 | `conversational-flexibility.ts` | Detects follow-up messages, maintains conversation state, generates appropriate non-generation responses. |
-| `conversation-phase-handler.ts` | Top-level message router. Determines if a message is: project creation, modification, question, or meta-request. |
+| `conversation-phase-handler.ts` | Top-level message router. Determines if a message is: project creation, modification, question, or meta-request. All ~73 `emitStep()` calls use `"Friendly|||Technical"` separator format for non-technical user display. |
 | `cross-file-tracer.ts` | Traces relationships between files: which component imports which, which API route serves which frontend page. |
 | `cross-file-validator.ts` | Stage 16 Pass 1 — cross-file consistency validation. See §10. |
 | `deep-debugging-engine.ts` | Deep error analysis with root cause identification and multi-step fix suggestions. |
@@ -1337,9 +1381,9 @@ Complete reference of all modules in `artifacts/api-server/src/modules/`:
 | `multi-language-templates.ts` | Code templates for 20+ programming languages. |
 | `natural-language-understanding.ts` | NLU module: intent classification, entity extraction, sentiment detection. |
 | `performance-planner.ts` | Plans performance optimizations: pagination, caching, indexes, lazy loading. |
-| `pipeline-orchestrator.ts` | The 17-stage pipeline. See §6. |
+| `pipeline-orchestrator.ts` | The 17-stage pipeline. See §6. All ~165 `emitStep()` calls use `"Friendly|||Technical"` separator format. |
 | `plan-driven-generator.ts` | Stage 11 — generates all project files from the enriched plan. |
-| `plan-generator.ts` | Stage 2 — converts `UnderstandingResult` into a full `ProjectPlan`. |
+| `plan-generator.ts` | Stage 2 — converts `UnderstandingResult` into a full `ProjectPlan`. `formatPlanAsMessage()` outputs plain-English summary (modules, workflows, roles, confidence) at top, with technical specs in `<details>` tags. |
 | `planning-module.ts` | High-level planning API used by `/api/conversations/:id/plan`. |
 | `post-generation-validator.ts` | Stage 15 — multi-pass validator. See §10. |
 | `preview-project-manager.ts` | Manages server-side preview server lifecycle. |
@@ -1378,7 +1422,7 @@ Complete reference of all modules in `artifacts/api-server/src/modules/`:
 
 ---
 
-## 17. Database Schema
+## 18. Database Schema
 
 **File:** `lib/db/src/schema.ts`  
 **ORM:** Drizzle ORM
@@ -1417,7 +1461,7 @@ Complete reference of all modules in `artifacts/api-server/src/modules/`:
 
 ---
 
-## 18. Development Workflow
+## 19. Development Workflow
 
 ### Starting services
 
@@ -1497,7 +1541,7 @@ pnpm --filter @workspace/api-server add -D <package>
 
 ---
 
-## 19. Adding a New Pipeline Stage
+## 20. Adding a New Pipeline Stage
 
 To add a new stage to the pipeline:
 
@@ -1591,7 +1635,7 @@ In `src/components/thinking-steps.tsx`, add an entry to `phaseConfig`:
 
 ---
 
-## 20. Model Recommendations
+## 21. Model Recommendations
 
 The quality of generated code scales directly with model size and specialization. Use a code-specific model — general models (llama3.2, mistral) produce significantly worse code.
 
@@ -1652,7 +1696,7 @@ Higher context allows the SLM stages to see more of the pipeline's intermediate 
 
 ---
 
-## 21. Troubleshooting
+## 22. Troubleshooting
 
 ### "SLM system initialized (no endpoint — rules-only mode)"
 

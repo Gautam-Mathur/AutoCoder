@@ -72,6 +72,8 @@ Express 5 API server. Routes live in `src/routes/` and use `@workspace/api-zod` 
 - Entry: `src/index.ts` — reads `PORT`, starts Express + HTTP server (with WebSocket support via ws)
 - Routes: `src/routes/autocoder.ts` — the main AutoCoder routes + WebSocket handlers; `src/routes/health.ts` — health check
 - Modules: `src/modules/` — 108+ modules including a 172,000-line knowledge base (40+ industry domains, 500+ concepts, 900+ best practices, 500+ anti-patterns, 300+ code snippets across 5 technology stacks)
+- Friendly chat messages: All `emitStep()` calls in `pipeline-orchestrator.ts` (~165) and `conversation-phase-handler.ts` (~73) use the `"Friendly message|||Technical label"` separator pattern. The frontend `ThinkingSteps` component parses this to show plain-English progress by default, with per-step expandable technical details.
+- Plan output: `formatPlanAsMessage()` in `plan-generator.ts` shows a plain-English summary (modules, workflows, roles, confidence) at the top, with full technical specs wrapped in `<details>` tags rendered as collapsible sections.
 - SLM system: 8 registered stage templates (understand, design, semantic, quality, schema, api, components, generate) initialized at startup via `slm-registry.ts`. When an AI endpoint is available, the pipeline uses SLM to enhance understanding (implicit requirements, inferred entities) and codegen (function-body improvements). Falls back to rules-only mode if no endpoint is configured.
 - Snapshot system: Per-project snapshots only (generic prewarm disabled). The route `/api/cache/build-snapshot` accepts a project's package.json, upgrades it via `upgradePackageJson()` (cross-references dependency registry, removes bad packages, applies renames), and builds an npm install snapshot. Frontend applies the upgraded package.json back to the WebContainer.
 - Validation: Multi-pass `validateAndFix()` in `post-generation-validator.ts` catches import/export mismatches, missing dependencies, and Vite-specific issues (Tailwind v4 directives, missing vite.config.ts, missing React imports, missing default exports in App.tsx). Auto-fixes are applied iteratively (up to 3 passes).
@@ -89,8 +91,11 @@ Express 5 API server. Routes live in `src/routes/` and use `@workspace/api-zod` 
 
 AutoCoder React + Vite frontend. Full-stack AI code generation UI.
 
-- Pages: `landing` (home), `chat` (main IDE), `vapt-dashboard` (security scans), `slm-settings`
+- Pages: `landing` (benefit-focused hero: "Describe Your Idea, Get a Working App"), `chat` (main IDE with friendly empty state), `vapt-dashboard` (security scans), `slm-settings`
 - Components: chat interface, VS Code-style IDE, file panel, preview panel, code preview, deployment panel
+- ThinkingSteps component (`thinking-steps.tsx`): Parses `|||` separator in step labels via `parseFriendlyLabel()` — shows friendly text by default, per-step chevron expand/collapse for technical details + detail strings
+- Code block renderer (`code-block.tsx`): `parseCodeBlocks()` renders code fences + `CollapsibleDetails` component that converts `<details>/<summary>` HTML tags into native React collapsible sections
+- Script generator (`code-generator/script-generator.ts`): `detectStandaloneScript()` classifies user input as script vs web app using language detection + keyword priority (script keywords override web keywords when explicit script intent is present). `generateStandaloneScript()` produces language-appropriate project files for Python, Go, Rust, Node.js, and TypeScript. Runs first in both `generateCode()` and `generateCodeWithThinking()` before any web-focused paths.
 - Uses `@webcontainer/api` for in-browser code execution/preview
 - Auto-fix engine: When the dev server fails in WebContainer, the `auto-fix-engine.ts` parses errors (missing modules, export mismatches, syntax errors) and applies targeted fixes, retrying up to 3 times. Falls back to server-side `/api/auto-fix` endpoint for deeper analysis.
 - Uses `@shared/schema` alias → `artifacts/autocoder/shared/schema.ts`

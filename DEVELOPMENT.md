@@ -107,6 +107,9 @@ autocoder/
 ├── artifacts/
 │   ├── api-server/      # Express API — 108+ modules, 17-stage pipeline, 172K-line knowledge base
 │   └── autocoder/       # React + Vite frontend (port 5173)
+│       └── src/lib/code-generator/
+│           ├── engine.ts              # Main code generation router
+│           └── script-generator.ts    # Multi-language script/CLI generator
 ├── lib/
 │   ├── db/              # Drizzle ORM schema + DB connection
 │   ├── api-spec/        # OpenAPI spec
@@ -118,6 +121,17 @@ autocoder/
 ```
 
 The API server includes a massive knowledge base (~172,000 lines) covering 40+ industry domains, 500+ programming concepts, 900+ best practices, 500+ anti-patterns, and 300+ production code snippets across 5 technology stacks (MERN, Django, Spring Boot, .NET, Go+React).
+
+### Friendly Chat UI
+
+The chat interface shows non-technical language by default during code generation:
+- **ThinkingSteps** — pipeline progress shows friendly messages (e.g., "Reading your description carefully") with expandable technical details via chevron toggle
+- **Plan output** — plain-English summary at the top, technical specs in collapsible `<details>` sections
+- **Landing page** — benefit-focused copy ("Describe Your Idea, Get a Working App")
+
+### Multi-Language Script Generation
+
+AutoCoder detects when a user wants a standalone script or CLI program (not a web app) and generates projects in Python, Go, Rust, Node.js, or TypeScript. Detection runs first in `engine.ts` before any web pipeline routing.
 
 ## Troubleshooting
 
