@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "exportedAt": "2026-03-15T18:47:52.706Z",
+  "exportedAt": "2026-03-16T00:01:45.775Z",
   "patterns": [
     {
       "patternType": "entity-structure",
@@ -642,7 +642,7 @@
       "patternType": "tech-choice",
       "patternKey": "file-structure-general",
       "patternValue": {
-        "fileCount": 75,
+        "fileCount": 52,
         "recentPaths": [
           "src/lib/utils.ts",
           "src/lib/queryClient.ts",
@@ -664,7 +664,6 @@
           "src/components/search-bar.tsx",
           "src/components/empty-state.tsx",
           "src/components/status-badge.tsx",
-          "src/components/kpi-card.tsx",
           "package.json",
           "index.html",
           "src/main.tsx",
@@ -673,11 +672,12 @@
           "postcss.config.js",
           "tsconfig.json",
           "tsconfig.node.json",
-          "src/index.css"
+          "src/index.css",
+          "shared/schema.ts"
         ],
         "qualityScore": 90
       },
-      "successCount": 11,
+      "successCount": 12,
       "failureCount": 0,
       "reliability": 1
     },
@@ -3129,6 +3129,9 @@
         ],
         "pageCount": 12,
         "relationships": {
+          "Item": [
+            "belongsTo Supplier"
+          ],
           "PaySlip": [
             "belongsTo PayrollRun",
             "belongsTo Employee"
@@ -3152,14 +3155,11 @@
           "LeaveRequest": [
             "belongsTo Employee"
           ],
-          "Item": [
+          "PurchaseOrder": [
             "belongsTo Supplier"
           ],
           "StockMovement": [
             "belongsTo Item"
-          ],
-          "PurchaseOrder": [
-            "belongsTo Supplier"
           ]
         }
       },
@@ -3267,7 +3267,7 @@
           "createdAt"
         ]
       },
-      "successCount": 2,
+      "successCount": 4,
       "failureCount": 0,
       "reliability": 1
     },
@@ -3304,7 +3304,7 @@
           "form-wizard view"
         ]
       },
-      "successCount": 1,
+      "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
@@ -3378,16 +3378,40 @@
           ]
         }
       },
-      "successCount": 1,
+      "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 156,
       "patternType": "entity-structure",
-      "entityType": "Item",
       "domainId": "hr",
+      "entityType": "Item",
       "patternKey": "entity-item",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "sku": "text",
+          "cost": "number",
+          "name": "text",
+          "tags": "string[]",
+          "unit": "text",
+          "price": "number",
+          "status": "enum:active,draft,archived,out-of-stock",
+          "weight": "number",
+          "category": "text",
+          "imageUrl": "string",
+          "location": "text",
+          "maxStock": "integer",
+          "minStock": "integer",
+          "quantity": "integer",
+          "unitCost": "integer",
+          "createdAt": "datetime",
+          "supplierId": "integer",
+          "description": "string",
+          "compareAtPrice": "number",
+          "stockMovementCount": "text"
+        },
         "recommended": [
           "id",
           "name",
@@ -3410,41 +3434,28 @@
           "status",
           "createdAt",
           "stockMovementCount"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "name": "text",
-          "sku": "text",
-          "category": "text",
-          "quantity": "integer",
-          "unit": "text",
-          "minStock": "integer",
-          "maxStock": "integer",
-          "unitCost": "integer",
-          "location": "text",
-          "supplierId": "integer",
-          "description": "string",
-          "price": "number",
-          "compareAtPrice": "number",
-          "cost": "number",
-          "imageUrl": "string",
-          "weight": "number",
-          "tags": "string[]",
-          "status": "enum:active,draft,archived,out-of-stock",
-          "createdAt": "datetime",
-          "stockMovementCount": "text"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 161,
       "patternType": "entity-structure",
-      "entityType": "StockMovement",
       "domainId": "hr",
+      "entityType": "StockMovement",
       "patternKey": "entity-stockmovement",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "date": "date",
+          "type": "enum(inbound,outbound,transfer,adjustment)",
+          "notes": "text",
+          "itemId": "integer",
+          "quantity": "integer",
+          "reference": "text"
+        },
         "recommended": [
           "id",
           "itemId",
@@ -3453,27 +3464,39 @@
           "reference",
           "date",
           "notes"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "itemId": "integer",
-          "type": "enum(inbound,outbound,transfer,adjustment)",
-          "quantity": "integer",
-          "reference": "text",
-          "date": "date",
-          "notes": "text"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 158,
       "patternType": "entity-structure",
-      "entityType": "PurchaseOrder",
       "domainId": "hr",
+      "entityType": "PurchaseOrder",
       "patternKey": "entity-purchaseorder",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "notes": "string",
+          "total": "number",
+          "status": "enum(draft,ordered,shipped,received,cancelled)",
+          "currency": "string",
+          "poNumber": "text",
+          "subtotal": "number",
+          "createdAt": "datetime",
+          "orderDate": "date",
+          "taxAmount": "number",
+          "grandTotal": "text",
+          "supplierId": "integer",
+          "orderNumber": "string",
+          "totalAmount": "integer",
+          "expectedDate": "date",
+          "shippingCost": "number",
+          "trackingNumber": "string",
+          "shippingAddress": "string"
+        },
         "recommended": [
           "id",
           "poNumber",
@@ -3493,38 +3516,35 @@
           "notes",
           "createdAt",
           "grandTotal"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "poNumber": "text",
-          "supplierId": "integer",
-          "status": "enum(draft,ordered,shipped,received,cancelled)",
-          "totalAmount": "integer",
-          "orderDate": "date",
-          "expectedDate": "date",
-          "orderNumber": "string",
-          "subtotal": "number",
-          "taxAmount": "number",
-          "shippingCost": "number",
-          "total": "number",
-          "currency": "string",
-          "shippingAddress": "string",
-          "trackingNumber": "string",
-          "notes": "string",
-          "createdAt": "datetime",
-          "grandTotal": "text"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 157,
       "patternType": "entity-structure",
-      "entityType": "Supplier",
       "domainId": "hr",
+      "entityType": "Supplier",
       "patternKey": "entity-supplier",
       "patternValue": {
+        "fieldTypes": {
+          "id": "serial (auto-increment)",
+          "name": "text",
+          "email": "text",
+          "phone": "text",
+          "rating": "number",
+          "status": "enum(active,inactive)",
+          "address": "text",
+          "website": "string",
+          "category": "string",
+          "createdAt": "datetime",
+          "itemCount": "text",
+          "contactName": "text",
+          "paymentTerms": "string",
+          "purchaseOrderCount": "text"
+        },
         "recommended": [
           "id",
           "name",
@@ -3540,29 +3560,14 @@
           "createdAt",
           "itemCount",
           "purchaseOrderCount"
-        ],
-        "fieldTypes": {
-          "id": "serial (auto-increment)",
-          "name": "text",
-          "contactName": "text",
-          "email": "text",
-          "phone": "text",
-          "address": "text",
-          "status": "enum(active,inactive)",
-          "website": "string",
-          "category": "string",
-          "rating": "number",
-          "paymentTerms": "string",
-          "createdAt": "datetime",
-          "itemCount": "text",
-          "purchaseOrderCount": "text"
-        }
+        ]
       },
       "successCount": 2,
       "failureCount": 0,
       "reliability": 1
     },
     {
+      "id": 160,
       "patternType": "workflow-design",
       "patternKey": "workflow-purchaseorder",
       "patternValue": {
@@ -3602,6 +3607,7 @@
       "reliability": 1
     },
     {
+      "id": 152,
       "patternType": "page-structure",
       "patternKey": "page-layout-items",
       "patternValue": {
@@ -3622,6 +3628,7 @@
       "reliability": 1
     },
     {
+      "id": 150,
       "patternType": "page-structure",
       "patternKey": "page-layout-item-detail",
       "patternValue": {
@@ -3638,6 +3645,7 @@
       "reliability": 1
     },
     {
+      "id": 155,
       "patternType": "page-structure",
       "patternKey": "page-layout-stock-movements",
       "patternValue": {
@@ -3653,6 +3661,7 @@
       "reliability": 1
     },
     {
+      "id": 153,
       "patternType": "page-structure",
       "patternKey": "page-layout-purchase-orders",
       "patternValue": {
@@ -3672,6 +3681,7 @@
       "reliability": 1
     },
     {
+      "id": 154,
       "patternType": "page-structure",
       "patternKey": "page-layout-suppliers",
       "patternValue": {
@@ -3692,7 +3702,7 @@
       "key": "quality-score-general",
       "value": "91",
       "category": "architecture",
-      "frequency": 11
+      "frequency": 12
     }
   ],
   "stats": {
