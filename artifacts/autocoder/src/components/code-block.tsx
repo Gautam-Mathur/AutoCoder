@@ -1,7 +1,28 @@
 import { useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { CodePreview, CombinedAppPreview, MultiFilePreview, parseMultiFileHtml, parseProjectFiles, ProjectFilesPreview } from "./code-preview";
+
+function CollapsibleDetails({ summary, children }: { summary: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="my-2">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
+        <span>{summary}</span>
+      </button>
+      {open && (
+        <div className="mt-1 ml-4.5 pl-3 border-l border-border/40 text-xs text-muted-foreground">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface CodeBlockProps {
   code: string;
@@ -54,6 +75,36 @@ interface ParsedCodeBlock {
   index: number;
 }
 
+function renderTextWithDetails(text: string, keyPrefix: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  const detailsRegex = /<details>\s*<summary>([\s\S]*?)<\/summary>\s*([\s\S]*?)<\/details>/g;
+  let lastIdx = 0;
+  let m;
+  while ((m = detailsRegex.exec(text)) !== null) {
+    if (m.index > lastIdx) {
+      nodes.push(
+        <span key={`${keyPrefix}-t-${lastIdx}`} className="whitespace-pre-wrap">
+          {text.slice(lastIdx, m.index)}
+        </span>
+      );
+    }
+    nodes.push(
+      <CollapsibleDetails key={`${keyPrefix}-d-${m.index}`} summary={m[1].trim()}>
+        <span className="whitespace-pre-wrap">{m[2].trim()}</span>
+      </CollapsibleDetails>
+    );
+    lastIdx = m.index + m[0].length;
+  }
+  if (lastIdx < text.length) {
+    nodes.push(
+      <span key={`${keyPrefix}-t-${lastIdx}`} className="whitespace-pre-wrap">
+        {text.slice(lastIdx)}
+      </span>
+    );
+  }
+  return nodes;
+}
+
 export function parseCodeBlocks(content: string): React.ReactNode[] {
   const parts: React.ReactNode[] = [];
   const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
@@ -64,11 +115,7 @@ export function parseCodeBlocks(content: string): React.ReactNode[] {
 
   while ((match = codeBlockRegex.exec(content)) !== null) {
     if (match.index > lastIndex) {
-      parts.push(
-        <span key={`text-${lastIndex}`} className="whitespace-pre-wrap">
-          {content.slice(lastIndex, match.index)}
-        </span>
-      );
+      parts.push(...renderTextWithDetails(content.slice(lastIndex, match.index), `text-${lastIndex}`));
     }
 
     const language = (match[1] || "text").toLowerCase();
@@ -80,11 +127,7 @@ export function parseCodeBlocks(content: string): React.ReactNode[] {
   }
 
   if (lastIndex < content.length) {
-    parts.push(
-      <span key={`text-${lastIndex}`} className="whitespace-pre-wrap">
-        {content.slice(lastIndex)}
-      </span>
-    );
+    parts.push(...renderTextWithDetails(content.slice(lastIndex), `text-${lastIndex}`));
   }
 
   const hasHtml = codeBlocks.some(b => b.language === 'html' || b.language === 'htm');

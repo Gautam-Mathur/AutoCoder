@@ -29,7 +29,7 @@ export function EmptyState({ onSuggestionClick }: EmptyStateProps) {
           </h1>
 
           <p className="text-muted-foreground text-sm max-w-sm mx-auto leading-relaxed">
-            Describe your app in plain English. AutoCoder will generate the full project for you.
+            Tell me what you have in mind and I'll create a complete app for you — no coding needed.
           </p>
         </div>
 

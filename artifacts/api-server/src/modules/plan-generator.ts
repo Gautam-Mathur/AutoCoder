@@ -1091,12 +1091,57 @@ function planKPIs(domain: IndustryDomain | null, selectedModuleNames: string[]):
 export function formatPlanAsMessage(plan: ProjectPlan): string {
   const sections: string[] = [];
 
-  sections.push(`# Project Plan: ${plan.projectName}\n`);
+  sections.push(`# Here's what I'll build: ${plan.projectName}\n`);
   sections.push(`${plan.overview}\n`);
-  sections.push(`**Estimated Complexity:** ${plan.estimatedComplexity} | **${plan.pages.length} pages** | **${plan.dataModel.length} data tables** | **${plan.apiEndpoints.length} API endpoints**\n`);
+
+  const pageNames = plan.pages.slice(0, 6).map(p => `**${p.name}**`).join(', ');
+  const morePages = plan.pages.length > 6 ? ` and ${plan.pages.length - 6} more` : '';
+  sections.push(`Your app will have ${plan.pages.length} pages (${pageNames}${morePages}), ${plan.dataModel.length} data tables, and ${plan.apiEndpoints.length} API endpoints.\n`);
+
+  if (plan.modules.length > 0) {
+    sections.push('## What your app includes\n');
+    for (const mod of plan.modules) {
+      sections.push(`- **${mod.name}** — ${mod.description}`);
+    }
+    sections.push('');
+  }
+
+  if (plan.workflows.length > 0) {
+    sections.push('## Key workflows\n');
+    for (const wf of plan.workflows) {
+      sections.push(`- **${wf.name}:** ${wf.states.join(' → ')}`);
+    }
+    sections.push('');
+  }
+
+  if (plan.roles.length > 0) {
+    sections.push('## User roles\n');
+    for (const role of plan.roles) {
+      sections.push(`- **${role.name}:** ${role.description}`);
+    }
+    sections.push('');
+  }
+
+  if (plan.confidence) {
+    const pct = (v: number) => `${Math.round(v * 100)}%`;
+    sections.push(`## Plan confidence: ${pct(plan.confidence.overall)}\n`);
+    if (plan.confidence.lowConfidenceItems.length > 0) {
+      sections.push(`I'm less sure about ${plan.confidence.lowConfidenceItems.length} item(s) — you can give me more details to improve them:`);
+      for (const item of plan.confidence.lowConfidenceItems) {
+        sections.push(`- **${item.item}** — ${pct(item.confidence)} confidence. ${item.reason}`);
+      }
+      sections.push(`\n*For example, describe what fields a "${plan.confidence.lowConfidenceItems[0]?.item}" should have, or paste a sample record.*`);
+      sections.push('');
+    }
+  }
 
   sections.push('---\n');
-  sections.push('## Tech Stack\n');
+
+  sections.push('<details>\n<summary>Technical details (click to expand)</summary>\n');
+
+  sections.push(`**Estimated Complexity:** ${plan.estimatedComplexity} | **${plan.pages.length} pages** | **${plan.dataModel.length} data tables** | **${plan.apiEndpoints.length} API endpoints**\n`);
+
+  sections.push('### Tech Stack\n');
   for (const item of plan.techStack) {
     sections.push(`- **${item.category}:** ${item.technology} - ${item.justification}`);
   }
@@ -1111,28 +1156,14 @@ export function formatPlanAsMessage(plan: ProjectPlan): string {
     }
   }
 
-  sections.push('\n---\n');
-  sections.push('## Modules\n');
-  for (const mod of plan.modules) {
-    sections.push(`### ${mod.name}`);
-    sections.push(`${mod.description}`);
-    sections.push(`- **Pages:** ${mod.pageCount} | **Key Features:** ${mod.features.slice(0, 5).join(', ')}`);
-    if (mod.entities.length > 0) {
-      sections.push(`- **Data:** ${mod.entities.join(', ')}`);
-    }
-    sections.push('');
-  }
-
-  sections.push('---\n');
-  sections.push('## Pages\n');
+  sections.push('\n### Pages\n');
   sections.push('| Page | Path | Module | Features |');
   sections.push('|------|------|--------|----------|');
   for (const page of plan.pages) {
     sections.push(`| ${page.name} | \`${page.path}\` | ${page.module} | ${page.features.slice(0, 3).join(', ')} |`);
   }
 
-  sections.push('\n---\n');
-  sections.push('## Data Model\n');
+  sections.push('\n### Data Model\n');
   for (const entity of plan.dataModel) {
     const fieldList = entity.fields
       .filter(f => f.name !== 'id')
@@ -1141,22 +1172,7 @@ export function formatPlanAsMessage(plan: ProjectPlan): string {
     sections.push(`- **${entity.name}** → \`${entity.tableName}\`: ${fieldList}`);
   }
 
-  if (plan.workflows.length > 0) {
-    sections.push('\n---\n');
-    sections.push('## Workflows\n');
-    for (const wf of plan.workflows) {
-      sections.push(`### ${wf.name}`);
-      sections.push(`**States:** ${wf.states.join(' → ')}`);
-      sections.push('**Transitions:**');
-      for (const t of wf.transitions) {
-        sections.push(`- ${t.from} → ${t.to}: "${t.action}" ${t.role ? `(by ${t.role})` : ''}`);
-      }
-      sections.push('');
-    }
-  }
-
-  sections.push('---\n');
-  sections.push('## API Endpoints\n');
+  sections.push('\n### API Endpoints\n');
   const groupedEndpoints: Record<string, PlannedEndpoint[]> = {};
   for (const ep of plan.apiEndpoints) {
     if (!groupedEndpoints[ep.entity]) groupedEndpoints[ep.entity] = [];
@@ -1170,17 +1186,8 @@ export function formatPlanAsMessage(plan: ProjectPlan): string {
     sections.push('');
   }
 
-  if (plan.roles.length > 0) {
-    sections.push('---\n');
-    sections.push('## User Roles\n');
-    for (const role of plan.roles) {
-      sections.push(`- **${role.name}:** ${role.description} (${role.permissions.slice(0, 4).join(', ')})`);
-    }
-  }
-
   if (plan.customActions && plan.customActions.length > 0) {
-    sections.push('\n---\n');
-    sections.push('## Custom Actions\n');
+    sections.push('### Custom Actions\n');
     const actionsByEntity: Record<string, CustomAction[]> = {};
     for (const a of plan.customActions) {
       if (!actionsByEntity[a.entity]) actionsByEntity[a.entity] = [];
@@ -1196,29 +1203,25 @@ export function formatPlanAsMessage(plan: ProjectPlan): string {
   }
 
   if (plan.dashboardWidgets && plan.dashboardWidgets.length > 0) {
-    sections.push('---\n');
-    sections.push('## Dashboard Widgets\n');
+    sections.push('### Dashboard Widgets\n');
     for (const w of plan.dashboardWidgets) {
       sections.push(`- **${w.title}** (${w.type}) — ${w.entity}.${w.metric}${w.aggregation ? ` [${w.aggregation}]` : ''}${w.groupBy ? ` grouped by ${w.groupBy}` : ''} | Size: ${w.size}`);
     }
   }
 
   if (plan.integrations && plan.integrations.length > 0) {
-    sections.push('\n---\n');
-    sections.push('## Integrations\n');
+    sections.push('\n### Integrations\n');
     for (const integ of plan.integrations) {
-      sections.push(`### ${integ.name} (${integ.type})`);
-      sections.push(`${integ.reason}`);
-      sections.push(`- **Packages:** ${integ.packages.join(', ')}`);
-      if (integ.envVariables.length > 0) sections.push(`- **Env Variables:** ${integ.envVariables.join(', ')}`);
-      if (integ.uiComponents.length > 0) sections.push(`- **UI Components:** ${integ.uiComponents.join(', ')}`);
+      sections.push(`**${integ.name} (${integ.type}):** ${integ.reason}`);
+      sections.push(`- Packages: ${integ.packages.join(', ')}`);
+      if (integ.envVariables.length > 0) sections.push(`- Env Variables: ${integ.envVariables.join(', ')}`);
+      if (integ.uiComponents.length > 0) sections.push(`- UI Components: ${integ.uiComponents.join(', ')}`);
       sections.push('');
     }
   }
 
   if (plan.securityPlan) {
-    sections.push('---\n');
-    sections.push('## Security Plan\n');
+    sections.push('### Security\n');
     sections.push(`- **Auth Strategy:** ${plan.securityPlan.authStrategy}`);
     if (plan.securityPlan.roleHierarchy.length > 0) {
       sections.push(`- **Role Hierarchy:** ${plan.securityPlan.roleHierarchy.map(r => r.role).join(' > ')}`);
@@ -1235,8 +1238,7 @@ export function formatPlanAsMessage(plan: ProjectPlan): string {
   }
 
   if (plan.performancePlan) {
-    sections.push('\n---\n');
-    sections.push('## Performance Plan\n');
+    sections.push('\n### Performance\n');
     if (plan.performancePlan.pagination.length > 0) {
       sections.push(`- **Pagination:** ${plan.performancePlan.pagination.map(p => `${p.entity}: ${p.strategy} (${p.pageSize}/page)`).join(', ')}`);
     }
@@ -1252,8 +1254,7 @@ export function formatPlanAsMessage(plan: ProjectPlan): string {
   }
 
   if (plan.uxFlows && plan.uxFlows.length > 0) {
-    sections.push('\n---\n');
-    sections.push('## UX Flows\n');
+    sections.push('\n### UX Flows\n');
     for (const flow of plan.uxFlows.slice(0, 5)) {
       const stepLabels = flow.steps.map(s => s.label).join(' → ');
       sections.push(`- **${flow.name}** (${flow.type}): ${stepLabels}`);
@@ -1264,8 +1265,7 @@ export function formatPlanAsMessage(plan: ProjectPlan): string {
   }
 
   if (plan.errorHandling) {
-    sections.push('\n---\n');
-    sections.push('## Error Handling\n');
+    sections.push('\n### Error Handling\n');
     sections.push(`- **Strategy:** ${plan.errorHandling.globalErrorStrategy}`);
     sections.push(`- **Retry Policy:** ${plan.errorHandling.retryPolicy.maxRetries} retries, ${plan.errorHandling.retryPolicy.backoffMs}ms backoff`);
     const emptyStates = plan.errorHandling.pageStates.filter(p => p.emptyState);
@@ -1275,18 +1275,15 @@ export function formatPlanAsMessage(plan: ProjectPlan): string {
   }
 
   if (plan.notifications) {
-    sections.push('\n---\n');
-    sections.push('## Notifications\n');
+    sections.push('\n### Notifications\n');
     sections.push(`- **Channels:** ${plan.notifications.channels.join(', ')}`);
     sections.push(`- **Triggers:** ${plan.notifications.triggers.map(t => `${t.entity}: ${t.event}`).join(', ')}`);
   }
 
-  sections.push('\n---\n');
-  sections.push(`## KPIs & Metrics\n`);
+  sections.push('\n### KPIs & Metrics\n');
   sections.push(plan.kpis.map(k => `- ${k}`).join('\n'));
 
-  sections.push('\n---\n');
-  sections.push('## Files to Generate\n');
+  sections.push('\n### Files to Generate\n');
   sections.push(`**${plan.fileBlueprint.length} files total:**\n`);
   const filesByType: Record<string, PlannedFile[]> = {};
   for (const f of plan.fileBlueprint) {
@@ -1302,13 +1299,12 @@ export function formatPlanAsMessage(plan: ProjectPlan): string {
   }
 
   if (plan.confidence) {
-    sections.push('---\n');
-    sections.push('## Plan Confidence\n');
     const pct = (v: number) => `${Math.round(v * 100)}%`;
     const bar = (v: number) => {
       const filled = Math.round(v * 10);
       return '█'.repeat(filled) + '░'.repeat(10 - filled);
     };
+    sections.push('### Confidence Breakdown\n');
     sections.push(`**Overall:** ${bar(plan.confidence.overall)} ${pct(plan.confidence.overall)}\n`);
     sections.push(`| Dimension | Confidence |`);
     sections.push(`|-----------|------------|`);
@@ -1317,15 +1313,9 @@ export function formatPlanAsMessage(plan: ProjectPlan): string {
     sections.push(`| Integrations | ${bar(plan.confidence.integrations)} ${pct(plan.confidence.integrations)} |`);
     sections.push(`| Security | ${bar(plan.confidence.security)} ${pct(plan.confidence.security)} |`);
     sections.push(`| Performance | ${bar(plan.confidence.performance)} ${pct(plan.confidence.performance)} |`);
-
-    if (plan.confidence.lowConfidenceItems.length > 0) {
-      sections.push(`\n**⚠ Items needing review (${plan.confidence.lowConfidenceItems.length}):**`);
-      for (const item of plan.confidence.lowConfidenceItems) {
-        sections.push(`- **${item.section}: ${item.item}** — ${pct(item.confidence)} confidence. ${item.reason}`);
-      }
-      sections.push(`\n*You can provide more details about flagged items to improve the plan. For example, describe the fields a "${plan.confidence.lowConfidenceItems[0]?.item}" should have, or paste a sample record.*`);
-    }
   }
+
+  sections.push('\n</details>\n');
 
   sections.push('\n---\n');
   sections.push('**Ready to generate this project?** Reply "approve" to start code generation, or tell me what you\'d like to change.');

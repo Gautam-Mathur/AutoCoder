@@ -242,14 +242,14 @@ function executeStage(
 
       if (!gate.passed && stage.critical) {
         if (attempt < maxRetries) {
-          emitStep(ctx, stage.id, `${stage.name} quality gate failed, retrying`,
+          emitStep(ctx, stage.id, `Retrying a step|||${stage.name} quality gate failed, retrying`,
             `Critical stage scored ${gate.score}/${gate.threshold} — retry ${attempt + 1}/${maxRetries}`);
           continue;
         }
         const gateWarning = `Quality gate failed for critical stage "${stage.name}" (${gate.score}/${gate.threshold}): ${gate.issues.length > 0 ? gate.issues.join('; ') : 'score below threshold'}`;
         console.warn(`[Pipeline] ${gateWarning}`);
         stageResult.warnings.push(gateWarning);
-        emitStep(ctx, stage.id, `${stage.name} quality gate failed`,
+        emitStep(ctx, stage.id, `Step needs attention|||${stage.name} quality gate failed`,
           `Critical stage scored ${gate.score}/${gate.threshold} — exhausted ${maxRetries} retries, proceeding with best result`);
       } else if (!gate.passed) {
         const gateWarning = `Quality gate failed for stage "${stage.name}" (${gate.score}/${gate.threshold})`;
@@ -257,7 +257,7 @@ function executeStage(
         stageResult.warnings.push(gateWarning);
       }
 
-      emitStep(ctx, stage.id, `${stage.name} complete`,
+      emitStep(ctx, stage.id, `Step complete|||${stage.name} complete`,
         `${stage.role}: score ${result.score}/100 in ${duration}ms${result.warnings.length > 0 ? ` (${result.warnings.length} warnings)` : ''}`);
 
       return stageResult;
@@ -267,7 +267,7 @@ function executeStage(
       const errorMsg = err instanceof Error ? err.message : String(err);
 
       if (attempt < maxRetries) {
-        emitStep(ctx, stage.id, `${stage.name} failed, retrying`,
+        emitStep(ctx, stage.id, `Retrying|||${stage.name} failed, retrying`,
           `Attempt ${attempt + 1}/${maxRetries + 1}: ${errorMsg}`);
         continue;
       }
@@ -283,7 +283,7 @@ function executeStage(
       };
 
       ctx.metrics.stageResults.set(stage.id, stageResult);
-      emitStep(ctx, stage.id, `${stage.name} failed`, `Error: ${errorMsg}`);
+      emitStep(ctx, stage.id, `Something went wrong|||${stage.name} failed`, `Error: ${errorMsg}`);
 
       if (stage.critical) {
         throw new Error(`Critical stage "${stage.name}" failed: ${errorMsg}`);
@@ -311,8 +311,8 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
     onStep,
   };
 
-  emitStep(ctx, 'orchestrator', 'Pipeline Orchestrator activated', `Coordinating ${PIPELINE_STAGES.length} specialized modules for "${plan.projectName}"`);
-  emitStep(ctx, 'orchestrator', 'Assembling dev team', 'Each module acts as a specialized team member — Product Manager through Knowledge Manager — working sequentially so each builds on the previous output');
+  emitStep(ctx, 'orchestrator', 'Starting to build your app|||Pipeline Orchestrator activated', `Coordinating ${PIPELINE_STAGES.length} specialized modules for "${plan.projectName}"`);
+  emitStep(ctx, 'orchestrator', 'Getting everything ready|||Assembling dev team', 'Each module acts as a specialized team member — Product Manager through Knowledge Manager — working sequentially so each builds on the previous output');
 
   const failedStages: string[] = [];
   const skippedStages: string[] = [];
@@ -320,23 +320,23 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
   // Stage 1: Understanding (already done by conversation handler, enrich if available)
   const understandStage = PIPELINE_STAGES.find(s => s.id === 'understand')!;
   if (understanding) {
-    emitStep(ctx, 'understand', 'Product Manager reviewing requirements', 'Re-validating the deep understanding analysis to ensure nothing was missed before planning begins');
+    emitStep(ctx, 'understand', 'Double-checking your requirements|||Product Manager reviewing requirements', 'Re-validating the deep understanding analysis to ensure nothing was missed before planning begins');
     const intentGoal = understanding.level1_intent?.primaryGoal || 'application';
     const domainName = understanding.level2_domain?.primaryDomain?.name || 'general';
     const entityCount = understanding.level3_entities?.mentionedEntities?.length || 0;
     const inferredCount = understanding.level3_entities?.inferredEntities?.length || 0;
     const workflowCount = understanding.level4_workflows?.inferredWorkflows?.length || 0;
-    emitStep(ctx, 'understand', 'Requirement breakdown', `Goal: "${intentGoal}" | Domain: ${domainName} | ${entityCount} explicit entities + ${inferredCount} inferred | ${workflowCount} workflows detected`);
-    emitStep(ctx, 'understand', 'Why this matters', 'Validating understanding first prevents wasted work downstream — if we misidentify the domain, every module after would generate wrong patterns');
+    emitStep(ctx, 'understand', 'Here is what I understood|||Requirement breakdown', `Goal: "${intentGoal}" | Domain: ${domainName} | ${entityCount} explicit entities + ${inferredCount} inferred | ${workflowCount} workflows detected`);
+    emitStep(ctx, 'understand', 'Why this step helps|||Why this matters', 'Validating understanding first prevents wasted work downstream — if we misidentify the domain, every module after would generate wrong patterns');
     executeStage(ctx, understandStage, () => ({
       score: Math.round(understanding.confidence * 100),
       warnings: understanding.confidence < 0.7 ? ['Low confidence in requirement understanding'] : [],
       output: understanding,
     }));
-    emitStep(ctx, 'understand', 'Confidence assessment', `${Math.round(understanding.confidence * 100)}% confident in requirement interpretation${understanding.confidence < 0.7 ? ' — will proceed cautiously with more generic patterns' : ' — high confidence, proceeding with domain-specific optimizations'}`);
+    emitStep(ctx, 'understand', 'How confident I am|||Confidence assessment', `${Math.round(understanding.confidence * 100)}% confident in requirement interpretation${understanding.confidence < 0.7 ? ' — will proceed cautiously with more generic patterns' : ' — high confidence, proceeding with domain-specific optimizations'}`);
 
     if (isSLMAvailable()) {
-      emitStep(ctx, 'understand', 'SLM enhancing understanding', 'Running AI-enhanced analysis to detect implicit requirements and hidden entities');
+      emitStep(ctx, 'understand', 'Using AI to understand better|||SLM enhancing understanding', 'Running AI-enhanced analysis to detect implicit requirements and hidden entities');
       try {
         const slmResult = await runSLM(UNDERSTANDING_STAGE_ID, {
           userRequest: ctx.userRequest || understanding.level1_intent?.primaryGoal || '',
@@ -348,16 +348,16 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
           ctx.slmStagesRun.push('understand');
           const implicitCount = slmResult.data.implicitRequirements?.length || 0;
           const newEntities = slmResult.data.entities?.filter((e: any) => e.isImplied)?.length || 0;
-          emitStep(ctx, 'understand', 'SLM enhancement complete', `Added ${implicitCount} implicit requirements, ${newEntities} inferred entities (${slmResult.latencyMs}ms)`);
+          emitStep(ctx, 'understand', 'AI analysis done|||SLM enhancement complete', `Added ${implicitCount} implicit requirements, ${newEntities} inferred entities (${slmResult.latencyMs}ms)`);
         } else {
-          emitStep(ctx, 'understand', 'SLM enhancement skipped', slmResult.error || 'No useful enhancements found');
+          emitStep(ctx, 'understand', 'Skipping AI enhancement|||SLM enhancement skipped', slmResult.error || 'No useful enhancements found');
         }
       } catch (err) {
-        emitStep(ctx, 'understand', 'SLM enhancement skipped', `Non-fatal error: ${err}`);
+        emitStep(ctx, 'understand', 'Skipping AI enhancement|||SLM enhancement skipped', `Non-fatal error: ${err}`);
       }
     }
   } else {
-    emitStep(ctx, 'understand', 'Skipping re-analysis', 'No prior understanding data available — the plan will be used as-is');
+    emitStep(ctx, 'understand', 'Moving ahead with what we have|||Skipping re-analysis', 'No prior understanding data available — the plan will be used as-is');
     skippedStages.push('understand');
   }
 
@@ -371,8 +371,8 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
   const pageCount = plan.pages?.length || 0;
   const endpointCount = plan.apiEndpoints?.length || 0;
   const moduleCount = plan.modules?.length || 0;
-  emitStep(ctx, 'plan', 'Project Manager validating plan structure', `Checking completeness: ${entityCount} data models, ${pageCount} pages, ${endpointCount} API endpoints, ${moduleCount} modules`);
-  emitStep(ctx, 'plan', 'Why we validate the plan', 'A weak plan leads to incomplete code — checking entity counts, page coverage, and endpoint mappings ensures the generator has enough blueprints to produce a working app');
+  emitStep(ctx, 'plan', 'Checking your project plan|||Project Manager validating plan structure', `Checking completeness: ${entityCount} data models, ${pageCount} pages, ${endpointCount} API endpoints, ${moduleCount} modules`);
+  emitStep(ctx, 'plan', 'Why we double-check|||Why we validate the plan', 'A weak plan leads to incomplete code — checking entity counts, page coverage, and endpoint mappings ensures the generator has enough blueprints to produce a working app');
   executeStage(ctx, planStage, () => {
     const score = Math.min(100, 50 + entityCount * 5 + pageCount * 5);
     return {
@@ -381,27 +381,27 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
       output: { entities: entityCount, pages: pageCount, endpoints: endpointCount },
     };
   });
-  emitStep(ctx, 'plan', 'Plan assessment', `${entityCount === 0 ? 'Warning: No entities found — the app may lack data persistence' : `Solid foundation with ${entityCount} entities providing full CRUD coverage across ${pageCount} pages`}`);
+  emitStep(ctx, 'plan', 'Plan looks good|||Plan assessment', `${entityCount === 0 ? 'Warning: No entities found — the app may lack data persistence' : `Solid foundation with ${entityCount} entities providing full CRUD coverage across ${pageCount} pages`}`);
 
   // Stage 3: Learning patterns
   const learnStage = PIPELINE_STAGES.find(s => s.id === 'learn')!;
-  emitStep(ctx, 'learn', 'Senior Advisor consulting past experience', 'Searching the learning engine for patterns from previous successful generations that match this project type');
+  emitStep(ctx, 'learn', 'Looking at what worked before|||Senior Advisor consulting past experience', 'Searching the learning engine for patterns from previous successful generations that match this project type');
   executeStage(ctx, learnStage, () => {
     try {
       if (!learningEngine.isLoaded) {
-        emitStep(ctx, 'learn', 'Learning data still loading', 'Database patterns are loading in background — applying default patterns for now');
+        emitStep(ctx, 'learn', 'Still gathering past learnings|||Learning data still loading', 'Database patterns are loading in background — applying default patterns for now');
       }
       ctx.plan = learningEngine.applyLearnedPatterns(deepClonePlan(ctx.plan!));
-      emitStep(ctx, 'learn', 'Patterns applied', 'Enhanced the plan with field naming conventions, relationship patterns, and UI layout preferences from past successes');
+      emitStep(ctx, 'learn', 'Applied what I have learned|||Patterns applied', 'Enhanced the plan with field naming conventions, relationship patterns, and UI layout preferences from past successes');
       return { score: learningEngine.isLoaded ? 80 : 60, warnings: learningEngine.isLoaded ? [] : ['DB patterns may not be fully loaded'], output: 'Applied learned patterns' };
     } catch {
-      emitStep(ctx, 'learn', 'No prior patterns found', 'This appears to be a novel project type — generating fresh patterns from first principles');
+      emitStep(ctx, 'learn', 'Starting fresh|||No prior patterns found', 'This appears to be a novel project type — generating fresh patterns from first principles');
       return { score: 50, warnings: ['No learned patterns available'], output: null };
     }
   });
 
   // Stage 3a: Entity Intelligence — upgrade generic entities with deep field inference + trait composition
-  emitStep(ctx, 'plan', 'Entity Intelligence upgrading data model', `Analyzing ${ctx.plan!.dataModel.length} entities against 55+ archetypes and 20 composable traits to add domain-specific fields, types, and relationships`);
+  emitStep(ctx, 'plan', 'Making your data smarter|||Entity Intelligence upgrading data model', `Analyzing ${ctx.plan!.dataModel.length} entities against 55+ archetypes and 20 composable traits to add domain-specific fields, types, and relationships`);
   const entityIntelligenceCtx: EntityIntelligenceContext = { inferredRelationships: [], upgradedEntities: [] };
   try {
     const entityNames = ctx.plan!.dataModel.map(e => e.name);
@@ -437,62 +437,62 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
       }
     }
     ctx.entityIntelligenceCtx = entityIntelligenceCtx;
-    emitStep(ctx, 'plan', 'Entity Intelligence complete', `Upgraded ${upgraded}/${ctx.plan!.dataModel.length} entities with domain-specific fields and relationships`);
+    emitStep(ctx, 'plan', 'Data model improved|||Entity Intelligence complete', `Upgraded ${upgraded}/${ctx.plan!.dataModel.length} entities with domain-specific fields and relationships`);
   } catch (e) {
-    emitStep(ctx, 'plan', 'Entity Intelligence skipped', 'Field inference unavailable — using base entity definitions');
+    emitStep(ctx, 'plan', 'Using your data as-is|||Entity Intelligence skipped', 'Field inference unavailable — using base entity definitions');
   }
 
   // Stage 3b: UX Flow Planning — generate user journeys
-  emitStep(ctx, 'plan', 'UX Planner designing user journeys', 'Building onboarding flows, CRUD wizards, status transitions, and error handling strategies');
+  emitStep(ctx, 'plan', 'Planning how people will use your app|||UX Planner designing user journeys', 'Building onboarding flows, CRUD wizards, status transitions, and error handling strategies');
   try {
     const uxResult = planUXFlows(ctx.plan!);
     ctx.plan!.uxFlows = uxResult.uxFlows;
     ctx.plan!.errorHandling = uxResult.errorHandling;
-    emitStep(ctx, 'plan', 'UX flows planned', `${uxResult.uxFlows.length} user flows designed | ${uxResult.errorHandling.pageStates.length} page states with empty/error/loading patterns`);
+    emitStep(ctx, 'plan', 'User experience mapped out|||UX flows planned', `${uxResult.uxFlows.length} user flows designed | ${uxResult.errorHandling.pageStates.length} page states with empty/error/loading patterns`);
   } catch (e) {
-    emitStep(ctx, 'plan', 'UX flow planning skipped', 'UX planner unavailable — pages will use default interaction patterns');
+    emitStep(ctx, 'plan', 'Using standard navigation|||UX flow planning skipped', 'UX planner unavailable — pages will use default interaction patterns');
   }
 
   // Stage 3c: Integration Detection — detect needed third-party integrations
-  emitStep(ctx, 'plan', 'Integration Detector scanning for required integrations', 'Analyzing entity fields, page features, and project description for payment, email, file storage, auth, and other integration needs');
+  emitStep(ctx, 'plan', 'Checking if your app needs any services|||Integration Detector scanning for required integrations', 'Analyzing entity fields, page features, and project description for payment, email, file storage, auth, and other integration needs');
   try {
     const userDesc = ctx.plan!.overview || '';
     const integrations = planIntegrations(ctx.plan!, userDesc);
     if (integrations.length > 0) {
       ctx.plan!.integrations = integrations;
-      emitStep(ctx, 'plan', 'Integrations detected', `${integrations.length} integration(s): ${integrations.map(i => i.name).join(', ')}`);
+      emitStep(ctx, 'plan', 'Found services your app needs|||Integrations detected', `${integrations.length} integration(s): ${integrations.map(i => i.name).join(', ')}`);
     } else {
-      emitStep(ctx, 'plan', 'No integrations needed', 'Self-contained application — no external service dependencies detected');
+      emitStep(ctx, 'plan', 'No external services needed|||No integrations needed', 'Self-contained application — no external service dependencies detected');
     }
   } catch (e) {
-    emitStep(ctx, 'plan', 'Integration detection skipped', 'Integration planner unavailable');
+    emitStep(ctx, 'plan', 'Skipping service check|||Integration detection skipped', 'Integration planner unavailable');
   }
 
   // Stage 3d: Security Planning — auth strategy, permissions, rate limiting
-  emitStep(ctx, 'plan', 'Security Planner designing auth and permissions', 'Determining auth strategy, role hierarchy, entity permissions, field visibility, data isolation, and rate limiting');
+  emitStep(ctx, 'plan', 'Setting up security|||Security Planner designing auth and permissions', 'Determining auth strategy, role hierarchy, entity permissions, field visibility, data isolation, and rate limiting');
   try {
     const security = planSecurity(ctx.plan!, ctx.plan!.overview || '');
     ctx.plan!.securityPlan = security;
     const restrictedFields = security.fieldVisibility.length;
     const permCount = security.entityPermissions.length;
-    emitStep(ctx, 'plan', 'Security plan complete', `Auth: ${security.authStrategy} | ${security.roleHierarchy.length} roles | ${permCount} permission rules | ${restrictedFields} restricted fields | ${security.rateLimiting.length} rate limit tiers`);
+    emitStep(ctx, 'plan', 'Security configured|||Security plan complete', `Auth: ${security.authStrategy} | ${security.roleHierarchy.length} roles | ${permCount} permission rules | ${restrictedFields} restricted fields | ${security.rateLimiting.length} rate limit tiers`);
   } catch (e) {
-    emitStep(ctx, 'plan', 'Security planning skipped', 'Security planner unavailable — using default auth patterns');
+    emitStep(ctx, 'plan', 'Using default security|||Security planning skipped', 'Security planner unavailable — using default auth patterns');
   }
 
   // Stage 3e: Performance Planning — pagination, caching, indexing
-  emitStep(ctx, 'plan', 'Performance Planner optimizing data access', 'Planning pagination strategies, caching policies, database indexes, lazy loading, and virtual scrolling targets');
+  emitStep(ctx, 'plan', 'Optimizing for speed|||Performance Planner optimizing data access', 'Planning pagination strategies, caching policies, database indexes, lazy loading, and virtual scrolling targets');
   try {
     const perf = planPerformance(ctx.plan!);
     ctx.plan!.performancePlan = perf;
-    emitStep(ctx, 'plan', 'Performance plan complete', `${perf.pagination.length} pagination configs | ${perf.caching.length} cache policies | ${perf.indexRecommendations.length} index recommendations | ${perf.lazyLoadTargets.length} lazy load targets`);
+    emitStep(ctx, 'plan', 'Speed optimizations ready|||Performance plan complete', `${perf.pagination.length} pagination configs | ${perf.caching.length} cache policies | ${perf.indexRecommendations.length} index recommendations | ${perf.lazyLoadTargets.length} lazy load targets`);
   } catch (e) {
-    emitStep(ctx, 'plan', 'Performance planning skipped', 'Performance planner unavailable — using default strategies');
+    emitStep(ctx, 'plan', 'Using standard performance settings|||Performance planning skipped', 'Performance planner unavailable — using default strategies');
   }
 
   // Stage 4: Semantic reasoning (Flaw 7 fix: skip already-inferred relationships)
   const reasonStage = PIPELINE_STAGES.find(s => s.id === 'reason')!;
-  emitStep(ctx, 'reason', 'Technical Analyst beginning semantic analysis', 'Examining every entity to discover hidden relationships, computed fields, validation rules, and business logic the user implied but didn\'t explicitly state');
+  emitStep(ctx, 'reason', 'Looking for hidden patterns in your idea|||Technical Analyst beginning semantic analysis', 'Examining every entity to discover hidden relationships, computed fields, validation rules, and business logic the user implied but didn\'t explicitly state');
   executeStage(ctx, reasonStage, () => {
     ctx.reasoning = analyzeSemantics(ctx.plan!);
     if (ctx.reasoning && ctx.entityIntelligenceCtx) {
@@ -513,14 +513,14 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
     const computedCount = ctx.reasoning?.computedFields?.length || 0;
     const uiPatternCount = ctx.reasoning?.uiPatterns?.length || 0;
     const skippedRels = ctx.entityIntelligenceCtx?.inferredRelationships.length || 0;
-    emitStep(ctx, 'reason', 'Discovered hidden structure', `Found ${relCount} new relationships (${skippedRels} already inferred by Entity Intelligence), ${computedCount} computed fields, ${ruleCount} business rules, ${uiPatternCount} UI patterns`);
+    emitStep(ctx, 'reason', 'Found additional connections|||Discovered hidden structure', `Found ${relCount} new relationships (${skippedRels} already inferred by Entity Intelligence), ${computedCount} computed fields, ${ruleCount} business rules, ${uiPatternCount} UI patterns`);
     if (relCount > 0) {
       const sampleRels = ctx.reasoning!.relationships.slice(0, 3).map(r => `${r.from} → ${r.to} (${r.cardinality})`).join(', ');
-      emitStep(ctx, 'reason', 'Relationship examples', `Key connections: ${sampleRels}${relCount > 3 ? ` and ${relCount - 3} more` : ''}`);
+      emitStep(ctx, 'reason', 'Key connections found|||Relationship examples', `Key connections: ${sampleRels}${relCount > 3 ? ` and ${relCount - 3} more` : ''}`);
     }
     if (ruleCount > 0) {
       const sampleRules = ctx.reasoning!.businessRules.slice(0, 2).map(r => `${r.ruleName}: ${r.description || r.type}`).join('; ');
-      emitStep(ctx, 'reason', 'Business rules detected', sampleRules);
+      emitStep(ctx, 'reason', 'Business logic identified|||Business rules detected', sampleRules);
     }
     return {
       score: Math.min(100, 60 + relCount * 5 + ruleCount * 3),
@@ -531,16 +531,16 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
 
   if (isSLMAvailable() && ctx.reasoning) {
     try {
-      emitStep(ctx, 'reason', 'SLM deepening semantic analysis', 'AI finding hidden domain patterns, implied business rules, and relationship nuances');
+      emitStep(ctx, 'reason', 'AI looking for more patterns|||SLM deepening semantic analysis', 'AI finding hidden domain patterns, implied business rules, and relationship nuances');
       const slmResult = await runSLM(SEMANTIC_STAGE_ID, { ruleOutput: ctx.reasoning, plan: ctx.plan });
       if (slmResult.success && slmResult.data) {
         ctx.reasoning = mergeSemanticResults(ctx.reasoning, slmResult.data);
         ctx.plan = enrichPlanWithReasoning(ctx.plan!, ctx.reasoning);
         ctx.slmStagesRun.push('reason');
-        emitStep(ctx, 'reason', 'SLM semantic enhancement complete', `${slmResult.latencyMs}ms — enriched relationships and business rules`);
+        emitStep(ctx, 'reason', 'AI pattern analysis done|||SLM semantic enhancement complete', `${slmResult.latencyMs}ms — enriched relationships and business rules`);
       }
     } catch (err) {
-      emitStep(ctx, 'reason', 'SLM semantic enhancement skipped', `Non-fatal: ${err}`);
+      emitStep(ctx, 'reason', 'Skipping extra analysis|||SLM semantic enhancement skipped', `Non-fatal: ${err}`);
     }
   }
 
@@ -595,9 +595,9 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
       lowConfidenceItems,
     };
 
-    emitStep(ctx, 'plan', 'Confidence scoring complete', `Overall: ${Math.round(overall * 100)}% | Entities: ${Math.round(entityConfAvg * 100)}% | UX: ${Math.round(uxConfidence * 100)}% | Security: ${Math.round(secConfidence * 100)}% | ${lowConfidenceItems.length} items flagged for review`);
+    emitStep(ctx, 'plan', 'Plan confidence assessed|||Confidence scoring complete', `Overall: ${Math.round(overall * 100)}% | Entities: ${Math.round(entityConfAvg * 100)}% | UX: ${Math.round(uxConfidence * 100)}% | Security: ${Math.round(secConfidence * 100)}% | ${lowConfidenceItems.length} items flagged for review`);
   } catch (e) {
-    emitStep(ctx, 'plan', 'Confidence scoring skipped', 'Unable to compute confidence scores');
+    emitStep(ctx, 'plan', 'Skipping confidence check|||Confidence scoring skipped', 'Unable to compute confidence scores');
   }
 
   // === PLAN SUMMARY: Emit detailed breakdown before freezing ===
@@ -621,9 +621,9 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
       .map(([mod, pages]) => `**${mod}**: ${pages.join(', ')}`)
       .join(' | ');
 
-    emitStep(ctx, 'plan', 'Modules & pages planned', `${modulePageMap.size} modules · ${planPages.length} pages total — ${moduleBreakdown}`);
-    emitStep(ctx, 'plan', 'Page breakdown', pageList);
-    emitStep(ctx, 'plan', 'Data model summary', `${planEntities.length} entities: ${planEntities.map(e => `${e.name} (${e.fields?.length || 0} fields)`).join(', ')}`);
+    emitStep(ctx, 'plan', 'Pages and sections planned|||Modules & pages planned', `${modulePageMap.size} modules · ${planPages.length} pages total — ${moduleBreakdown}`);
+    emitStep(ctx, 'plan', 'Here are your pages|||Page breakdown', pageList);
+    emitStep(ctx, 'plan', 'Your data structure|||Data model summary', `${planEntities.length} entities: ${planEntities.map(e => `${e.name} (${e.fields?.length || 0} fields)`).join(', ')}`);
   } catch (e) {
     // Non-critical — continue without breakdown
   }
@@ -632,18 +632,18 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
   // Freeze happens AFTER reasoning enrichment so the frozen plan includes
   // all discovered relationships, computed fields, and UI patterns
   ctx.frozenPlan = deepClonePlan(ctx.plan!);
-  emitStep(ctx, 'plan', 'Contract freeze', `Plan locked with ${ctx.plan!.dataModel.length} entities, ${ctx.plan!.pages.length} pages, ${ctx.plan!.apiEndpoints.length} endpoints — all downstream stages work from this frozen snapshot`);
+  emitStep(ctx, 'plan', 'Plan finalized|||Contract freeze', `Plan locked with ${ctx.plan!.dataModel.length} entities, ${ctx.plan!.pages.length} pages, ${ctx.plan!.apiEndpoints.length} endpoints — all downstream stages work from this frozen snapshot`);
 
   // Stage 5: Architecture planning
   const archStage = PIPELINE_STAGES.find(s => s.id === 'architect')!;
-  emitStep(ctx, 'architect', 'System Architect designing application structure', `Analyzing ${entityCount} entities and ${pageCount} pages to determine the optimal folder structure, state management approach, authentication strategy, and data flow patterns`);
-  emitStep(ctx, 'architect', 'Why architecture comes before code', 'Choosing the right patterns upfront (component vs page routing, local vs global state, REST vs nested resources) prevents costly refactoring later and ensures all generated files follow a consistent structure');
+  emitStep(ctx, 'architect', 'Organizing your project|||System Architect designing application structure', `Analyzing ${entityCount} entities and ${pageCount} pages to determine the optimal folder structure, state management approach, authentication strategy, and data flow patterns`);
+  emitStep(ctx, 'architect', 'Why structure matters|||Why architecture comes before code', 'Choosing the right patterns upfront (component vs page routing, local vs global state, REST vs nested resources) prevents costly refactoring later and ensures all generated files follow a consistent structure');
   executeStage(ctx, archStage, () => {
     ctx.architecture = planArchitecture(ctx.plan!, ctx.reasoning, ctx.detectedDomain);
     const decisions = Object.keys(ctx.architecture || {}).length;
     if (ctx.architecture) {
-      emitStep(ctx, 'architect', 'Architecture decisions made', `Pattern: ${ctx.architecture.pattern || 'modular'} | State: ${ctx.architecture.stateManagement?.approach || 'context-based'} | Auth: ${ctx.architecture.authPattern?.type || 'session'} | ${decisions} total architectural decisions`);
-      emitStep(ctx, 'architect', 'Reasoning', `Chose ${ctx.architecture.pattern || 'modular'} pattern because it best fits ${entityCount} entities with ${pageCount} pages — provides clear separation of concerns while keeping the codebase navigable`);
+      emitStep(ctx, 'architect', 'Structure decided|||Architecture decisions made', `Pattern: ${ctx.architecture.pattern || 'modular'} | State: ${ctx.architecture.stateManagement?.approach || 'context-based'} | Auth: ${ctx.architecture.authPattern?.type || 'session'} | ${decisions} total architectural decisions`);
+      emitStep(ctx, 'architect', 'Design reasoning|||Reasoning', `Chose ${ctx.architecture.pattern || 'modular'} pattern because it best fits ${entityCount} entities with ${pageCount} pages — provides clear separation of concerns while keeping the codebase navigable`);
     }
     return {
       score: Math.min(100, 70 + decisions * 3),
@@ -655,8 +655,8 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
   // Stage 6: Design system
   const designStage = PIPELINE_STAGES.find(s => s.id === 'design')!;
   const detectedDomain = understanding?.level2_domain?.primaryDomain?.name || plan.overview || 'general';
-  emitStep(ctx, 'design', 'UI/UX Designer creating visual identity', `Building a domain-aware design system tailored for "${detectedDomain}" — selecting colors, typography, spacing, and component styles that match industry expectations`);
-  emitStep(ctx, 'design', 'Why domain-specific design matters', 'A healthcare app needs calming blues and high contrast for readability; an e-commerce app needs vibrant CTAs and trust signals — the wrong palette makes users feel something is "off" even if the code works perfectly');
+  emitStep(ctx, 'design', 'Choosing colors and style|||UI/UX Designer creating visual identity', `Building a domain-aware design system tailored for "${detectedDomain}" — selecting colors, typography, spacing, and component styles that match industry expectations`);
+  emitStep(ctx, 'design', 'Why the right look matters|||Why domain-specific design matters', 'A healthcare app needs calming blues and high contrast for readability; an e-commerce app needs vibrant CTAs and trust signals — the wrong palette makes users feel something is "off" even if the code works perfectly');
   executeStage(ctx, designStage, () => {
     ctx.designSystem = generateDesignSystem(ctx.plan!, ctx.reasoning);
     const hasColors = ctx.designSystem?.primaryColor ? true : false;
@@ -664,8 +664,8 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
       const primaryHex = ctx.designSystem.primaryColor?.['500'] || ctx.designSystem.lightTokens?.primary || 'auto';
       const fontFamily = ctx.designSystem.typography?.fontFamily || 'system';
       const isDark = ctx.designSystem.defaultMode === 'dark';
-      emitStep(ctx, 'design', 'Design system created', `Theme: "${ctx.designSystem.name || 'Custom'}" | Primary: ${primaryHex} | Typography: ${fontFamily} | Dark mode: ${isDark ? 'enabled' : 'disabled'}`);
-      emitStep(ctx, 'design', 'Color rationale', `Selected ${primaryHex} as primary because it aligns with ${detectedDomain} domain conventions and provides sufficient contrast for accessibility (WCAG AA)`);
+      emitStep(ctx, 'design', 'Visual style ready|||Design system created', `Theme: "${ctx.designSystem.name || 'Custom'}" | Primary: ${primaryHex} | Typography: ${fontFamily} | Dark mode: ${isDark ? 'enabled' : 'disabled'}`);
+      emitStep(ctx, 'design', 'Color choices explained|||Color rationale', `Selected ${primaryHex} as primary because it aligns with ${detectedDomain} domain conventions and provides sufficient contrast for accessibility (WCAG AA)`);
     }
     return {
       score: hasColors ? 95 : 70,
@@ -676,22 +676,22 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
 
   if (isSLMAvailable() && ctx.designSystem) {
     try {
-      emitStep(ctx, 'design', 'SLM refining design system', 'AI enhancing color rationale, typography choices, and domain-specific visual patterns');
+      emitStep(ctx, 'design', 'AI polishing the design|||SLM refining design system', 'AI enhancing color rationale, typography choices, and domain-specific visual patterns');
       const slmResult = await runSLM(DESIGN_STAGE_ID, { ruleOutput: ctx.designSystem, plan: ctx.plan });
       if (slmResult.success && slmResult.data) {
         ctx.designSystem = mergeDesignResults(ctx.designSystem, slmResult.data);
         ctx.slmStagesRun.push('design');
-        emitStep(ctx, 'design', 'SLM design enhancement complete', `${slmResult.latencyMs}ms — refined visual tokens`);
+        emitStep(ctx, 'design', 'Design polished|||SLM design enhancement complete', `${slmResult.latencyMs}ms — refined visual tokens`);
       }
     } catch (err) {
-      emitStep(ctx, 'design', 'SLM design enhancement skipped', `Non-fatal: ${err}`);
+      emitStep(ctx, 'design', 'Skipping design polish|||SLM design enhancement skipped', `Non-fatal: ${err}`);
     }
   }
 
   // Stage 7: Functionality specification
   const specStage = PIPELINE_STAGES.find(s => s.id === 'specify')!;
-  emitStep(ctx, 'specify', 'Feature Analyst mapping entity capabilities', `Classifying each entity type to determine what interactive features it needs — CRUD enhancements, data display modes, search/filter options, batch operations, and automation triggers`);
-  emitStep(ctx, 'specify', 'Why entity classification drives features', 'A "Product" entity needs image uploads and price formatting; a "User" entity needs role-based access and password hashing — the same CRUD operation looks completely different depending on what the entity represents');
+  emitStep(ctx, 'specify', 'Deciding what features each part needs|||Feature Analyst mapping entity capabilities', `Classifying each entity type to determine what interactive features it needs — CRUD enhancements, data display modes, search/filter options, batch operations, and automation triggers`);
+  emitStep(ctx, 'specify', 'Why features depend on data type|||Why entity classification drives features', 'A "Product" entity needs image uploads and price formatting; a "User" entity needs role-based access and password hashing — the same CRUD operation looks completely different depending on what the entity represents');
   executeStage(ctx, specStage, () => {
     ctx.functionalitySpec = generateFunctionalitySpec(ctx.plan!, ctx.reasoning!);
     const entityFeatureCount = ctx.functionalitySpec?.entityFeatures?.length || 0;
@@ -701,10 +701,10 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
         const featureNames = ef.features?.slice(0, 2).map((f: any) => f.name || f).join(', ') || 'standard CRUD';
         return `${ef.entityName}: ${featureNames}`;
       }).join(' | ');
-      emitStep(ctx, 'specify', 'Feature mapping', `${entityFeatureCount} entities analyzed: ${sampleFeatures}`);
+      emitStep(ctx, 'specify', 'Features mapped|||Feature mapping', `${entityFeatureCount} entities analyzed: ${sampleFeatures}`);
     }
     if (globalFeatures) {
-      emitStep(ctx, 'specify', 'Global features identified', `Cross-entity features: ${Array.isArray(globalFeatures) ? globalFeatures.map((g: any) => g.name || g).join(', ') : 'dashboard analytics, search, notifications'}`);
+      emitStep(ctx, 'specify', 'Shared features identified|||Global features identified', `Cross-entity features: ${Array.isArray(globalFeatures) ? globalFeatures.map((g: any) => g.name || g).join(', ') : 'dashboard analytics, search, notifications'}`);
     }
     return {
       score: Math.min(100, 60 + entityFeatureCount * 8),
@@ -715,22 +715,22 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
 
   // Stage 8: Schema design
   const schemaStage = PIPELINE_STAGES.find(s => s.id === 'schema')!;
-  emitStep(ctx, 'schema', 'Database Engineer designing normalized schema', `Converting ${entityCount} entities into production-grade database tables with proper column types, indexes, foreign keys, constraints, and audit trails`);
-  emitStep(ctx, 'schema', 'Why schema design is separate from planning', 'The plan says "User has orders" — the schema engineer decides: integer vs UUID primary keys, created_at/updated_at timestamps, soft delete columns, composite indexes for common queries, and junction tables for many-to-many relationships');
+  emitStep(ctx, 'schema', 'Setting up your database|||Database Engineer designing normalized schema', `Converting ${entityCount} entities into production-grade database tables with proper column types, indexes, foreign keys, constraints, and audit trails`);
+  emitStep(ctx, 'schema', 'Why the database needs special attention|||Why schema design is separate from planning', 'The plan says "User has orders" — the schema engineer decides: integer vs UUID primary keys, created_at/updated_at timestamps, soft delete columns, composite indexes for common queries, and junction tables for many-to-many relationships');
   executeStage(ctx, schemaStage, () => {
     ctx.schemaDesign = designSchema(ctx.plan!, ctx.reasoning, ctx.detectedDomain);
     const tableCount = ctx.schemaDesign?.tables?.length || 0;
     const indexCount = ctx.schemaDesign?.tables?.reduce((sum: number, t: { indexes?: unknown[] }) => sum + (t.indexes?.length || 0), 0) || 0;
     const junctionCount = ctx.schemaDesign?.junctionTables?.length || 0;
-    emitStep(ctx, 'schema', 'Schema decisions', `${tableCount} tables designed with ${indexCount} indexes for query performance | ${junctionCount} junction tables for many-to-many relationships`);
+    emitStep(ctx, 'schema', 'Database tables ready|||Schema decisions', `${tableCount} tables designed with ${indexCount} indexes for query performance | ${junctionCount} junction tables for many-to-many relationships`);
     if (tableCount > 0) {
       const sampleTables = ctx.schemaDesign!.tables!.slice(0, 3).map((t: any) => {
         const colCount = t.columns?.length || 0;
         return `${t.name} (${colCount} columns)`;
       }).join(', ');
-      emitStep(ctx, 'schema', 'Table structure', `Key tables: ${sampleTables}${tableCount > 3 ? ` + ${tableCount - 3} more` : ''}`);
+      emitStep(ctx, 'schema', 'Key tables|||Table structure', `Key tables: ${sampleTables}${tableCount > 3 ? ` + ${tableCount - 3} more` : ''}`);
     }
-    emitStep(ctx, 'schema', 'Indexing strategy', `Added ${indexCount} indexes — prioritizing foreign keys and frequently-filtered columns to keep queries fast as data grows`);
+    emitStep(ctx, 'schema', 'Database search optimization|||Indexing strategy', `Added ${indexCount} indexes — prioritizing foreign keys and frequently-filtered columns to keep queries fast as data grows`);
     return {
       score: Math.min(100, 60 + tableCount * 5 + indexCount * 2),
       warnings: [],
@@ -740,30 +740,30 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
 
   if (isSLMAvailable() && ctx.schemaDesign) {
     try {
-      emitStep(ctx, 'schema', 'SLM reviewing schema design', 'AI checking for missing indexes, constraint improvements, and normalization opportunities');
+      emitStep(ctx, 'schema', 'AI reviewing database design|||SLM reviewing schema design', 'AI checking for missing indexes, constraint improvements, and normalization opportunities');
       const slmResult = await runSLM(SCHEMA_STAGE_ID, { ruleOutput: ctx.schemaDesign, plan: ctx.plan });
       if (slmResult.success && slmResult.data && validateSchemaPatch(slmResult.data, ctx.schemaDesign)) {
         ctx.schemaDesign = { ...ctx.schemaDesign, ...slmResult.data };
         ctx.slmStagesRun.push('schema');
-        emitStep(ctx, 'schema', 'SLM schema improvement complete', `${slmResult.latencyMs}ms — schema hardened`);
+        emitStep(ctx, 'schema', 'Database design improved|||SLM schema improvement complete', `${slmResult.latencyMs}ms — schema hardened`);
       }
     } catch (err) {
-      emitStep(ctx, 'schema', 'SLM schema improvement skipped', `Non-fatal: ${err}`);
+      emitStep(ctx, 'schema', 'Skipping database review|||SLM schema improvement skipped', `Non-fatal: ${err}`);
     }
   }
 
   // Stage 9: API design
   const apiStage = PIPELINE_STAGES.find(s => s.id === 'api')!;
-  emitStep(ctx, 'api', 'API Architect designing RESTful endpoints', `Creating a complete API layer based on ${entityCount} entities — CRUD routes, search endpoints, nested resources, batch operations, validation schemas, and error handling`);
-  emitStep(ctx, 'api', 'Why dedicated API design', 'Auto-generated CRUD is not enough — the API architect adds pagination, sorting, filtering, proper HTTP status codes, Zod validation, rate limiting, and standardized error responses that make the API production-ready');
+  emitStep(ctx, 'api', 'Creating your app communication layer|||API Architect designing RESTful endpoints', `Creating a complete API layer based on ${entityCount} entities — CRUD routes, search endpoints, nested resources, batch operations, validation schemas, and error handling`);
+  emitStep(ctx, 'api', 'Why the API matters|||Why dedicated API design', 'Auto-generated CRUD is not enough — the API architect adds pagination, sorting, filtering, proper HTTP status codes, Zod validation, rate limiting, and standardized error responses that make the API production-ready');
   executeStage(ctx, apiStage, () => {
     ctx.apiDesign = designAPI(ctx.plan!, ctx.reasoning, ctx.schemaDesign, ctx.detectedDomain);
     const routeCount = ctx.apiDesign?.routes?.length || 0;
     const middlewareCount = ctx.apiDesign?.middleware?.length || 0;
-    emitStep(ctx, 'api', 'API structure', `${routeCount} routes designed with ${middlewareCount} middleware layers | Includes validation, error handling, and pagination for all list endpoints`);
+    emitStep(ctx, 'api', 'API routes ready|||API structure', `${routeCount} routes designed with ${middlewareCount} middleware layers | Includes validation, error handling, and pagination for all list endpoints`);
     if (routeCount > 0) {
       const sampleRoutes = ctx.apiDesign!.routes!.slice(0, 4).map((r: any) => `${r.method} ${r.path}`).join(', ');
-      emitStep(ctx, 'api', 'Route examples', sampleRoutes + (routeCount > 4 ? ` + ${routeCount - 4} more` : ''));
+      emitStep(ctx, 'api', 'Sample routes|||Route examples', sampleRoutes + (routeCount > 4 ? ` + ${routeCount - 4} more` : ''));
     }
     return {
       score: Math.min(100, 60 + routeCount * 3),
@@ -774,32 +774,32 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
 
   if (isSLMAvailable() && ctx.apiDesign) {
     try {
-      emitStep(ctx, 'api', 'SLM improving API design', 'AI adding missing endpoints, rate limiting hints, and security improvements');
+      emitStep(ctx, 'api', 'AI improving the API|||SLM improving API design', 'AI adding missing endpoints, rate limiting hints, and security improvements');
       const slmResult = await runSLM(API_STAGE_ID, { ruleOutput: ctx.apiDesign, plan: ctx.plan });
       if (slmResult.success && slmResult.data && validateAPIPatch(slmResult.data, ctx.apiDesign)) {
         ctx.apiDesign = { ...ctx.apiDesign, ...slmResult.data };
         ctx.slmStagesRun.push('api');
-        emitStep(ctx, 'api', 'SLM API improvement complete', `${slmResult.latencyMs}ms — API hardened`);
+        emitStep(ctx, 'api', 'API improved|||SLM API improvement complete', `${slmResult.latencyMs}ms — API hardened`);
       }
     } catch (err) {
-      emitStep(ctx, 'api', 'SLM API improvement skipped', `Non-fatal: ${err}`);
+      emitStep(ctx, 'api', 'Skipping API review|||SLM API improvement skipped', `Non-fatal: ${err}`);
     }
   }
 
   // Stage 10: Component composition
   const composeStage = PIPELINE_STAGES.find(s => s.id === 'compose')!;
-  emitStep(ctx, 'compose', 'UI Engineer composing component tree', `Planning the complete React component hierarchy — layout wrappers, shared presentational components, per-entity containers, context boundaries, custom hooks, and accessibility attributes`);
-  emitStep(ctx, 'compose', 'Why component composition before code generation', 'Deciding component boundaries first prevents code duplication — shared components (SearchBar, DataTable, FormField) are identified now so the generator creates them once and imports them everywhere instead of copy-pasting code');
+  emitStep(ctx, 'compose', 'Planning your app\'s interface|||UI Engineer composing component tree', `Planning the complete React component hierarchy — layout wrappers, shared presentational components, per-entity containers, context boundaries, custom hooks, and accessibility attributes`);
+  emitStep(ctx, 'compose', 'Why we plan the interface first|||Why component composition before code generation', 'Deciding component boundaries first prevents code duplication — shared components (SearchBar, DataTable, FormField) are identified now so the generator creates them once and imports them everywhere instead of copy-pasting code');
   executeStage(ctx, composeStage, () => {
     ctx.componentTree = composeComponents(ctx.plan!, ctx.reasoning, ctx.functionalitySpec, ctx.designSystem, ctx.detectedDomain);
     const componentCount = ctx.componentTree?.components?.length || 0;
     const layoutCount = ctx.componentTree?.layouts?.length || 0;
-    emitStep(ctx, 'compose', 'Component tree built', `${componentCount} components planned across ${layoutCount} layout templates | Shared components identified for reuse, per-entity containers for isolation`);
+    emitStep(ctx, 'compose', 'Interface components planned|||Component tree built', `${componentCount} components planned across ${layoutCount} layout templates | Shared components identified for reuse, per-entity containers for isolation`);
     if (componentCount > 0) {
       const sampleComponents = ctx.componentTree!.components!.slice(0, 5).map((c: any) => c.name || c).join(', ');
-      emitStep(ctx, 'compose', 'Key components', sampleComponents + (componentCount > 5 ? ` + ${componentCount - 5} more` : ''));
+      emitStep(ctx, 'compose', 'Main components|||Key components', sampleComponents + (componentCount > 5 ? ` + ${componentCount - 5} more` : ''));
     }
-    emitStep(ctx, 'compose', 'Accessibility & responsiveness', 'All components include ARIA labels, keyboard navigation, and responsive breakpoints — mobile-first design with desktop enhancements');
+    emitStep(ctx, 'compose', 'Making it work on all devices|||Accessibility & responsiveness', 'All components include ARIA labels, keyboard navigation, and responsive breakpoints — mobile-first design with desktop enhancements');
     return {
       score: Math.min(100, 60 + componentCount * 2),
       warnings: [],
@@ -809,15 +809,15 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
 
   if (isSLMAvailable() && ctx.componentTree) {
     try {
-      emitStep(ctx, 'compose', 'SLM optimizing component tree', 'AI identifying reuse opportunities, prop interface improvements, and accessibility gaps');
+      emitStep(ctx, 'compose', 'AI refining the interface|||SLM optimizing component tree', 'AI identifying reuse opportunities, prop interface improvements, and accessibility gaps');
       const slmResult = await runSLM(COMPONENT_STAGE_ID, { ruleOutput: ctx.componentTree, plan: ctx.plan });
       if (slmResult.success && slmResult.data && validateComponentPatch(slmResult.data, ctx.componentTree)) {
         ctx.componentTree = { ...ctx.componentTree, ...slmResult.data };
         ctx.slmStagesRun.push('compose');
-        emitStep(ctx, 'compose', 'SLM component optimization complete', `${slmResult.latencyMs}ms — component tree refined`);
+        emitStep(ctx, 'compose', 'Interface refined|||SLM component optimization complete', `${slmResult.latencyMs}ms — component tree refined`);
       }
     } catch (err) {
-      emitStep(ctx, 'compose', 'SLM component optimization skipped', `Non-fatal: ${err}`);
+      emitStep(ctx, 'compose', 'Skipping interface refinement|||SLM component optimization skipped', `Non-fatal: ${err}`);
     }
   }
 
@@ -826,8 +826,8 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
 
   // Stage 11: Code generation (the main event)
   const genStage = PIPELINE_STAGES.find(s => s.id === 'generate')!;
-  emitStep(ctx, 'generate', 'Full-Stack Developer beginning code generation', `Synthesizing all prior analysis into actual source files — config, app shell, database schema, API routes, React pages, shared components, styles, and utilities`);
-  emitStep(ctx, 'generate', 'Why this stage uses all prior outputs', 'Every previous module enriched the plan — the generator now has architecture patterns, design tokens, schema definitions, API contracts, and component specs to produce code that is internally consistent and production-ready');
+  emitStep(ctx, 'generate', 'Writing your code|||Full-Stack Developer beginning code generation', `Synthesizing all prior analysis into actual source files — config, app shell, database schema, API routes, React pages, shared components, styles, and utilities`);
+  emitStep(ctx, 'generate', 'Why everything comes together here|||Why this stage uses all prior outputs', 'Every previous module enriched the plan — the generator now has architecture patterns, design tokens, schema definitions, API contracts, and component specs to produce code that is internally consistent and production-ready');
   executeStage(ctx, genStage, () => {
     const enrichment = {
       architecture: ctx.architecture,
@@ -841,7 +841,7 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
     };
     const planForGeneration = ctx.frozenPlan || ctx.plan!;
     ctx.files = generateProjectFromPlan(planForGeneration, (phase, detail) => {
-      emitStep(ctx, 'generate', `[${phase}] ${detail}`, undefined);
+      emitStep(ctx, 'generate', `Working on it|||[${phase}] ${detail}`, undefined);
     }, enrichment);
     const fileCount = ctx.files.length;
     const lineCount = ctx.files.reduce((sum, f) => sum + f.content.split('\n').length, 0);
@@ -851,8 +851,8 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
     const tsFiles = ctx.files.filter(f => f.path.endsWith('.ts') && !f.path.endsWith('.tsx')).length;
     const cssFiles = ctx.files.filter(f => f.path.endsWith('.css')).length;
     const jsonFiles = ctx.files.filter(f => f.path.endsWith('.json')).length;
-    emitStep(ctx, 'generate', 'Code generation complete', `${fileCount} files created (${lineCount.toLocaleString()} lines) | ${tsxFiles} React components, ${tsFiles} TypeScript modules, ${cssFiles} stylesheets, ${jsonFiles} config files`);
-    emitStep(ctx, 'generate', 'File breakdown', `Frontend: pages, components, hooks, utils | Backend: routes, storage, middleware, validators | Config: package.json, tsconfig, vite.config, tailwind.config`);
+    emitStep(ctx, 'generate', 'Your code is ready|||Code generation complete', `${fileCount} files created (${lineCount.toLocaleString()} lines) | ${tsxFiles} React components, ${tsFiles} TypeScript modules, ${cssFiles} stylesheets, ${jsonFiles} config files`);
+    emitStep(ctx, 'generate', 'Files created|||File breakdown', `Frontend: pages, components, hooks, utils | Backend: routes, storage, middleware, validators | Config: package.json, tsconfig, vite.config, tailwind.config`);
     return {
       score: Math.min(100, 50 + fileCount * 2),
       warnings: fileCount < 10 ? ['Low file count - project may be incomplete'] : [],
@@ -861,7 +861,7 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
   }, 1);
 
   if (isSLMAvailable() && ctx.files.length > 0) {
-    emitStep(ctx, 'generate', 'SLM enhancing function bodies', 'AI micro-writer improving logic, validation, and error handling in generated code');
+    emitStep(ctx, 'generate', 'AI improving the code|||SLM enhancing function bodies', 'AI micro-writer improving logic, validation, and error handling in generated code');
     try {
       const slmResult = await runSLM<{ enhancements: CodeEnhancement[] }>(CODEGEN_STAGE_ID, {
         files: ctx.files,
@@ -873,22 +873,22 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
           const result = applyCodeEnhancements(ctx.files, validEnhancements);
           ctx.files = result.files;
           ctx.slmStagesRun.push('generate');
-          emitStep(ctx, 'generate', 'SLM code enhancement complete', `${result.applied} enhancements applied, ${result.rejected} rejected (${slmResult.latencyMs}ms)`);
+          emitStep(ctx, 'generate', 'Code improved|||SLM code enhancement complete', `${result.applied} enhancements applied, ${result.rejected} rejected (${slmResult.latencyMs}ms)`);
         } else {
-          emitStep(ctx, 'generate', 'SLM code enhancement skipped', 'No valid enhancements met safety criteria');
+          emitStep(ctx, 'generate', 'Skipping code improvements|||SLM code enhancement skipped', 'No valid enhancements met safety criteria');
         }
       } else {
-        emitStep(ctx, 'generate', 'SLM code enhancement skipped', slmResult.error || 'No enhancements returned');
+        emitStep(ctx, 'generate', 'Skipping code improvements|||SLM code enhancement skipped', slmResult.error || 'No enhancements returned');
       }
     } catch (err) {
-      emitStep(ctx, 'generate', 'SLM code enhancement skipped', `Non-fatal error: ${err}`);
+      emitStep(ctx, 'generate', 'Skipping code improvements|||SLM code enhancement skipped', `Non-fatal error: ${err}`);
     }
   }
 
   // Stage 12: Dependency resolution
   const resolveStage = PIPELINE_STAGES.find(s => s.id === 'resolve')!;
-  emitStep(ctx, 'resolve', 'DevOps Engineer resolving dependencies', 'Scanning all generated files to detect every imported package, verify version compatibility, estimate bundle size, and ensure no conflicting versions exist');
-  emitStep(ctx, 'resolve', 'Why dependency resolution matters', 'A missing or wrong-version dependency causes immediate build failure — this module cross-references every import statement against a known package registry to catch issues before the user tries to run the app');
+  emitStep(ctx, 'resolve', 'Setting up project packages|||DevOps Engineer resolving dependencies', 'Scanning all generated files to detect every imported package, verify version compatibility, estimate bundle size, and ensure no conflicting versions exist');
+  emitStep(ctx, 'resolve', 'Why packages matter|||Why dependency resolution matters', 'A missing or wrong-version dependency causes immediate build failure — this module cross-references every import statement against a known package registry to catch issues before the user tries to run the app');
   executeStage(ctx, resolveStage, () => {
     ctx.dependencyManifest = resolveDependencies(ctx.plan!, ctx.files, ctx.detectedDomain);
     const pkgFile = ctx.files.find(f => f.path === 'package.json');
@@ -908,12 +908,12 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
         const depCount = Object.keys(pkg.dependencies || {}).length;
         const devDepCount = Object.keys(pkg.devDependencies || {}).length;
         const scriptCount = Object.keys(pkg.scripts || {}).length;
-        emitStep(ctx, 'resolve', 'Package.json updated', `${depCount} production dependencies + ${devDepCount} dev dependencies + ${scriptCount} scripts | All versions pinned for reproducible builds`);
+        emitStep(ctx, 'resolve', 'Packages configured|||Package.json updated', `${depCount} production dependencies + ${devDepCount} dev dependencies + ${scriptCount} scripts | All versions pinned for reproducible builds`);
       } catch {}
     }
     const warningCount = ctx.dependencyManifest?.warnings?.length || 0;
     if (warningCount > 0) {
-      emitStep(ctx, 'resolve', 'Dependency warnings', `${warningCount} potential issues found — ${ctx.dependencyManifest!.warnings!.slice(0, 2).join('; ')}`);
+      emitStep(ctx, 'resolve', 'Package warnings|||Dependency warnings', `${warningCount} potential issues found — ${ctx.dependencyManifest!.warnings!.slice(0, 2).join('; ')}`);
     }
     return {
       score: 85,
@@ -924,17 +924,17 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
 
   // Stage 13: Code quality review
   const qualityStage = PIPELINE_STAGES.find(s => s.id === 'quality')!;
-  emitStep(ctx, 'quality', 'Code Reviewer performing quality analysis', `Scanning ${ctx.files.length} files across 8 quality categories: TypeScript correctness, React patterns, error handling, UI states, performance, accessibility, code style, and security`);
-  emitStep(ctx, 'quality', 'Why automated code review', 'Catches common mistakes before the user sees them — unused imports, missing error boundaries, unhandled loading states, unsafe innerHTML, missing alt text, and other issues that would fail a real code review');
+  emitStep(ctx, 'quality', 'Reviewing code quality|||Code Reviewer performing quality analysis', `Scanning ${ctx.files.length} files across 8 quality categories: TypeScript correctness, React patterns, error handling, UI states, performance, accessibility, code style, and security`);
+  emitStep(ctx, 'quality', 'Why code review matters|||Why automated code review', 'Catches common mistakes before the user sees them — unused imports, missing error boundaries, unhandled loading states, unsafe innerHTML, missing alt text, and other issues that would fail a real code review');
   executeStage(ctx, qualityStage, () => {
     ctx.qualityReport = analyzeCodeQuality(ctx.files, ctx.plan!, ctx.detectedDomain);
     if (ctx.qualityReport?.fixes && ctx.qualityReport.fixes.length > 0) {
-      emitStep(ctx, 'quality', 'Auto-fixing issues', `Found ${ctx.qualityReport.fixes.length} fixable issues — applying automatic corrections to maintain quality standards`);
+      emitStep(ctx, 'quality', 'Fixing issues automatically|||Auto-fixing issues', `Found ${ctx.qualityReport.fixes.length} fixable issues — applying automatic corrections to maintain quality standards`);
       ctx.files = applyQualityFixes(ctx.files, ctx.qualityReport.fixes);
     }
     const issueCount = ctx.qualityReport?.issues?.length || 0;
     const grade = ctx.qualityReport?.grade || 'N/A';
-    emitStep(ctx, 'quality', 'Quality assessment', `Grade: ${grade} | Score: ${ctx.qualityReport?.overallScore || 0}/100 | ${issueCount} issues found${ctx.qualityReport?.fixes?.length ? `, ${ctx.qualityReport.fixes.length} auto-fixed` : ''}`);
+    emitStep(ctx, 'quality', 'Quality report|||Quality assessment', `Grade: ${grade} | Score: ${ctx.qualityReport?.overallScore || 0}/100 | ${issueCount} issues found${ctx.qualityReport?.fixes?.length ? `, ${ctx.qualityReport.fixes.length} auto-fixed` : ''}`);
     return {
       score: ctx.qualityReport?.overallScore || 75,
       warnings: ctx.qualityReport?.warnings || [],
@@ -944,26 +944,26 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
 
   // Stage 14: Test generation
   const testStage = PIPELINE_STAGES.find(s => s.id === 'test')!;
-  emitStep(ctx, 'test', 'QA Engineer generating test suite', `Creating Vitest test files for API routes, component rendering, form validation, entity relationships, and security checks based on the ${entityCount} entities and ${endpointCount} endpoints`);
-  emitStep(ctx, 'test', 'Why tests are generated automatically', 'Tests catch regressions when the user modifies code — API route tests verify CRUD operations, component tests check rendering, and validation tests ensure business rules are enforced');
+  emitStep(ctx, 'test', 'Creating tests for your app|||QA Engineer generating test suite', `Creating Vitest test files for API routes, component rendering, form validation, entity relationships, and security checks based on the ${entityCount} entities and ${endpointCount} endpoints`);
+  emitStep(ctx, 'test', 'Why tests are important|||Why tests are generated automatically', 'Tests catch regressions when the user modifies code — API route tests verify CRUD operations, component tests check rendering, and validation tests ensure business rules are enforced');
   executeStage(ctx, testStage, () => {
     try {
       ctx.testFiles = generateTestFiles(ctx.plan!, ctx.reasoning!, ctx.detectedDomain);
-      emitStep(ctx, 'test', 'Test suite created', `${ctx.testFiles.length} test files generated — covering API endpoints, component rendering, data validation, and security assertions`);
+      emitStep(ctx, 'test', 'Tests created|||Test suite created', `${ctx.testFiles.length} test files generated — covering API endpoints, component rendering, data validation, and security assertions`);
       return {
         score: Math.min(100, 60 + ctx.testFiles.length * 5),
         warnings: [],
         output: { testFiles: ctx.testFiles.length },
       };
     } catch {
-      emitStep(ctx, 'test', 'Test generation partial', 'Some test files could not be generated — the core tests are still included');
+      emitStep(ctx, 'test', 'Some tests created|||Test generation partial', 'Some test files could not be generated — the core tests are still included');
       return { score: 40, warnings: ['Test generation encountered issues'], output: { testFiles: 0 } };
     }
   });
 
   // Stage 15: Validation & auto-fix with feedback loop
   const validateStage = PIPELINE_STAGES.find(s => s.id === 'validate')!;
-  emitStep(ctx, 'validate', 'Release Engineer running validation passes', `Multi-pass validation: checking all imports resolve, exports match, dependencies exist in package.json, TypeScript types align, and no circular references exist across ${ctx.files.length} files`);
+  emitStep(ctx, 'validate', 'Checking everything works together|||Release Engineer running validation passes', `Multi-pass validation: checking all imports resolve, exports match, dependencies exist in package.json, TypeScript types align, and no circular references exist across ${ctx.files.length} files`);
   executeStage(ctx, validateStage, () => {
     const MAX_VALIDATION_PASSES = 3;
     let currentResult = validateAndFix(ctx.files, 1);
@@ -1017,7 +1017,7 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
           if (viteFixesApplied > 0) {
             totalFixCount += viteFixesApplied;
             totalPasses++;
-            emitStep(ctx, 'validate', `Vite error fixer applied (pass ${totalPasses})`, `${viteFixesApplied} Vite-specific fixes applied`);
+            emitStep(ctx, 'validate', `Fixed build issues|||Vite error fixer applied (pass ${totalPasses})`, `${viteFixesApplied} Vite-specific fixes applied`);
             if (totalPasses < MAX_VALIDATION_PASSES) {
               currentResult = validateAndFix(ctx.files, 1);
               ctx.files = currentResult.files;
@@ -1031,7 +1031,7 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
 
     const currentUnfixed = (currentResult.issues || []).filter(i => i.severity === 'error');
     if (currentUnfixed.length > 0 && ctx.plan && ctx.reasoning) {
-      emitStep(ctx, 'validate', 'Feedback loop activated', `${currentUnfixed.length} unfixed errors detected — attempting targeted regeneration of affected files`);
+      emitStep(ctx, 'validate', 'Fixing remaining issues|||Feedback loop activated', `${currentUnfixed.length} unfixed errors detected — attempting targeted regeneration of affected files`);
       const affectedPaths = Array.from(new Set(currentUnfixed.map(i => i.file).filter(Boolean)));
       let regenerated = 0;
       for (const affectedPath of affectedPaths) {
@@ -1058,12 +1058,12 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
       }
       if (regenerated > 0 && totalPasses < MAX_VALIDATION_PASSES) {
         totalPasses++;
-        emitStep(ctx, 'validate', `Feedback regeneration complete (pass ${totalPasses})`, `Re-generated ${regenerated} files — running re-validation`);
+        emitStep(ctx, 'validate', `Issues addressed|||Feedback regeneration complete (pass ${totalPasses})`, `Re-generated ${regenerated} files — running re-validation`);
         currentResult = validateAndFix(ctx.files, 1);
         ctx.files = currentResult.files;
         totalFixCount += currentResult.fixesApplied?.length || 0;
         const newErrorCount = (currentResult.issues || []).filter(i => i.severity === 'error').length;
-        emitStep(ctx, 'validate', 'Re-validation result', `${newErrorCount} errors remaining (was ${currentUnfixed.length})`);
+        emitStep(ctx, 'validate', 'Re-check results|||Re-validation result', `${newErrorCount} errors remaining (was ${currentUnfixed.length})`);
       }
     }
 
@@ -1078,11 +1078,11 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
       unfixableIssues: finalErrors.map(i => i.message),
     };
 
-    emitStep(ctx, 'validate', 'Validation complete', `${totalPasses} pass${totalPasses !== 1 ? 'es' : ''} | ${totalIssueCount} issues found, ${totalFixCount} auto-fixed | Result: ${isValid ? 'All imports and exports verified' : `${finalErrors.length} issues remain — review recommended`}`);
+    emitStep(ctx, 'validate', 'All checks done|||Validation complete', `${totalPasses} pass${totalPasses !== 1 ? 'es' : ''} | ${totalIssueCount} issues found, ${totalFixCount} auto-fixed | Result: ${isValid ? 'All imports and exports verified' : `${finalErrors.length} issues remain — review recommended`}`);
     if (totalFixCount > 0) {
       const allFixes = currentResult.fixesApplied || [];
       const sampleFixes = allFixes.slice(0, 3).join('; ');
-      emitStep(ctx, 'validate', 'Fixes applied', sampleFixes + (totalFixCount > 3 ? ` + ${totalFixCount - 3} more` : ''));
+      emitStep(ctx, 'validate', 'Fixes applied|||Fixes applied', sampleFixes + (totalFixCount > 3 ? ` + ${totalFixCount - 3} more` : ''));
     }
     return {
       score: isValid ? 95 : 65,
@@ -1094,7 +1094,7 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
   } catch (pipelineErr) {
     const errMsg = pipelineErr instanceof Error ? pipelineErr.message : String(pipelineErr);
     console.error(`[Pipeline] Critical failure during generation stages: ${errMsg}`);
-    emitStep(ctx, 'orchestrator', 'Generation pipeline failed — attempting fallback generation',
+    emitStep(ctx, 'orchestrator', 'Trying alternative approach|||Generation pipeline failed — attempting fallback generation',
       `Critical error: ${errMsg}. Running minimal generation with reasoning + design system only.`);
 
     try {
@@ -1112,18 +1112,18 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
         detectedDomain: ctx.detectedDomain,
       };
       ctx.files = generateProjectFromPlan(ctx.plan!, (phase, detail) => {
-        emitStep(ctx, 'generate-fallback', `[fallback:${phase}] ${detail}`, undefined);
+        emitStep(ctx, 'generate-fallback', `Working on it|||[fallback:${phase}] ${detail}`, undefined);
       }, fallbackEnrichment);
       const fileCount = ctx.files.length;
       const lineCount = ctx.files.reduce((sum, f) => sum + f.content.split('\n').length, 0);
       ctx.metrics.fileCount = fileCount;
       ctx.metrics.lineCount = lineCount;
-      emitStep(ctx, 'orchestrator', 'Fallback generation succeeded',
+      emitStep(ctx, 'orchestrator', 'Alternative approach worked|||Fallback generation succeeded',
         `Recovered ${fileCount} files (${lineCount} lines) — some quality passes were skipped`);
     } catch (fallbackErr) {
       const fallbackErrMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
       console.error(`[Pipeline] Fallback generation also failed: ${fallbackErrMsg}`);
-      emitStep(ctx, 'orchestrator', 'Fallback generation failed',
+      emitStep(ctx, 'orchestrator', 'Generation could not complete|||Fallback generation failed',
         `Both primary and fallback generation failed. Output reset.`);
       ctx.files = [];
       ctx.testFiles = [];
@@ -1136,7 +1136,7 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
   // Stage 16: Deep Quality Analysis — cross-file consistency, hardening, type contracts, anti-patterns, scoring
   if (ctx.files.length > 0) {
     const deepQualityStage = PIPELINE_STAGES.find(s => s.id === 'deep-quality')!;
-    emitStep(ctx, 'deep-quality', 'Quality Architect starting deep analysis', `Running 5 verification passes across ${ctx.files.length} files: cross-file consistency, code hardening, type contracts, anti-pattern detection, and quality scoring`);
+    emitStep(ctx, 'deep-quality', 'Running thorough quality check|||Quality Architect starting deep analysis', `Running 5 verification passes across ${ctx.files.length} files: cross-file consistency, code hardening, type contracts, anti-pattern detection, and quality scoring`);
 
     executeStage(ctx, deepQualityStage, () => {
       const qualityPassResults: QualityPassResults = {};
@@ -1146,7 +1146,7 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
 
       // Pass 1: Cross-file consistency
       try {
-        emitStep(ctx, 'deep-quality', 'Pass 1/5: Cross-file consistency', 'Verifying all imports resolve to exports, frontend API calls match backend routes, schema fields referenced in components exist');
+        emitStep(ctx, 'deep-quality', 'Checking all files work together|||Pass 1/5: Cross-file consistency', 'Verifying all imports resolve to exports, frontend API calls match backend routes, schema fields referenced in components exist');
         const consistencyReport = validateCrossFileConsistency(ctx.files);
         qualityPassResults.consistency = consistencyReport;
         totalIssues += consistencyReport.issues.length;
@@ -1154,20 +1154,20 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
         if (consistencyReport.fixes.length > 0) {
           ctx.files = applyCrossFileConsistencyFixes(ctx.files, consistencyReport.fixes);
           totalFixes += consistencyReport.fixes.length;
-          emitStep(ctx, 'deep-quality', 'Cross-file fixes applied', `${consistencyReport.fixes.length} consistency fixes auto-applied`);
+          emitStep(ctx, 'deep-quality', 'Fixed file connection issues|||Cross-file fixes applied', `${consistencyReport.fixes.length} consistency fixes auto-applied`);
         }
 
         const errorCount = consistencyReport.issues.filter(i => i.severity === 'error').length;
         const warnCount = consistencyReport.issues.filter(i => i.severity === 'warning').length;
-        emitStep(ctx, 'deep-quality', 'Cross-file consistency complete', `${consistencyReport.stats.importsChecked} imports checked, ${consistencyReport.stats.apiContractsChecked} API contracts verified | ${errorCount} errors, ${warnCount} warnings`);
+        emitStep(ctx, 'deep-quality', 'Files are consistent|||Cross-file consistency complete', `${consistencyReport.stats.importsChecked} imports checked, ${consistencyReport.stats.apiContractsChecked} API contracts verified | ${errorCount} errors, ${warnCount} warnings`);
       } catch (e) {
         qualityWarnings.push('Cross-file consistency check failed');
-        emitStep(ctx, 'deep-quality', 'Cross-file consistency skipped', 'Validator encountered an error');
+        emitStep(ctx, 'deep-quality', 'Skipping consistency check|||Cross-file consistency skipped', 'Validator encountered an error');
       }
 
       // Pass 2: Code hardening
       try {
-        emitStep(ctx, 'deep-quality', 'Pass 2/5: Code hardening', 'Checking for missing error handling, loading states, empty states, unsafe property access, form validation');
+        emitStep(ctx, 'deep-quality', 'Making your code more robust|||Pass 2/5: Code hardening', 'Checking for missing error handling, loading states, empty states, unsafe property access, form validation');
         const hardeningReport = hardenGeneratedCode(ctx.files);
         qualityPassResults.hardening = hardeningReport;
         totalIssues += hardeningReport.issues.length;
@@ -1175,31 +1175,31 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
         if (hardeningReport.fixes.length > 0) {
           ctx.files = applyHardeningFixes(ctx.files, hardeningReport.fixes);
           totalFixes += hardeningReport.fixes.length;
-          emitStep(ctx, 'deep-quality', 'Hardening fixes applied', `${hardeningReport.fixes.length} defensive patterns injected`);
+          emitStep(ctx, 'deep-quality', 'Added safety checks|||Hardening fixes applied', `${hardeningReport.fixes.length} defensive patterns injected`);
         }
 
         const categories = Object.entries(hardeningReport.stats.categories).map(([k, v]) => `${k}: ${v}`).join(', ');
-        emitStep(ctx, 'deep-quality', 'Code hardening complete', `${hardeningReport.stats.filesScanned} files scanned | ${hardeningReport.issues.length} issues | ${categories}`);
+        emitStep(ctx, 'deep-quality', 'Code is more robust|||Code hardening complete', `${hardeningReport.stats.filesScanned} files scanned | ${hardeningReport.issues.length} issues | ${categories}`);
       } catch (e) {
         qualityWarnings.push('Code hardening pass failed');
-        emitStep(ctx, 'deep-quality', 'Code hardening skipped', 'Hardening pass encountered an error');
+        emitStep(ctx, 'deep-quality', 'Skipping robustness check|||Code hardening skipped', 'Hardening pass encountered an error');
       }
 
       // Pass 3: Type contract verification
       try {
-        emitStep(ctx, 'deep-quality', 'Pass 3/5: Type contract verification', 'Ensuring Drizzle schema, Zod validators, API types, and frontend query types all agree');
+        emitStep(ctx, 'deep-quality', 'Checking data types are correct|||Pass 3/5: Type contract verification', 'Ensuring Drizzle schema, Zod validators, API types, and frontend query types all agree');
         const typeReport = verifyTypeContracts(ctx.files);
         qualityPassResults.typeContracts = typeReport;
         totalIssues += typeReport.issues.length;
-        emitStep(ctx, 'deep-quality', 'Type contracts verified', `${typeReport.stats.tablesChecked} tables, ${typeReport.stats.zodSchemasFound} Zod schemas, ${typeReport.stats.routesChecked} routes checked | ${typeReport.issues.length} issues`);
+        emitStep(ctx, 'deep-quality', 'Data types are correct|||Type contracts verified', `${typeReport.stats.tablesChecked} tables, ${typeReport.stats.zodSchemasFound} Zod schemas, ${typeReport.stats.routesChecked} routes checked | ${typeReport.issues.length} issues`);
       } catch (e) {
         qualityWarnings.push('Type contract verification failed');
-        emitStep(ctx, 'deep-quality', 'Type contract verification skipped', 'Verifier encountered an error');
+        emitStep(ctx, 'deep-quality', 'Skipping type check|||Type contract verification skipped', 'Verifier encountered an error');
       }
 
       // Pass 4: Anti-pattern detection
       try {
-        emitStep(ctx, 'deep-quality', 'Pass 4/5: Anti-pattern detection', 'Scanning for N+1 queries, missing pagination, unprotected routes, oversized components, accessibility gaps');
+        emitStep(ctx, 'deep-quality', 'Looking for potential issues|||Pass 4/5: Anti-pattern detection', 'Scanning for N+1 queries, missing pagination, unprotected routes, oversized components, accessibility gaps');
         const antiPatternReport = scanAntiPatterns(ctx.files);
         qualityPassResults.antiPatterns = antiPatternReport;
         totalIssues += antiPatternReport.issues.length;
@@ -1207,33 +1207,33 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
         const securityIssues = antiPatternReport.issues.filter(i => i.category === 'security').length;
         const perfIssues = antiPatternReport.issues.filter(i => i.category === 'performance').length;
         const a11yIssues = antiPatternReport.issues.filter(i => i.category === 'accessibility').length;
-        emitStep(ctx, 'deep-quality', 'Anti-pattern scan complete', `${antiPatternReport.stats.filesScanned} files | ${antiPatternReport.issues.length} patterns detected — security: ${securityIssues}, performance: ${perfIssues}, accessibility: ${a11yIssues}`);
+        emitStep(ctx, 'deep-quality', 'Issue scan complete|||Anti-pattern scan complete', `${antiPatternReport.stats.filesScanned} files | ${antiPatternReport.issues.length} patterns detected — security: ${securityIssues}, performance: ${perfIssues}, accessibility: ${a11yIssues}`);
       } catch (e) {
         qualityWarnings.push('Anti-pattern scan failed');
-        emitStep(ctx, 'deep-quality', 'Anti-pattern scan skipped', 'Scanner encountered an error');
+        emitStep(ctx, 'deep-quality', 'Skipping issue scan|||Anti-pattern scan skipped', 'Scanner encountered an error');
       }
 
       // Pass 5: Quality scoring
       try {
-        emitStep(ctx, 'deep-quality', 'Pass 5/5: Quality scoring', 'Scoring each file across 6 dimensions — error handling, type safety, completeness, consistency, security, performance');
+        emitStep(ctx, 'deep-quality', 'Scoring overall quality|||Pass 5/5: Quality scoring', 'Scoring each file across 6 dimensions — error handling, type safety, completeness, consistency, security, performance');
         const qualityScore = scoreProjectQuality(ctx.files, qualityPassResults);
 
         const flaggedCount = qualityScore.flaggedFiles.length;
-        emitStep(ctx, 'deep-quality', 'Quality scoring complete', qualityScore.summary);
+        emitStep(ctx, 'deep-quality', 'Quality score ready|||Quality scoring complete', qualityScore.summary);
 
         if (qualityScore.recommendations.length > 0) {
-          emitStep(ctx, 'deep-quality', 'Quality recommendations', qualityScore.recommendations.slice(0, 3).join(' | '));
+          emitStep(ctx, 'deep-quality', 'Suggestions for improvement|||Quality recommendations', qualityScore.recommendations.slice(0, 3).join(' | '));
         }
 
         if (flaggedCount > 0) {
-          emitStep(ctx, 'deep-quality', 'Files flagged for review', `${flaggedCount} files scored below threshold: ${qualityScore.flaggedFiles.slice(0, 3).join(', ')}${flaggedCount > 3 ? ` + ${flaggedCount - 3} more` : ''}`);
+          emitStep(ctx, 'deep-quality', 'Files that could be better|||Files flagged for review', `${flaggedCount} files scored below threshold: ${qualityScore.flaggedFiles.slice(0, 3).join(', ')}${flaggedCount > 3 ? ` + ${flaggedCount - 3} more` : ''}`);
         }
       } catch (e) {
         qualityWarnings.push('Quality scoring failed');
-        emitStep(ctx, 'deep-quality', 'Quality scoring skipped', 'Scoring engine encountered an error');
+        emitStep(ctx, 'deep-quality', 'Skipping quality score|||Quality scoring skipped', 'Scoring engine encountered an error');
       }
 
-      emitStep(ctx, 'deep-quality', 'Deep quality analysis complete', `5 passes | ${totalIssues} total issues found | ${totalFixes} auto-fixed`);
+      emitStep(ctx, 'deep-quality', 'Quality check done|||Deep quality analysis complete', `5 passes | ${totalIssues} total issues found | ${totalFixes} auto-fixed`);
 
       return {
         score: Math.max(40, 90 - totalIssues),
@@ -1244,7 +1244,7 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
 
     if (isSLMAvailable() && ctx.files.length > 0) {
       try {
-        emitStep(ctx, 'deep-quality', 'SLM performing final quality review', 'AI scanning for anti-patterns, type safety gaps, and cross-file inconsistencies missed by rule-based passes');
+        emitStep(ctx, 'deep-quality', 'AI doing final review|||SLM performing final quality review', 'AI scanning for anti-patterns, type safety gaps, and cross-file inconsistencies missed by rule-based passes');
         const slmResult = await runSLM(
           QUALITY_STAGE_ID,
           { files: ctx.files.map(f => ({ path: f.path, content: f.content.slice(0, 3000) })), plan: ctx.plan }
@@ -1254,19 +1254,19 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
           if (qualityIssues.length > 0) {
             ctx.slmStagesRun.push('deep-quality');
             const sampleIssues = qualityIssues.slice(0, 3).map(i => `${i.file}: ${i.issue}`).join(' | ');
-            emitStep(ctx, 'deep-quality', 'SLM quality review complete', `${qualityIssues.length} issues identified (${slmResult.latencyMs}ms): ${sampleIssues}`);
+            emitStep(ctx, 'deep-quality', 'Final review done|||SLM quality review complete', `${qualityIssues.length} issues identified (${slmResult.latencyMs}ms): ${sampleIssues}`);
           }
         }
       } catch (err) {
-        emitStep(ctx, 'deep-quality', 'SLM quality review skipped', `Non-fatal: ${err}`);
+        emitStep(ctx, 'deep-quality', 'Skipping final AI review|||SLM quality review skipped', `Non-fatal: ${err}`);
       }
     }
   }
 
   // Stage 17: Learning & recording
   const recordStage = PIPELINE_STAGES.find(s => s.id === 'record')!;
-  emitStep(ctx, 'record', 'Knowledge Manager recording generation patterns', 'Saving this generation\'s patterns, quality scores, entity structures, and architectural decisions so future generations of similar apps start from a stronger baseline');
-  emitStep(ctx, 'record', 'Why continuous learning', 'Each successful generation teaches the system — field naming conventions that scored well, relationship patterns that avoided bugs, UI layouts that matched user intent — all feed into the next generation\'s starting point');
+  emitStep(ctx, 'record', 'Saving what I learned|||Knowledge Manager recording generation patterns', 'Saving this generation\'s patterns, quality scores, entity structures, and architectural decisions so future generations of similar apps start from a stronger baseline');
+  emitStep(ctx, 'record', 'Why I remember|||Why continuous learning', 'Each successful generation teaches the system — field naming conventions that scored well, relationship patterns that avoided bugs, UI layouts that matched user intent — all feed into the next generation\'s starting point');
   executeStage(ctx, recordStage, () => {
     try {
       const pipelineSuccess = failedStages.filter(s => PIPELINE_STAGES.find(ps => ps.id === s)?.critical).length === 0;
@@ -1276,10 +1276,10 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
         success: pipelineSuccess,
         qualityScore: computeOverallScore(ctx),
       });
-      emitStep(ctx, 'record', 'Learning data saved', `Recorded ${ctx.files.length} file patterns, ${entityCount} entity structures, quality score ${computeOverallScore(ctx)}/100 for future reference`);
+      emitStep(ctx, 'record', 'Learnings saved|||Learning data saved', `Recorded ${ctx.files.length} file patterns, ${entityCount} entity structures, quality score ${computeOverallScore(ctx)}/100 for future reference`);
       return { score: 90, warnings: [], output: 'Generation recorded for learning' };
     } catch {
-      emitStep(ctx, 'record', 'Learning engine unavailable', 'Could not save patterns — this generation will not contribute to future improvements, but the output is unaffected');
+      emitStep(ctx, 'record', 'Could not save learnings|||Learning engine unavailable', 'Could not save patterns — this generation will not contribute to future improvements, but the output is unaffected');
       return { score: 50, warnings: ['Failed to record learning data'], output: null };
     }
   });
@@ -1297,7 +1297,7 @@ export async function orchestrateGeneration(plan: ProjectPlan, understanding?: U
 
   const summary = buildSummary(ctx, failedStages, skippedStages);
 
-  emitStep(ctx, 'orchestrator', 'Pipeline complete',
+  emitStep(ctx, 'orchestrator', 'Your app is ready!|||Pipeline complete',
     `${summary.completedStages}/${summary.totalStages} stages | Quality: ${summary.overallQuality}/100 | ${ctx.metrics.fileCount} files | ${totalDuration}ms`);
 
   return {
@@ -1316,10 +1316,10 @@ export function orchestratePlanning(understanding: UnderstandingResult): { plan:
     thinkingSteps.push({ phase, label, detail, timestamp: Date.now() });
   };
 
-  emit('orchestrator', 'Planning pipeline activated', 'Running planning stages');
+  emit('orchestrator', 'Creating your project plan|||Planning pipeline activated', 'Running planning stages');
 
   let plan = generatePlan(understanding);
-  emit('planning', 'Project plan created', `${plan.dataModel?.length || 0} entities, ${plan.pages?.length || 0} pages`);
+  emit('planning', 'Plan created|||Project plan created', `${plan.dataModel?.length || 0} entities, ${plan.pages?.length || 0} pages`);
 
   // Stage 3a: Entity Intelligence — upgrade generic entities with archetype fields
   try {
@@ -1347,23 +1347,23 @@ export function orchestratePlanning(understanding: UnderstandingResult): { plan:
         upgraded++;
       }
     }
-    emit('planning', 'Entity Intelligence complete', `Upgraded ${upgraded}/${plan.dataModel.length} entities with domain-specific fields`);
+    emit('planning', 'Data model improved|||Entity Intelligence complete', `Upgraded ${upgraded}/${plan.dataModel.length} entities with domain-specific fields`);
   } catch (e) {
-    emit('planning', 'Entity Intelligence skipped', 'Field inference unavailable');
+    emit('planning', 'Skipping data upgrade|||Entity Intelligence skipped', 'Field inference unavailable');
   }
 
   const reasoning = analyzeSemantics(plan);
   plan = enrichPlanWithReasoning(plan, reasoning);
-  emit('reasoning', 'Semantic analysis complete', `${reasoning.relationships.length} relationships, ${reasoning.businessRules.length} rules`);
+  emit('reasoning', 'Deep analysis complete|||Semantic analysis complete', `${reasoning.relationships.length} relationships, ${reasoning.businessRules.length} rules`);
 
   // Stage 3b: UX Flow Planning
   try {
     const uxResult = planUXFlows(plan);
     plan.uxFlows = uxResult.uxFlows;
     plan.errorHandling = uxResult.errorHandling;
-    emit('planning', 'UX flows planned', `${uxResult.uxFlows.length} user flows | ${uxResult.errorHandling.pageStates.length} page states`);
+    emit('planning', 'User experience designed|||UX flows planned', `${uxResult.uxFlows.length} user flows | ${uxResult.errorHandling.pageStates.length} page states`);
   } catch (e) {
-    emit('planning', 'UX flow planning skipped', 'UX planner unavailable');
+    emit('planning', 'Skipping UX flows|||UX flow planning skipped', 'UX planner unavailable');
   }
 
   // Stage 3c: Integration Detection
@@ -1372,28 +1372,28 @@ export function orchestratePlanning(understanding: UnderstandingResult): { plan:
     const integrations = planIntegrations(plan, userDesc);
     if (integrations.length > 0) {
       plan.integrations = integrations;
-      emit('planning', 'Integrations detected', `${integrations.length}: ${integrations.map(i => i.name).join(', ')}`);
+      emit('planning', 'Services identified|||Integrations detected', `${integrations.length}: ${integrations.map(i => i.name).join(', ')}`);
     }
   } catch (e) {
-    emit('planning', 'Integration detection skipped', 'Integration planner unavailable');
+    emit('planning', 'Skipping integrations|||Integration detection skipped', 'Integration planner unavailable');
   }
 
   // Stage 3d: Security Planning
   try {
     const security = planSecurity(plan, plan.overview || '');
     plan.securityPlan = security;
-    emit('planning', 'Security plan complete', `Auth: ${security.authStrategy} | ${security.roleHierarchy.length} roles | ${security.entityPermissions.length} permissions`);
+    emit('planning', 'Security set up|||Security plan complete', `Auth: ${security.authStrategy} | ${security.roleHierarchy.length} roles | ${security.entityPermissions.length} permissions`);
   } catch (e) {
-    emit('planning', 'Security planning skipped', 'Security planner unavailable');
+    emit('planning', 'Skipping security|||Security planning skipped', 'Security planner unavailable');
   }
 
   // Stage 3e: Performance Planning
   try {
     const perf = planPerformance(plan);
     plan.performancePlan = perf;
-    emit('planning', 'Performance plan complete', `${perf.pagination.length} pagination | ${perf.caching.length} cache | ${perf.indexRecommendations.length} indexes`);
+    emit('planning', 'Speed optimizations set|||Performance plan complete', `${perf.pagination.length} pagination | ${perf.caching.length} cache | ${perf.indexRecommendations.length} indexes`);
   } catch (e) {
-    emit('planning', 'Performance planning skipped', 'Performance planner unavailable');
+    emit('planning', 'Skipping optimizations|||Performance planning skipped', 'Performance planner unavailable');
   }
 
   return { plan, thinkingSteps };

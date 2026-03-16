@@ -102,7 +102,7 @@ export async function handleMessage(
   const currentPhase = state.phase || 'initial';
 
   if (currentPhase === 'generating') {
-    emitStep('recovery', 'Phase recovery', 'Detected stuck generating phase, restarting');
+    emitStep('recovery', 'Recovering|||Phase recovery', 'Detected stuck generating phase, restarting');
     return await handleInitialRequest(userMessage, thinkingSteps, emitStep, conversationHistory);
   }
 
@@ -127,7 +127,7 @@ export async function handleMessage(
 
   if (currentPhase === 'clarifying') {
     if (!state.understandingData) {
-      emitStep('recovery', 'Phase recovery', 'Missing context from previous analysis, re-analyzing');
+      emitStep('recovery', 'Recovering|||Phase recovery', 'Missing context from previous analysis, re-analyzing');
       return await handleInitialRequest(userMessage, thinkingSteps, emitStep, conversationHistory);
     }
     return handleClarificationResponse(userMessage, state, thinkingSteps, emitStep);
@@ -171,17 +171,17 @@ async function handleInitialRequest(
   emitStep: (phase: string, label: string, detail?: string) => void,
   conversationHistory?: string
 ): Promise<PhaseHandlerResult> {
-  emitStep('understanding', 'Deep Understanding Engine activated', `Analyzing your request through 5 levels of decomposition to fully grasp what you need built`);
-  emitStep('understanding', 'Why multi-level analysis', 'A single pass would miss nuances — each level builds on the previous, from raw intent through domain expertise to specific entity structures and workflows');
+  emitStep('understanding', 'Reading your description carefully|||Deep Understanding Engine activated', `Analyzing your request through 5 levels of decomposition to fully grasp what you need built`);
+  emitStep('understanding', 'Why I look at this carefully|||Why multi-level analysis', 'A single pass would miss nuances — each level builds on the previous, from raw intent through domain expertise to specific entity structures and workflows');
 
-  emitStep('understanding', 'Level 1: Intent Decomposition', 'Breaking down your request into primary goal, secondary features, and implied requirements');
+  emitStep('understanding', 'Understanding what you want|||Level 1: Intent Decomposition', 'Breaking down your request into primary goal, secondary features, and implied requirements');
 
   const understanding = analyzeRequest(userMessage, conversationHistory);
 
-  emitStep('understanding', 'Intent identified', `Primary goal: "${understanding.level1_intent?.primaryGoal || userMessage.slice(0, 60)}" | Complexity: ${(understanding.level1_intent as any)?.complexity || 'moderate'}`);
+  emitStep('understanding', 'Got your main goal|||Intent identified', `Primary goal: "${understanding.level1_intent?.primaryGoal || userMessage.slice(0, 60)}" | Complexity: ${(understanding.level1_intent as any)?.complexity || 'moderate'}`);
 
   if (isSLMAvailable()) {
-    emitStep('understanding', 'SLM enhancing understanding', 'Running AI-enhanced analysis to detect implicit requirements and hidden entities');
+    emitStep('understanding', 'Using AI to understand better|||SLM enhancing understanding', 'Running AI-enhanced analysis to detect implicit requirements and hidden entities');
     try {
       const slmResult = await runSLM(UNDERSTANDING_STAGE_ID, {
         userRequest: userMessage,
@@ -192,51 +192,51 @@ async function handleInitialRequest(
         Object.assign(understanding, merged);
         const implicitCount = slmResult.data.implicitRequirements?.length || 0;
         const newEntities = slmResult.data.entities?.filter((e: any) => e.isImplied)?.length || 0;
-        emitStep('understanding', 'SLM enhancement complete', `Added ${implicitCount} implicit requirements, ${newEntities} inferred entities (${slmResult.latencyMs}ms)`);
+        emitStep('understanding', 'AI analysis done|||SLM enhancement complete', `Added ${implicitCount} implicit requirements, ${newEntities} inferred entities (${slmResult.latencyMs}ms)`);
       } else {
-        emitStep('understanding', 'SLM enhancement skipped', slmResult.error || 'No useful enhancements found');
+        emitStep('understanding', 'Skipping AI enhancement|||SLM enhancement skipped', slmResult.error || 'No useful enhancements found');
       }
     } catch (err) {
-      emitStep('understanding', 'SLM enhancement skipped', `Non-fatal error: ${err}`);
+      emitStep('understanding', 'Skipping AI enhancement|||SLM enhancement skipped', `Non-fatal error: ${err}`);
     }
   }
 
-  emitStep('understanding', 'Level 2: Domain Detection',
+  emitStep('understanding', 'Figuring out what kind of app this is|||Level 2: Domain Detection',
     understanding.level2_domain.primaryDomain
       ? `Detected "${understanding.level2_domain.primaryDomain.name}" domain with ${Math.round(understanding.level2_domain.confidence * 100)}% confidence — this activates domain-specific entity templates, vocabulary, and best practices`
       : 'No specific industry pattern detected — will use general-purpose application templates'
   );
   if (understanding.level2_domain.primaryDomain) {
-    emitStep('understanding', 'Why domain matters', `The "${understanding.level2_domain.primaryDomain.name}" domain has known entity patterns, standard workflows, and industry-specific field types that produce more accurate code than generic templates`);
+    emitStep('understanding', 'Why the app type matters|||Why domain matters', `The "${understanding.level2_domain.primaryDomain.name}" domain has known entity patterns, standard workflows, and industry-specific field types that produce more accurate code than generic templates`);
   }
 
   const mentionedCount = understanding.level3_entities.mentionedEntities.length;
   const inferredCount = understanding.level3_entities.inferredEntities.length;
-  emitStep('understanding', 'Level 3: Entity Extraction',
+  emitStep('understanding', 'Identifying the things your app needs|||Level 3: Entity Extraction',
     `Found ${mentionedCount} explicitly mentioned data types + ${inferredCount} inferred from context`
   );
   if (mentionedCount > 0) {
-    emitStep('understanding', 'Mentioned entities', understanding.level3_entities.mentionedEntities.slice(0, 5).join(', ') + (mentionedCount > 5 ? ` + ${mentionedCount - 5} more` : ''));
+    emitStep('understanding', 'Things you mentioned|||Mentioned entities', understanding.level3_entities.mentionedEntities.slice(0, 5).join(', ') + (mentionedCount > 5 ? ` + ${mentionedCount - 5} more` : ''));
   }
   if (inferredCount > 0) {
-    emitStep('understanding', 'Inferred entities', `${understanding.level3_entities.inferredEntities.slice(0, 4).join(', ')} — these weren't explicitly mentioned but are needed for the app to function properly`);
+    emitStep('understanding', 'Things I figured you\'d need|||Inferred entities', `${understanding.level3_entities.inferredEntities.slice(0, 4).join(', ')} — these weren\'t explicitly mentioned but are needed for the app to function properly`);
   }
 
   const workflowCount = understanding.level4_workflows.inferredWorkflows.length;
-  emitStep('understanding', 'Level 4: Workflow Detection',
+  emitStep('understanding', 'Finding processes in your app|||Level 4: Workflow Detection',
     `${workflowCount} business workflows identified${workflowCount > 0 ? ' — these define how data flows through the system and what actions trigger what effects' : ''}`
   );
   if (workflowCount > 0) {
     const sampleWorkflows = understanding.level4_workflows.inferredWorkflows.slice(0, 3).map((w: any) => w.name || w.description || w).join(', ');
-    emitStep('understanding', 'Key workflows', sampleWorkflows);
+    emitStep('understanding', 'Main processes|||Key workflows', sampleWorkflows);
   }
 
   if (understanding.level5_clarification.needsClarification) {
     const questionCount = understanding.level5_clarification.questions.length;
-    emitStep('understanding', 'Level 5: Need more information',
+    emitStep('understanding', 'I have a few questions|||Level 5: Need more information',
       `${questionCount} clarifying questions generated — asking now prevents building the wrong thing later`
     );
-    emitStep('understanding', 'Why we ask questions', 'Ambiguous requirements lead to wasted generation cycles — a few targeted questions now save significant rework later');
+    emitStep('understanding', 'Why a quick question helps|||Why we ask questions', 'Ambiguous requirements lead to wasted generation cycles — a few targeted questions now save significant rework later');
 
     const responseContent = formatUnderstandingResponse(understanding);
     return {
@@ -247,7 +247,7 @@ async function handleInitialRequest(
     };
   }
 
-  emitStep('understanding', 'Level 5: Requirements sufficient', `Confidence: ${Math.round(understanding.confidence * 100)}% — enough context gathered to produce a comprehensive plan without further questions`);
+  emitStep('understanding', 'I have enough to get started|||Level 5: Requirements sufficient', `Confidence: ${Math.round(understanding.confidence * 100)}% — enough context gathered to produce a comprehensive plan without further questions`);
   return generatePlanFromUnderstanding(understanding, thinkingSteps, emitStep);
 }
 
@@ -258,8 +258,8 @@ function handleClarificationResponse(
   emitStep: (phase: string, label: string, detail?: string) => void
 ): PhaseHandlerResult {
   const currentRound = (state.clarificationRound || 0) + 1;
-  emitStep('understanding', 'Processing your clarification answers', `Round ${currentRound} — integrating your responses to build a more precise understanding`);
-  emitStep('understanding', 'Why iterative clarification works', 'Each answer narrows down ambiguity — the system re-analyzes with your new context to produce increasingly accurate entity structures and feature specifications');
+  emitStep('understanding', 'Got it, updating my understanding|||Processing your clarification answers', `Round ${currentRound} — integrating your responses to build a more precise understanding`);
+  emitStep('understanding', 'Why your answers help|||Why iterative clarification works', 'Each answer narrows down ambiguity — the system re-analyzes with your new context to produce increasingly accurate entity structures and feature specifications');
 
   const previousQuestions = state.understandingData?.level5_clarification.questions || [];
   const parsedAnswers = parseAnswersFromResponse(
@@ -277,7 +277,7 @@ function handleClarificationResponse(
     }))
   );
 
-  emitStep('understanding', 'Parsed answers', `Extracted ${parsedAnswers.size} structured answers from response`);
+  emitStep('understanding', 'Answers received|||Parsed answers', `Extracted ${parsedAnswers.size} structured answers from response`);
 
   const previousUnderstanding = state.understandingData!;
   const updatedUnderstanding: UnderstandingResult = {
@@ -459,7 +459,7 @@ function handleClarificationResponse(
     }
   });
 
-  emitStep('understanding', 'Updated understanding',
+  emitStep('understanding', 'Understanding updated|||Updated understanding',
     updatedUnderstanding.level2_domain.primaryDomain
       ? `Domain: ${updatedUnderstanding.level2_domain.primaryDomain.name}`
       : 'Building general application'
@@ -530,7 +530,7 @@ function handleClarificationResponse(
 
   const { shouldAsk, reason } = shouldAskMoreQuestions(clarState);
 
-  emitStep('understanding', 'Readiness assessment',
+  emitStep('understanding', 'Checking if I am ready to plan|||Readiness assessment',
     `Score: ${Math.round(clarState.readinessScore * 100)}% — ${reason}`
   );
 
@@ -546,7 +546,7 @@ function handleClarificationResponse(
   };
 
   if (currentRound >= 2) {
-    emitStep('understanding', 'Proceeding with available information',
+    emitStep('understanding', 'Ready to move forward|||Proceeding with available information',
       'Enough clarification rounds completed — using defaults for remaining gaps');
     updatedUnderstanding.level5_clarification.assumptions.push(
       'Proceeding with sensible defaults after clarification'
@@ -611,17 +611,17 @@ function generatePlanFromUnderstanding(
   thinkingSteps: ThinkingStep[],
   emitStep: (phase: string, label: string, detail?: string) => void
 ): PhaseHandlerResult {
-  emitStep('planning', 'Plan Generator activated', 'Converting understanding into a detailed project blueprint — deciding tech stack, modules, pages, data model, APIs, and file structure');
-  emitStep('planning', 'Why a plan comes first', 'Generating code without a plan produces inconsistent files — the plan ensures every page has backing API routes, every API route has a database table, and every table has proper relationships');
+  emitStep('planning', 'Creating your project plan|||Plan Generator activated', 'Converting understanding into a detailed project blueprint — deciding tech stack, modules, pages, data model, APIs, and file structure');
+  emitStep('planning', 'Why I plan before building|||Why a plan comes first', 'Generating code without a plan produces inconsistent files — the plan ensures every page has backing API routes, every API route has a database table, and every table has proper relationships');
 
   let plan = generatePlan(understanding);
 
-  emitStep('planning', 'Initial plan created', `Project: "${plan.projectName}" | ${plan.modules?.length || 0} modules, ${plan.pages?.length || 0} pages, ${plan.dataModel?.length || 0} entities, ${plan.apiEndpoints?.length || 0} endpoints`);
+  emitStep('planning', 'Plan created|||Initial plan created', `Project: "${plan.projectName}" | ${plan.modules?.length || 0} modules, ${plan.pages?.length || 0} pages, ${plan.dataModel?.length || 0} entities, ${plan.apiEndpoints?.length || 0} endpoints`);
   if (plan.pages?.length > 0) {
-    emitStep('planning', 'Pages planned', plan.pages.slice(0, 5).map(p => p.name).join(', ') + (plan.pages.length > 5 ? ` + ${plan.pages.length - 5} more` : ''));
+    emitStep('planning', 'Your app pages|||Pages planned', plan.pages.slice(0, 5).map(p => p.name).join(', ') + (plan.pages.length > 5 ? ` + ${plan.pages.length - 5} more` : ''));
   }
   if (plan.dataModel?.length > 0) {
-    emitStep('planning', 'Data model', plan.dataModel.slice(0, 5).map(e => `${e.name} (${e.fields?.length || 0} fields)`).join(', '));
+    emitStep('planning', 'Your app data|||Data model', plan.dataModel.slice(0, 5).map(e => `${e.name} (${e.fields?.length || 0} fields)`).join(', '));
   }
 
   // Entity Intelligence — upgrade generic entities with archetype fields
@@ -651,17 +651,17 @@ function generatePlanFromUnderstanding(
       }
     }
     if (upgraded > 0) {
-      emitStep('planning', 'Entity Intelligence', `Upgraded ${upgraded}/${plan.dataModel.length} entities with domain-specific fields and relationships`);
+      emitStep('planning', 'Data model improved|||Entity Intelligence', `Upgraded ${upgraded}/${plan.dataModel.length} entities with domain-specific fields and relationships`);
     }
   } catch (e) {
     // Entity intelligence is optional — degrade gracefully
   }
 
-  emitStep('planning', 'Consulting learning engine', 'Checking if similar projects were generated before — if so, applying proven patterns for naming, structure, and feature selection');
+  emitStep('planning', 'Checking my past experience|||Consulting learning engine', 'Checking if similar projects were generated before — if so, applying proven patterns for naming, structure, and feature selection');
   plan = learningEngine.applyLearnedPatterns(plan);
-  emitStep('planning', 'Learned patterns applied', 'Enhanced field types, naming conventions, and relationship patterns based on past successful generations');
+  emitStep('planning', 'Applied what I have learned|||Learned patterns applied', 'Enhanced field types, naming conventions, and relationship patterns based on past successful generations');
 
-  emitStep('planning', 'Running contextual semantic analysis', 'The reasoning engine now examines every entity to discover hidden relationships, computed fields, and business rules implied by the domain');
+  emitStep('planning', 'Looking deeper at your requirements|||Running contextual semantic analysis', 'The reasoning engine now examines every entity to discover hidden relationships, computed fields, and business rules implied by the domain');
   const reasoning = analyzeSemantics(plan);
 
   plan = enrichPlanWithReasoning(plan, reasoning);
@@ -671,15 +671,15 @@ function generatePlanFromUnderstanding(
   const businessRuleCount = reasoning.businessRules.length;
   const uiPatternCount = reasoning.uiPatterns.length;
 
-  emitStep('planning', 'Semantic enrichment complete',
+  emitStep('planning', 'Deep analysis complete|||Semantic enrichment complete',
     `Discovered ${relationshipCount} entity relationships, ${computedFieldCount} computed fields, ${businessRuleCount} business rules, ${uiPatternCount} UI display patterns`
   );
   if (relationshipCount > 0) {
     const relExamples = reasoning.relationships.slice(0, 3).map(r => `${r.from} → ${r.to}`).join(', ');
-    emitStep('planning', 'Key relationships', `${relExamples}${relationshipCount > 3 ? ` + ${relationshipCount - 3} more` : ''} — these become foreign keys and cascade behaviors in the database`);
+    emitStep('planning', 'Important connections found|||Key relationships', `${relExamples}${relationshipCount > 3 ? ` + ${relationshipCount - 3} more` : ''} — these become foreign keys and cascade behaviors in the database`);
   }
   if (businessRuleCount > 0) {
-    emitStep('planning', 'Business rules', `${reasoning.businessRules.slice(0, 2).map(r => r.ruleName).join(', ')} — these become validation logic in API endpoints`);
+    emitStep('planning', 'Business logic found|||Business rules', `${reasoning.businessRules.slice(0, 2).map(r => r.ruleName).join(', ')} — these become validation logic in API endpoints`);
   }
 
   // UX Flow Planning
@@ -688,7 +688,7 @@ function generatePlanFromUnderstanding(
     plan.uxFlows = uxResult.uxFlows;
     plan.errorHandling = uxResult.errorHandling;
     if (uxResult.uxFlows.length > 0) {
-      emitStep('planning', 'UX flows planned', `${uxResult.uxFlows.length} user journeys designed | ${uxResult.errorHandling.pageStates.length} page states with empty/error/loading patterns`);
+      emitStep('planning', 'User experience designed|||UX flows planned', `${uxResult.uxFlows.length} user journeys designed | ${uxResult.errorHandling.pageStates.length} page states with empty/error/loading patterns`);
     }
   } catch (e) {
     // UX planner is optional
@@ -700,7 +700,7 @@ function generatePlanFromUnderstanding(
     const integrations = planIntegrations(plan, userDesc);
     if (integrations.length > 0) {
       plan.integrations = integrations;
-      emitStep('planning', 'Integrations detected', `${integrations.length} integration(s): ${integrations.map(i => i.name).join(', ')}`);
+      emitStep('planning', 'Services your app needs|||Integrations detected', `${integrations.length} integration(s): ${integrations.map(i => i.name).join(', ')}`);
     }
   } catch (e) {
     // Integration detection is optional
@@ -710,7 +710,7 @@ function generatePlanFromUnderstanding(
   try {
     const security = planSecurity(plan, plan.overview || '');
     plan.securityPlan = security;
-    emitStep('planning', 'Security plan', `Auth: ${security.authStrategy} | ${security.roleHierarchy.length} roles | ${security.entityPermissions.length} permission rules | ${security.rateLimiting.length} rate limits`);
+    emitStep('planning', 'Security set up|||Security plan', `Auth: ${security.authStrategy} | ${security.roleHierarchy.length} roles | ${security.entityPermissions.length} permission rules | ${security.rateLimiting.length} rate limits`);
   } catch (e) {
     // Security planner is optional
   }
@@ -719,7 +719,7 @@ function generatePlanFromUnderstanding(
   try {
     const perf = planPerformance(plan);
     plan.performancePlan = perf;
-    emitStep('planning', 'Performance plan', `${perf.pagination.length} pagination configs | ${perf.caching.length} cache policies | ${perf.indexRecommendations.length} index recommendations`);
+    emitStep('planning', 'Speed optimizations set|||Performance plan', `${perf.pagination.length} pagination configs | ${perf.caching.length} cache policies | ${perf.indexRecommendations.length} index recommendations`);
   } catch (e) {
     // Performance planner is optional
   }
@@ -756,12 +756,12 @@ function generatePlanFromUnderstanding(
       performance: Math.round(perfConf * 100) / 100,
       lowConfidenceItems,
     };
-    emitStep('planning', 'Confidence scored', `Overall: ${Math.round(overall * 100)}% | ${lowConfidenceItems.length} items flagged`);
+    emitStep('planning', 'Plan confidence assessed|||Confidence scored', `Overall: ${Math.round(overall * 100)}% | ${lowConfidenceItems.length} items flagged`);
   } catch (e) {
     // Confidence scoring is optional
   }
 
-  emitStep('planning', 'Final plan ready',
+  emitStep('planning', 'Plan is ready for your review|||Final plan ready',
     `${plan.modules.length} modules, ${plan.pages.length} pages, ${plan.dataModel.length} data tables, ${plan.apiEndpoints.length} API endpoints — all cross-referenced and validated`
   );
 
@@ -799,21 +799,21 @@ async function handleGeneration(
     };
   }
 
-  emitStep('orchestrator', 'Pipeline Orchestrator activated', `Coordinating 16 specialized AI modules for "${plan.projectName}" — each module acts as a dedicated team member`);
-  emitStep('orchestrator', 'Dev team assembled', 'Product Manager → Project Manager → Senior Advisor → Technical Analyst → System Architect → UI/UX Designer → Feature Analyst → Database Engineer → API Architect → UI Engineer → Full-Stack Developer → DevOps Engineer → Code Reviewer → QA Engineer → Release Engineer → Knowledge Manager');
-  emitStep('orchestrator', 'Why a 16-stage pipeline', 'Each stage enriches the project context — understanding feeds planning, planning feeds architecture, architecture guides design, design informs components, and all of it flows into code generation for internally-consistent output');
+  emitStep('orchestrator', 'Starting to build your app|||Pipeline Orchestrator activated', `Coordinating 16 specialized AI modules for "${plan.projectName}" — each module acts as a dedicated team member`);
+  emitStep('orchestrator', 'Everything is set up|||Dev team assembled', 'Product Manager → Project Manager → Senior Advisor → Technical Analyst → System Architect → UI/UX Designer → Feature Analyst → Database Engineer → API Architect → UI Engineer → Full-Stack Developer → DevOps Engineer → Code Reviewer → QA Engineer → Release Engineer → Knowledge Manager');
+  emitStep('orchestrator', 'Why the build process has steps|||Why a 16-stage pipeline', 'Each stage enriches the project context — understanding feeds planning, planning feeds architecture, architecture guides design, design informs components, and all of it flows into code generation for internally-consistent output');
 
   let orchestrationResult: OrchestrationResult;
   try {
     orchestrationResult = await orchestrateGeneration(plan, state.understandingData, onStep);
   } catch (err) {
-    emitStep('orchestrator', 'Pipeline encountered critical error, falling back to direct generation');
+    emitStep('orchestrator', 'Trying a simpler approach|||Pipeline encountered critical error, falling back to direct generation');
     let rawFiles = generateProjectFromPlan(plan);
-    emitStep('generating', 'Code generation complete', `${rawFiles.length} files created`);
+    emitStep('generating', 'Your code is ready|||Code generation complete', `${rawFiles.length} files created`);
     const fallbackSlmStages: string[] = [];
 
     if (isSLMAvailable() && rawFiles.length > 0) {
-      emitStep('generating', 'SLM enhancing function bodies', 'AI micro-writer improving logic, validation, and error handling');
+      emitStep('generating', 'AI improving the code|||SLM enhancing function bodies', 'AI micro-writer improving logic, validation, and error handling');
       try {
         const slmResult = await runSLM<{ enhancements: CodeEnhancement[] }>(CODEGEN_STAGE_ID, {
           files: rawFiles,
@@ -825,15 +825,15 @@ async function handleGeneration(
             const enhanceResult = applyCodeEnhancements(rawFiles, validEnhancements);
             rawFiles = enhanceResult.files;
             fallbackSlmStages.push('generate');
-            emitStep('generating', 'SLM code enhancement complete', `${enhanceResult.applied} enhancements applied, ${enhanceResult.rejected} rejected (${slmResult.latencyMs}ms)`);
+            emitStep('generating', 'Code improved|||SLM code enhancement complete', `${enhanceResult.applied} enhancements applied, ${enhanceResult.rejected} rejected (${slmResult.latencyMs}ms)`);
           } else {
-            emitStep('generating', 'SLM code enhancement skipped', 'No valid enhancements met safety criteria');
+            emitStep('generating', 'Skipping code improvements|||SLM code enhancement skipped', 'No valid enhancements met safety criteria');
           }
         } else {
-          emitStep('generating', 'SLM code enhancement skipped', slmResult.error || 'No enhancements returned');
+          emitStep('generating', 'Skipping code improvements|||SLM code enhancement skipped', slmResult.error || 'No enhancements returned');
         }
       } catch (slmErr) {
-        emitStep('generating', 'SLM code enhancement skipped', `Non-fatal error: ${slmErr}`);
+        emitStep('generating', 'Skipping code improvements|||SLM code enhancement skipped', `Non-fatal error: ${slmErr}`);
       }
     }
 
@@ -842,7 +842,7 @@ async function handleGeneration(
     let totalFixesApplied: string[] = [];
     let currentResult = validateAndFix(currentFiles, 1);
     let passCount = 1;
-    emitStep('validating', `Validation pass ${passCount}`, `${currentResult.issues.length} issues found, ${currentResult.fixesApplied.length} auto-fixed`);
+    emitStep('validating', `Checking for issues|||Validation pass ${passCount}`, `${currentResult.issues.length} issues found, ${currentResult.fixesApplied.length} auto-fixed`);
     totalFixesApplied.push(...currentResult.fixesApplied);
 
     while (passCount < MAX_VALIDATION_PASSES) {
@@ -877,7 +877,7 @@ async function handleGeneration(
         totalFixesApplied.push(...viteFixes.fixes.map((f: FixAction) => f.description || f.filePath));
         currentResult = validateAndFix(patchedFiles, 1);
         totalFixesApplied.push(...currentResult.fixesApplied);
-        emitStep('validating', `Validation pass ${passCount}`, `${viteFixes.fixes.length} Vite fixes + ${currentResult.fixesApplied.length} validator fixes`);
+        emitStep('validating', `Fixing issues|||Validation pass ${passCount}`, `${viteFixes.fixes.length} Vite fixes + ${currentResult.fixesApplied.length} validator fixes`);
       } catch (e) {
         console.error('[Fallback] Vite fixer error:', e);
         break;
@@ -915,7 +915,7 @@ async function handleGeneration(
         try {
           const report = runDiagnostics(fallbackFiles.map(f => ({ path: f.path, content: f.content })));
           if (report.totalIssues > 0) {
-            emitStep('diagnostics', 'Post-generation diagnostics', `${report.totalIssues} issues in ${report.unhealthyFiles} file(s)`);
+            emitStep('diagnostics', 'Running final checks|||Post-generation diagnostics', `${report.totalIssues} issues in ${report.unhealthyFiles} file(s)`);
           }
           resolve(report);
         } catch {
@@ -1031,7 +1031,7 @@ ${warningsList}
       try {
         const report = runDiagnostics(finalFiles.map(f => ({ path: f.path, content: f.content })));
         if (report.totalIssues > 0) {
-          emitStep('diagnostics', 'Post-generation diagnostics', `${report.totalIssues} issues in ${report.unhealthyFiles} file(s)`);
+          emitStep('diagnostics', 'Running final checks|||Post-generation diagnostics', `${report.totalIssues} issues in ${report.unhealthyFiles} file(s)`);
         }
         resolve(report);
       } catch {
@@ -1588,13 +1588,13 @@ function handlePlanModification(
   thinkingSteps: ThinkingStep[],
   emitStep: (phase: string, label: string, detail?: string) => void
 ): PhaseHandlerResult {
-  emitStep('planning', 'Processing your modification request', 'Analyzing what you want to change and applying surgical edits to the existing plan');
+  emitStep('planning', 'Working on your changes|||Processing your modification request', 'Analyzing what you want to change and applying surgical edits to the existing plan');
 
   const existingPlan = state.planData;
   const previousUnderstanding = state.understandingData;
 
   if (!existingPlan) {
-    emitStep('planning', 'No existing plan found', 'Re-analyzing from scratch since there is no plan to modify');
+    emitStep('planning', 'Starting from scratch|||No existing plan found', 'Re-analyzing from scratch since there is no plan to modify');
     const combinedContext = previousUnderstanding
       ? `${previousUnderstanding.level1_intent.primaryGoal}. ${userMessage}`
       : userMessage;
@@ -1615,7 +1615,7 @@ function handlePlanModification(
 
   const exampleResult = tryParseUserExamples(userMessage, existingPlan);
   if (exampleResult) {
-    emitStep('planning', 'Sample data detected', `Parsed example data for "${exampleResult.entityName}" — inferred ${exampleResult.inferredEntity.fields.length} fields from your sample`);
+    emitStep('planning', 'Found your sample data|||Sample data detected', `Parsed example data for "${exampleResult.entityName}" — inferred ${exampleResult.inferredEntity.fields.length} fields from your sample`);
     const targetEntity = existingPlan.dataModel.find(e => e.name.toLowerCase() === exampleResult.entityName.toLowerCase());
     if (targetEntity) {
       const existingFieldNames = new Set(targetEntity.fields.map(f => f.name));
@@ -1629,7 +1629,7 @@ function handlePlanModification(
         const idx = existingPlan.confidence.lowConfidenceItems.findIndex(i => i.section === 'Entity' && i.item.toLowerCase() === exampleResult.entityName.toLowerCase());
         if (idx >= 0) existingPlan.confidence.lowConfidenceItems.splice(idx, 1);
       }
-      emitStep('planning', 'Entity upgraded from examples', `"${targetEntity.name}" now has ${targetEntity.fields.length} fields based on your sample data`);
+      emitStep('planning', 'Improved using your examples|||Entity upgraded from examples', `"${targetEntity.name}" now has ${targetEntity.fields.length} fields based on your sample data`);
     }
     const responseContent = `## Updated Plan\n\nI've upgraded the **${exampleResult.entityName}** entity using your sample data:\n\n${formatPlanAsMessage(existingPlan)}`;
     return { responseContent, newPhase: 'approval', thinkingSteps, planData: existingPlan, understandingData: previousUnderstanding };
@@ -1638,7 +1638,7 @@ function handlePlanModification(
   const intents = parsePlanModificationIntent(userMessage);
 
   if (intents.length === 0) {
-    emitStep('planning', 'Complex modification detected', 'Cannot parse a specific surgical edit — falling back to full re-analysis while preserving context');
+    emitStep('planning', 'Making bigger changes|||Complex modification detected', 'Cannot parse a specific surgical edit — falling back to full re-analysis while preserving context');
     const combinedContext = previousUnderstanding
       ? `${previousUnderstanding.level1_intent.primaryGoal}. ${userMessage}`
       : userMessage;
@@ -1647,7 +1647,7 @@ function handlePlanModification(
     updatedPlan = learningEngine.applyLearnedPatterns(updatedPlan);
     const reasoning = analyzeSemantics(updatedPlan);
     updatedPlan = enrichPlanWithReasoning(updatedPlan, reasoning);
-    emitStep('planning', 'Plan rebuilt with modifications',
+    emitStep('planning', 'Plan updated|||Plan rebuilt with modifications',
       `Now has ${updatedPlan.modules.length} modules, ${updatedPlan.pages.length} pages`
     );
     const responseContent = `## Updated Plan\n\nI've incorporated your changes:\n\n${formatPlanAsMessage(updatedPlan)}`;
@@ -1660,7 +1660,7 @@ function handlePlanModification(
     };
   }
 
-  emitStep('planning', 'Modification intent parsed',
+  emitStep('planning', 'Understood your changes|||Modification intent parsed',
     intents.map(i => `${i.action} ${i.targetType !== 'unknown' ? i.targetType + ' ' : ''}"${i.targetName}"${i.newName ? ` → "${i.newName}"` : ''}`).join('; ')
   );
 
@@ -1687,17 +1687,17 @@ function handlePlanModification(
 
     modifiedPlan = result.plan;
     changeDescriptions.push(result.description);
-    emitStep('planning', 'Applied modification', result.description);
+    emitStep('planning', 'Change applied|||Applied modification', result.description);
   }
 
-  emitStep('planning', 'Applying learned patterns', 'Enhancing updated plan with successful patterns');
+  emitStep('planning', 'Using past experience|||Applying learned patterns', 'Enhancing updated plan with successful patterns');
   modifiedPlan = learningEngine.applyLearnedPatterns(modifiedPlan);
 
-  emitStep('planning', 'Running contextual analysis', 'Re-analyzing entity relationships and business rules on modified plan');
+  emitStep('planning', 'Analyzing updated plan|||Running contextual analysis', 'Re-analyzing entity relationships and business rules on modified plan');
   const reasoning = analyzeSemantics(modifiedPlan);
   modifiedPlan = enrichPlanWithReasoning(modifiedPlan, reasoning);
 
-  emitStep('planning', 'Contextual reasoning applied',
+  emitStep('planning', 'Analysis applied|||Contextual reasoning applied',
     `Enriched with ${reasoning.relationships.length} relationships, ${reasoning.computedFields.length} computed fields, ${reasoning.businessRules.length} rules, ${reasoning.uiPatterns.length} UI patterns`
   );
 
@@ -1706,7 +1706,7 @@ function handlePlanModification(
   modifiedPlan.estimatedComplexity = entityCount > 8 || pageCount > 12 ? 'Large' :
     entityCount > 4 || pageCount > 6 ? 'Medium' : 'Small';
 
-  emitStep('planning', 'Plan updated surgically',
+  emitStep('planning', 'Plan updated|||Plan updated surgically',
     `Now has ${modifiedPlan.modules.length} modules, ${modifiedPlan.pages.length} pages — only the requested changes were applied`
   );
 
@@ -1767,7 +1767,7 @@ async function handleIterativeEdit(
     };
   }
 
-  emitStep('editing', 'Analyzing your edit request', `Understanding what you want to change in the ${state.existingFiles.length}-file project`);
+  emitStep('editing', 'Working on your edit|||Analyzing your edit request', `Understanding what you want to change in the ${state.existingFiles.length}-file project`);
 
   const editResult = processEditRequest({
     userMessage,
@@ -1780,7 +1780,7 @@ async function handleIterativeEdit(
   }
 
   if (editResult.edits.length === 0) {
-    emitStep('editing', 'No changes identified', 'Could not determine specific edits from your request');
+    emitStep('editing', 'Could not find specific changes|||No changes identified', 'Could not determine specific edits from your request');
     return {
       responseContent: `I understood your request but couldn't determine the specific changes to make. Could you be more specific? For example:\n\n- "Change the header background to blue"\n- "Add a phone number field to the contact form"\n- "Add a new page called Reports"\n- "Fix the import error in Dashboard.tsx"`,
       newPhase: 'editing',
@@ -1790,7 +1790,7 @@ async function handleIterativeEdit(
 
   const updatedFiles = applyEditsToFiles(state.existingFiles, editResult.edits);
 
-  emitStep('editing', 'Edits applied successfully',
+  emitStep('editing', 'Changes applied|||Edits applied successfully',
     `Modified ${editResult.edits.filter(e => e.editType === 'modify').length} files, ` +
     `created ${editResult.edits.filter(e => e.editType === 'create').length} files`
   );

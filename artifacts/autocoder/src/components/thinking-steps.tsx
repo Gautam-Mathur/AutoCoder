@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, Brain, Search, Layers, Code, ShieldCheck, Sparkles, Users, ClipboardList, GraduationCap, GitBranch, Building2, Palette, Zap, Database, Globe, LayoutGrid, Wrench, Eye, TestTube, PackageCheck, BookOpen } from "lucide-react";
+import { ChevronDown, ChevronRight, Brain, Search, Layers, Code, ShieldCheck, Sparkles, Users, ClipboardList, GraduationCap, GitBranch, Building2, Palette, Zap, Database, Globe, LayoutGrid, Wrench, Eye, TestTube, PackageCheck, BookOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface ThinkingStep {
@@ -7,6 +7,15 @@ export interface ThinkingStep {
   label: string;
   detail?: string;
   timestamp?: number;
+}
+
+function parseFriendlyLabel(label: string): { friendly: string; technical: string | null } {
+  const sep = label.indexOf('|||');
+  if (sep === -1) return { friendly: label, technical: null };
+  return {
+    friendly: label.substring(0, sep).trim(),
+    technical: label.substring(sep + 3).trim() || null,
+  };
 }
 
 const phaseConfig: Record<string, { icon: typeof Brain; color: string; label: string }> = {
@@ -42,6 +51,7 @@ interface ThinkingStepsProps {
 
 export function ThinkingSteps({ steps, isActive }: ThinkingStepsProps) {
   const [isExpanded, setIsExpanded] = useState(true);
+  const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set());
 
   if (steps.length === 0 && !isActive) return null;
 
@@ -51,6 +61,22 @@ export function ThinkingSteps({ steps, isActive }: ThinkingStepsProps) {
 
   const activeStages = new Set(steps.map(s => s.phase));
   const stageCount = activeStages.size;
+
+  const toggleStep = (index: number) => {
+    setExpandedSteps(prev => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+  };
+
+  const latestFriendly = steps.length > 0
+    ? parseFriendlyLabel(steps[steps.length - 1].label).friendly
+    : 'Thinking...';
 
   return (
     <div className="mb-2" data-testid="thinking-steps">
@@ -73,8 +99,8 @@ export function ThinkingSteps({ steps, isActive }: ThinkingStepsProps) {
           isActive ? "text-primary" : "text-muted-foreground"
         )}>
           {isActive
-            ? (steps.length > 0 ? steps[steps.length - 1].label : 'Thinking...')
-            : `Dev Team Activity (${steps.length} steps across ${stageCount} modules)`
+            ? latestFriendly
+            : `Building your app (${steps.length} steps)`
           }
         </span>
         <ChevronDown className={cn(
@@ -89,47 +115,60 @@ export function ThinkingSteps({ steps, isActive }: ThinkingStepsProps) {
             const config = phaseConfig[step.phase] || phaseConfig.understanding;
             const Icon = config.icon;
             const isLast = i === steps.length - 1;
-            const isWhyStep = step.label.toLowerCase().startsWith('why');
-            const isReasoningStep = step.label.toLowerCase().includes('reasoning') || step.label.toLowerCase().includes('rationale');
+            const { friendly, technical } = parseFriendlyLabel(step.label);
+            const hasExpandableContent = !!(technical || step.detail);
+            const isStepExpanded = expandedSteps.has(i);
 
             return (
               <div
                 key={i}
                 className={cn(
-                  "flex items-start gap-2 py-1 text-xs transition-opacity",
+                  "py-1 text-xs transition-opacity",
                   isLast && isActive ? "opacity-100" : "opacity-70",
-                  (isWhyStep || isReasoningStep) && "pl-3 border-l-2 border-dashed",
-                  isWhyStep && "border-amber-500/30",
-                  isReasoningStep && "border-purple-500/30"
                 )}
                 data-testid={`thinking-step-${i}`}
               >
-                <Icon className={cn(
-                  "h-3 w-3 mt-0.5 flex-shrink-0",
-                  config.color,
-                  isLast && isActive && "animate-pulse"
-                )} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className={cn(
-                      "font-medium",
-                      (isWhyStep || isReasoningStep) ? "text-muted-foreground italic" : config.color
-                    )}>
-                      {step.label}
-                    </span>
-                    <span className="text-muted-foreground/40 text-[9px] font-mono">
-                      {config.label}
-                    </span>
-                  </div>
-                  {step.detail && (
-                    <p className={cn(
-                      "text-[10px] mt-0.5 leading-snug",
-                      (isWhyStep || isReasoningStep) ? "text-muted-foreground/60 italic" : "text-muted-foreground/70"
-                    )}>
-                      {step.detail}
-                    </p>
+                <div
+                  className={cn(
+                    "flex items-start gap-2",
+                    hasExpandableContent && "cursor-pointer"
                   )}
+                  onClick={() => hasExpandableContent && toggleStep(i)}
+                >
+                  <Icon className={cn(
+                    "h-3 w-3 mt-0.5 flex-shrink-0",
+                    config.color,
+                    isLast && isActive && "animate-pulse"
+                  )} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className={cn("font-medium", config.color)}>
+                        {friendly}
+                      </span>
+                      {hasExpandableContent && (
+                        <ChevronRight className={cn(
+                          "h-2.5 w-2.5 text-muted-foreground/50 transition-transform flex-shrink-0",
+                          isStepExpanded && "rotate-90"
+                        )} />
+                      )}
+                    </div>
+                  </div>
                 </div>
+
+                {isStepExpanded && hasExpandableContent && (
+                  <div className="ml-5 mt-1 pl-2 border-l border-dashed border-muted-foreground/20 space-y-0.5">
+                    {technical && (
+                      <p className="text-[10px] text-muted-foreground/60 font-mono leading-snug">
+                        {technical}
+                      </p>
+                    )}
+                    {step.detail && (
+                      <p className="text-[10px] text-muted-foreground/50 leading-snug">
+                        {step.detail}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}
