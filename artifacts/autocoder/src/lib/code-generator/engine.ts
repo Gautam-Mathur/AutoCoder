@@ -32,6 +32,7 @@ import {
 import { analyzePrompt, generateProject, formatProjectResponse, shouldUseProGenerator, analyzePromptWithThinking, generateProjectWithThinking } from "./pro-generator";
 import type { ThinkingStep, ThinkingCallback } from "./pro-generator";
 import { validateGeneratedCode } from "./code-validator";
+import { detectStandaloneScript, generateStandaloneScript, formatScriptResponse } from "./script-generator";
 
 // Format runnable project as response with file blocks
 function formatRunnableProjectResponse(project: RunnableProject): string {
@@ -256,6 +257,24 @@ export function generateCodeWithThinking(
       detail: 'Updating your existing project instead of creating new',
     });
     const response = generateCodeWithContext(input, existingFiles);
+    return { response, thinkingSteps: steps };
+  }
+
+  // STANDALONE SCRIPT: Detect non-web script/program requests (Python, Go, Rust, Node)
+  const scriptDetection = detectStandaloneScript(input);
+  if (scriptDetection.isScript) {
+    emit({
+      phase: 'understanding',
+      label: `Standalone ${scriptDetection.language} script detected`,
+      detail: `Generating ${scriptDetection.language} project for: ${scriptDetection.taskDescription}`,
+    });
+    const scriptApp = generateStandaloneScript(scriptDetection.language, scriptDetection.taskDescription, input);
+    emit({
+      phase: 'generating',
+      label: `Generated ${scriptApp.files.length} files`,
+      detail: scriptApp.files.map(f => f.path).join(', '),
+    });
+    const response = formatScriptResponse(scriptApp, scriptDetection.language);
     return { response, thinkingSteps: steps };
   }
 
@@ -893,6 +912,14 @@ function handleErrorAnalysis(input: string, errorMessage: string): string {
 
 // Main generation function
 export function generateCode(input: string): string {
+  // STANDALONE SCRIPT: Detect non-web script/program requests (Python, Go, Rust, Node)
+  // Must run FIRST before any other routing to catch script/program requests early
+  const scriptDetection = detectStandaloneScript(input);
+  if (scriptDetection.isScript) {
+    const scriptApp = generateStandaloneScript(scriptDetection.language, scriptDetection.taskDescription, input);
+    return formatScriptResponse(scriptApp, scriptDetection.language);
+  }
+
   // ADVANCED NLU: Process input with full intelligence pipeline
   const intelligence = processWithIntelligence(input);
   const { intent: semanticIntent, decomposition } = intelligence;

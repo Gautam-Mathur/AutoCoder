@@ -13,3 +13,4 @@ export type { ProjectRequirements, ThinkingStep, ThinkingCallback } from "./pro-
 export type { GeneratedProject as ProGeneratedProject } from "./pro-generator";
 export { validateGeneratedCode, autoFixCode } from "./code-validator";
 export type { ValidationResult, ValidationError, ValidationWarning } from "./code-validator";
+export { detectStandaloneScript, generateStandaloneScript, formatScriptResponse } from "./script-generator";

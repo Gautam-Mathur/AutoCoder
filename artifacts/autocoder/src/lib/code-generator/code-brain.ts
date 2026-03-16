@@ -837,7 +837,7 @@ export function parseIntent(input: string): CodeIntent {
   };
 }
 
-function extractTarget(input: string): string {
+export function extractTarget(input: string): string {
   // Try to extract what they want to build
   const patterns = [
     /(?:create|build|make|generate)\s+(?:a\s+)?(.+?)(?:\s+with|\s+that|\s+using|$)/i,
