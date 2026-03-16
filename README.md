@@ -10,9 +10,10 @@ Describe a project in plain English and AutoCoder generates a full-stack codebas
 database schema, API routes, React components, and wiring — all from a local AI model
 running on your machine.
 
-An 8-stage generation pipeline with a built-in knowledge base (4,600+ lines of best
-practices, entity archetypes, and code patterns) compensates for local model limitations,
-pushing code quality toward cloud-model levels.
+A 17-stage generation pipeline backed by a massive knowledge base (172,000+ lines covering
+40+ industry domains, 500+ programming concepts, 900+ best practices, 500+ anti-patterns,
+and 300+ production code snippets across 5 full technology stacks) compensates for local
+model limitations, pushing code quality toward cloud-model levels.
 
 ## Run on Replit (quickest)
 
@@ -76,7 +77,7 @@ See `.env.example` for the full list with comments.
 ```
 AutoCoder/
 ├── artifacts/
-│   ├── api-server/       # Express API — 35+ AI modules, 8-stage SLM pipeline
+│   ├── api-server/       # Express API — 108+ modules, 17-stage SLM pipeline, 172K-line knowledge base
 │   ├── autocoder/        # React + Vite frontend — chat UI, IDE, WebContainer preview
 │   └── mockup-sandbox/   # Component preview server for canvas prototyping
 ├── lib/

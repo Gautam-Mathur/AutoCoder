@@ -105,7 +105,7 @@ cd lib/db && npx drizzle-kit push
 ```
 autocoder/
 ├── artifacts/
-│   ├── api-server/      # Express API (port 3001)
+│   ├── api-server/      # Express API — 108+ modules, 17-stage pipeline, 172K-line knowledge base
 │   └── autocoder/       # React + Vite frontend (port 5173)
 ├── lib/
 │   ├── db/              # Drizzle ORM schema + DB connection
@@ -116,6 +116,8 @@ autocoder/
 ├── package.json         # Root workspace config
 └── pnpm-workspace.yaml  # pnpm workspace definition
 ```
+
+The API server includes a massive knowledge base (~172,000 lines) covering 40+ industry domains, 500+ programming concepts, 900+ best practices, 500+ anti-patterns, and 300+ production code snippets across 5 technology stacks (MERN, Django, Spring Boot, .NET, Go+React).
 
 ## Troubleshooting
 

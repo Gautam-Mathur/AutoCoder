@@ -71,7 +71,7 @@ Express 5 API server. Routes live in `src/routes/` and use `@workspace/api-zod` 
 
 - Entry: `src/index.ts` — reads `PORT`, starts Express + HTTP server (with WebSocket support via ws)
 - Routes: `src/routes/autocoder.ts` — the main AutoCoder routes + WebSocket handlers; `src/routes/health.ts` — health check
-- Modules: `src/modules/` — 35+ AI-powered modules (code generation, planning, security scanning, etc.)
+- Modules: `src/modules/` — 108+ modules including a 172,000-line knowledge base (40+ industry domains, 500+ concepts, 900+ best practices, 500+ anti-patterns, 300+ code snippets across 5 technology stacks)
 - SLM system: 8 registered stage templates (understand, design, semantic, quality, schema, api, components, generate) initialized at startup via `slm-registry.ts`. When an AI endpoint is available, the pipeline uses SLM to enhance understanding (implicit requirements, inferred entities) and codegen (function-body improvements). Falls back to rules-only mode if no endpoint is configured.
 - Snapshot system: Per-project snapshots only (generic prewarm disabled). The route `/api/cache/build-snapshot` accepts a project's package.json, upgrades it via `upgradePackageJson()` (cross-references dependency registry, removes bad packages, applies renames), and builds an npm install snapshot. Frontend applies the upgraded package.json back to the WebContainer.
 - Validation: Multi-pass `validateAndFix()` in `post-generation-validator.ts` catches import/export mismatches, missing dependencies, and Vite-specific issues (Tailwind v4 directives, missing vite.config.ts, missing React imports, missing default exports in App.tsx). Auto-fixes are applied iteratively (up to 3 passes).

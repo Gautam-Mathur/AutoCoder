@@ -57,27 +57,36 @@ AutoCoder is a self-hosted AI-powered full-stack application generator. Given a 
 
 ## 2. Lines of Code
 
-> Counted March 15, 2026, excluding `node_modules`, `dist`, `.cache`, and lock files.
+> Counted March 16, 2026, excluding `node_modules`, `dist`, `.cache`, and lock files.
 
 ### Summary
 
 | Metric | Count |
 |---|---|
-| **Total lines** | **~172,000** |
-| TypeScript (`.ts`) | 139,123 lines across 185 files |
-| TypeScript React (`.tsx`) | 27,999 lines across 146 files |
+| **Total lines** | **~338,000** |
+| TypeScript (`.ts`) | ~310,000 lines across 188 files |
+| TypeScript React (`.tsx`) | ~28,000 lines across 146 files |
 | CSS | 481 lines |
-| Markdown (`.md`) | 1,700 lines (DOCS.md ~1,690 + replit.md ~130) |
+| Markdown (`.md`) | ~3,500 lines |
 | JSON config | 1,580 lines |
 
 ### By Package
 
 | Package | Lines |
 |---|---|
-| `artifacts/api-server/src` | ~94,100 |
-| `artifacts/autocoder/src` | ~64,400 |
-| `lib/` (shared) | ~3,000 |
-| Config, scripts, docs | ~9,900 |
+| `artifacts/api-server/src` | ~267,000 |
+| `artifacts/autocoder/src` | ~65,400 |
+| `lib/` (shared) | ~1,750 |
+| Config, scripts, docs | ~4,000 |
+
+### Knowledge Base Breakdown
+
+| File | Lines | Content |
+|---|---|---|
+| `knowledge-base.ts` | ~79,900 | 500+ concepts, 300+ code snippets, 900+ best practices, 500+ anti-patterns |
+| `stack-knowledge-base.ts` | ~62,000 | Stack-specific content across MERN, Django, Spring Boot, .NET, Go+React |
+| `domain-knowledge.ts` | ~30,600 | 40+ industry domains with entities, workflows, roles, KPIs |
+| **Total knowledge base** | **~172,500** | Type-safe, production-quality content |
 
 ### API Server Module Count
 
@@ -87,11 +96,11 @@ AutoCoder is a self-hosted AI-powered full-stack application generator. Given a 
 | SLM engine, stages & registry | 10 |
 | AI backend (LLM clients, generators) | 6 |
 | Quality systems | 7 |
-| Domain knowledge | 4 |
+| Domain knowledge + knowledge bases | 4 |
 | Storage layer | 3 |
 | REST routes & middleware | 8 |
-| Utilities & supporting modules | ~50 |
-| **Total** | **106 `.ts` files** |
+| Utilities & supporting modules | ~52 |
+| **Total** | **108 `.ts` files** |
 
 ### Frontend Module Count
 
@@ -118,7 +127,7 @@ workspace/
 │   │   │   │   ├── autocoder.ts      # All ~80 REST endpoints + WebSocket handlers
 │   │   │   │   ├── health.ts         # GET /api/health
 │   │   │   │   └── index.ts          # Route aggregator
-│   │   │   ├── modules/              # 60+ domain modules (see §15)
+│   │   │   ├── modules/              # 108+ domain modules (see §16)
 │   │   │   └── client-lib/
 │   │   │       └── code-generator/   # Shared validator + pro-generator (server-side)
 │   │   └── package.json
@@ -634,37 +643,59 @@ Two generation paths for full-stack app creation:
 
 ## 10. Domain Knowledge System
 
-**Files:** `domain-knowledge.ts`, `domain-synthesis-engine.ts`, `entity-field-inference.ts`
+**Files:** `domain-knowledge.ts` (~30,600 lines), `knowledge-base.ts` (~79,900 lines), `stack-knowledge-base.ts` (~62,000 lines), `domain-synthesis-engine.ts`, `entity-field-inference.ts`
 
-### Industry Domains
+### Industry Domains (~30,600 lines, 40+ domains)
 
-The system recognizes 15+ pre-modeled industry domains. Each domain specifies:
+The system recognizes 40+ pre-modeled industry domains across `domain-knowledge.ts`. Each domain specifies:
 
 - **keywords** — trigger phrases for auto-detection
-- **modules** — named functional areas (e.g., "Project Management", "Billing")
-- **entities** — the core data entities with typed fields
-- **workflows** — state machines (e.g., Invoice: draft → sent → paid → overdue)
-- **roles** — user roles with permission descriptions
-- **defaultKPIs** — dashboard metrics relevant to the domain
-- **commonIntegrations** — third-party services typically needed (e.g., Stripe for e-commerce)
+- **modules** — 4-6 named functional areas with 3-5 pages each (e.g., "Patient Registration", "Clinical Workflows")
+- **entities** — 8-15 core data entities with 5-10 typed fields and relationships
+- **workflows** — 2-4 state machines with 4-7 states each (e.g., Insurance Claim: Filed → Under Review → Investigation → Approved → Settled)
+- **roles** — 3-5 user roles with 5-10 granular permissions each
+- **defaultKPIs** — 5-10 dashboard metrics relevant to the domain
+- **commonIntegrations** — 4-8 third-party services typically needed
 
-| Domain ID | Name | Example keywords |
-|-----------|------|-----------------|
-| `consulting` | Consulting / Professional Services | consulting, advisory, freelance, contractor |
-| `healthcare` | Healthcare / Medical | hospital, clinic, patient, EMR, medical record |
-| `ecommerce` | E-Commerce / Retail | store, shop, product, cart, checkout, order |
-| `education` | Education / Learning | course, student, learning, LMS, quiz |
-| `finance` | Finance / FinTech | banking, investment, portfolio, transaction |
-| `real-estate` | Real Estate | property, listing, lease, tenant, agent |
-| `logistics` | Logistics / Supply Chain | shipment, warehouse, inventory, tracking |
-| `hr` | Human Resources | employee, payroll, attendance, recruitment |
-| `restaurant` | Restaurant / Food Service | menu, reservation, order, kitchen, POS |
-| `saas` | SaaS / Software Product | subscription, tenant, billing, usage, plan |
-| `legal` | Legal / Law Firm | case, client, contract, billing, matter |
-| `manufacturing` | Manufacturing | production, BOM, quality control, supplier |
-| `nonprofit` | Nonprofit | donor, grant, volunteer, campaign |
-| `fitness` | Fitness / Wellness | member, class, trainer, workout, subscription |
-| `general` | General | catch-all for unrecognized domains |
+| Category | Domains |
+|----------|---------|
+| Healthcare & Medical | healthcare, dental, optometry, pharmacy, veterinary, senior-care |
+| Financial | accounting, insurance, pawn-shops, auction-platforms |
+| Real Estate & Property | real-estate, property-management, home-inspection |
+| Hospitality | hotel, restaurant, catering-events |
+| Services | salon-spa, gym-fitness, landscaping, roofing, plumbing-electrical, hvac, pest-control, cleaning-janitorial, laundry-dry-cleaning, moving-storage |
+| Logistics & Transport | trucking, shipping-logistics, supply-chain, customs-brokerage |
+| Tech & Industrial | manufacturing, mining, energy-utilities, telecom, gaming-esports |
+| Specialized | cannabis-dispensary, brewery-distillery, ev-charging, drone-operations, biotech-lab, marina-boatyard |
+| Community | church-religious, non-profit, childcare-daycare, camp-recreation |
+| Professional | staffing-temp, consulting, legal, hr, education |
+| E-Commerce & SaaS | ecommerce, saas, finance |
+| Other | printing-signage, waste-recycling, cloud-hosting, disaster-relief, event-management, media-entertainment, general |
+
+### Core Knowledge Base (~79,900 lines)
+
+`knowledge-base.ts` contains the platform's engineering knowledge:
+
+| Content Type | Count | Coverage |
+|---|---|---|
+| **Concepts** | 500+ | 16 categories: paradigm, pattern, principle, data-structure, algorithm, architecture, testing, security, performance, typescript, react, database, devops, accessibility, ux, deployment |
+| **Code Snippets** | 300+ | 20-80 lines of real production TypeScript each (WebSocket, GraphQL, Redis, Kafka, gRPC, OAuth2, circuit breaker, saga orchestrator, etc.) |
+| **Best Practices** | 900+ | do/don't lists across security, testing, performance, architecture, deployment, observability, error handling, API design |
+| **Anti-Patterns** | 500+ | Severity-rated (critical/high/medium/low) with bad/good code examples and fix instructions |
+
+### Stack Knowledge Base (~62,000 lines)
+
+`stack-knowledge-base.ts` provides stack-specific content for 5 technology stacks:
+
+| Stack | Coverage |
+|---|---|
+| **MERN** (MongoDB, Express, React, Node) | Mongoose schemas, Express middleware, React patterns with TypeScript |
+| **Django** (Python, Django, PostgreSQL, Celery) | Django ORM with F/Q expressions, DRF viewsets, Celery tasks |
+| **Spring Boot** (Java, Spring, PostgreSQL, Maven) | JPA entities, Spring Security, `@Transactional`/`@Cacheable` patterns |
+| **.NET** (C#, ASP.NET Core, EF Core, SQL Server) | Minimal APIs, MediatR CQRS, FluentValidation, Entity Framework |
+| **Go+React** (Go, Gin, React, PostgreSQL) | GORM models, Gin middleware, context-based services, slog logging |
+
+Each stack includes stack-specific concepts, code snippets, best practices, and anti-patterns with idiomatic production code.
 
 ### Entity Archetypes
 
@@ -1275,7 +1306,7 @@ Complete reference of all modules in `artifacts/api-server/src/modules/`:
 | `dependency-resolver.ts` | Stage 12 — resolves required packages from generated file imports, patches `package.json`. |
 | `design-system-engine.ts` | Stage 6 — generates domain-aware design tokens. Produces `DesignSystem`. |
 | `deterministic-stages.ts` | Contains the rule-based implementations of stages that have both rule + SLM versions. |
-| `domain-knowledge.ts` | 15+ industry domain models with entities, workflows, roles, KPIs. See §9. |
+| `domain-knowledge.ts` | 40+ industry domain models (~30,600 lines) with entities, workflows, roles, KPIs across healthcare, finance, hospitality, logistics, services, tech, and more. See §10. |
 | `domain-synthesis-engine.ts` | Synthesizes custom domain models for unrecognized domains. |
 | `dual-path-executor.ts` | Runs both rule-based and SLM paths in parallel, picks the winner by quality score. |
 | `enhanced-intent-recognition.ts` | Improved intent classification with entity extraction and confidence scoring. |
@@ -1289,7 +1320,8 @@ Complete reference of all modules in `artifacts/api-server/src/modules/`:
 | `index.ts` | Module barrel exports. |
 | `integration-planner.ts` | Plans third-party integrations based on domain keywords (Stripe, SendGrid, Twilio, etc.). |
 | `intel-memory.ts` | Extracts and stores key-value intelligence from conversation messages. |
-| `knowledge-base.ts` | Programming concepts, best practices, and learning paths database. |
+| `knowledge-base.ts` | Core engineering knowledge base (~79,900 lines): 500+ concepts, 300+ code snippets, 900+ best practices, 500+ anti-patterns. Merges stack-knowledge-base content at load time. See §10. |
+| `stack-knowledge-base.ts` | Stack-specific knowledge base (~62,000 lines) for MERN, Django, Spring Boot, .NET, and Go+React. Exports `STACK_CONCEPTS`, `STACK_CODE_SNIPPETS`, `STACK_BEST_PRACTICES`, `STACK_ANTI_PATTERNS`. See §10. |
 | `knowledge-stages.ts` | Knowledge-driven generation stages that use the domain + entity knowledge bases. |
 | `language-registry.ts` | Registry of programming languages with syntax and template information. |
 | `language-registry-extended.ts` | Extended language data including less common languages. |
