@@ -1,0 +1,143 @@
+build a python script to print hello world
+
+Building your app (2 steps)
+Searching knowledge base
+Found relevant concepts
+## Template Literal Types
+
+**Category**: typescript | **Difficulty**: advanced | **Languages**: typescript
+
+Build string-literal union types from other types using template literal syntax.
+
+### Explanation
+TypeScript template literal types let you construct string types dynamically. Combine with mapped types and conditional types for powerful type-level string manipulation. Useful for typed route paths, event names, and CSS property generation. Syntax: `type Greeting = \`hello_\${string}\``.
+
+### Examples
+typescript
+
+type HTTPMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
+type APIRoute = '/users' | '/posts' | '/comments';
+type Endpoint = `${HTTPMethod} ${APIRoute}`;
+// "GET /users" | "GET /posts" | "GET /comments" | "POST /users" | ...
+
+typescript
+
+type EventName<T extends string> = `on${Capitalize<T>}`;
+type ClickEvent = EventName<'click'>; // "onClick"
+type SubmitEvent = EventName<'submit'>; // "onSubmit"
+
+typescript
+
+type CSSProperty = 'margin' | 'padding';
+type Direction = 'Top' | 'Right' | 'Bottom' | 'Left';
+type SpacingProp = `${CSSProperty}${Direction}`;
+// "marginTop" | "marginRight" | ... | "paddingLeft"
+
+
+### Related Concepts
+- ts-generics
+- ts-utility-types
+- ts-discriminated-unions
+
+---
+
+## Type-Safe Builder Pattern
+
+**Category**: typescript | **Difficulty**: advanced | **Languages**: typescript
+
+Fluent API that tracks which properties have been set at the type level, preventing incomplete builds.
+
+### Explanation
+Combine generics with intersection types to create a builder where each method adds a property to the accumulated type. The build() method is only callable when all required properties are present. This prevents runtime errors from incomplete construction.
+
+### Examples
+typescript
+
+class QueryBuilder<T extends Record<string, unknown> = {}> {
+  private params: Record<string, unknown> = {};
+
+  where<K extends string, V>(key: K, value: V): QueryBuilder<T & Record<K, V>> {
+    this.params[key] = value;
+    return this as any;
+  }
+
+  orderBy(column: string, dir: 'asc' | 'desc' = 'asc'): this {
+    this.params._orderBy = { column, dir };
+    return this;
+  }
+
+  limit(n: number): this {
+    this.params._limit = n;
+    return this;
+  }
+
+  build(): T & { _orderBy?: { column: string; dir: string }; _limit?: number } {
+    return this.params as any;
+  }
+}
+
+const query = new QueryBuilder()
+  .where('status', 'active')
+  .where('role', 'admin')
+  .orderBy('createdAt', 'desc')
+  .limit(20)
+  .build();
+// Typed as { status: string; role: string; _orderBy?: ...; _limit?: number }
+
+
+### Related Concepts
+- ts-generics
+- factory
+- ts-mapped-types
+
+---
+
+## Web Accessibility (a11y)
+
+**Category**: accessibility | **Difficulty**: intermediate | **Languages**: html, typescript
+
+Building web applications usable by everyone, including people using assistive technologies.
+
+### Explanation
+Accessibility (a11y) ensures your app works for users with visual, motor, auditory, or cognitive disabilities. Key principles: (1) Semantic HTML — use button, nav, main, aside, not div for everything. (2) ARIA attributes — add roles and states when semantic HTML is insufficient. (3) Keyboard navigation — all interactive elements must be keyboard-reachable. (4) Color contrast — WCAG AA requires 4.5:1 for text. (5) Focus management — trap focus in modals, return focus on close.
+
+### Examples
+typescript
+
+// Semantic HTML structure
+<main>
+  <h1>Dashboard</h1>
+  <nav aria-label="Main navigation">
+    <ul role="menubar">
+      <li role="menuitem"><a href="/dashboard">Dashboard</a></li>
+      <li role="menuitem"><a href="/settings">Settings</a></li>
+    </ul>
+  </nav>
+  <section aria-labelledby="tasks-heading">
+    <h2 id="tasks-heading">Recent Tasks</h2>
+    <ul role="list">
+      <li role="listitem">Task 1</li>
+    </ul>
+  </section>
+</main>
+
+typescript
+
+// Accessible button with loading state
+<button
+  onClick={handleSubmit}
+  disabled={isSubmitting}
+  aria-busy={isSubmitting}
+  aria-label={isSubmitting ? 'Submitting form' : 'Submit form'}
+>
+  {isSubmitting ? <Spinner aria-hidden="true" /> : null}
+  {isSubmitting ? 'Submitting...' : 'Submit'}
+</button>
+
+
+### Related Concepts
+- react-custom-hooks
+
+
+Want to know more about any of these, or would you like to build something?
+

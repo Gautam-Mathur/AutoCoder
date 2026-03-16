@@ -1392,6 +1392,7 @@ Complete reference of all modules in `artifacts/api-server/src/modules/`:
 | `quality-scoring-engine.ts` | Stage 16 Pass 5 — aggregates quality scores into a final report. |
 | `reverse-plan-generator.ts` | Reverse-engineers a `ProjectPlan` from an existing codebase via `generatePlanFromCodebase()`. |
 | `schema-designer.ts` | Stage 8 — designs normalized database schema. Produces `SchemaDesign`. |
+| `script-generator.ts` | Server-side standalone script/CLI generator. `detectStandaloneScript()` classifies requests by language + keyword priority. `generateStandaloneScript()` produces Python/Go/Rust/Node.js/TypeScript project files. Integrated in `conversation-phase-handler.ts` before knowledge base routing. See §16. |
 | `security-module.ts` | Vulnerability scanner — checks for OWASP top 10 patterns in generated code. |
 | `security-planner.ts` | Plans the security architecture: auth type, RBAC, input validation strategy. |
 | `slm-feedback-loop.ts` | Tracks SLM vs rule win rates. See §7. |

@@ -11,6 +11,7 @@ import { extractEntitiesFromText } from './domain-synthesis-engine.js';
 import { orchestrateGeneration, type OrchestrationResult } from './pipeline-orchestrator.js';
 import { processEditRequest, type EditResult, type FileEdit } from './targeted-code-editor.js';
 import { classifyMessage, handleLocalResponse } from './local-response-handler.js';
+import { detectStandaloneScript, generateStandaloneScript, formatScriptResponse } from './script-generator.js';
 import { inferEntityFields, isSemanticDuplicate, inferFieldsFromExamples } from './entity-field-inference.js';
 import { planUXFlows } from './ux-flow-planner.js';
 import { planIntegrations } from './integration-planner.js';
@@ -134,6 +135,19 @@ export async function handleMessage(
   }
 
   if (currentPhase === 'complete' || currentPhase === 'editing') {
+    const scriptDetection = detectStandaloneScript(userMessage);
+    if (scriptDetection.isScript) {
+      emitStep('understand', 'Understanding your request|||Standalone script detection', `Detected ${scriptDetection.language} script request: ${scriptDetection.taskDescription}`);
+      const script = generateStandaloneScript(scriptDetection.language, scriptDetection.taskDescription, userMessage);
+      emitStep('generate', `Creating your ${scriptDetection.language} project|||Generating ${script.files.length} files`, script.files.map(f => f.path).join(', '));
+      const response = formatScriptResponse(script);
+      return {
+        responseContent: response,
+        newPhase: 'complete',
+        thinkingSteps,
+      };
+    }
+
     const category = classifyMessage(userMessage);
     const isEditRequest = ['unknown'].includes(category) ||
       /\b(add|change|modify|update|remove|delete|fix|replace|rename|move|create|implement|make|refactor|redesign|restyle|improve)\b/i.test(userMessage);
@@ -151,6 +165,19 @@ export async function handleMessage(
   }
 
   if (currentPhase === 'initial') {
+    const scriptDetection = detectStandaloneScript(userMessage);
+    if (scriptDetection.isScript) {
+      emitStep('understand', 'Understanding your request|||Standalone script detection', `Detected ${scriptDetection.language} script request: ${scriptDetection.taskDescription}`);
+      const script = generateStandaloneScript(scriptDetection.language, scriptDetection.taskDescription, userMessage);
+      emitStep('generate', `Creating your ${scriptDetection.language} project|||Generating ${script.files.length} files`, script.files.map(f => f.path).join(', '));
+      const response = formatScriptResponse(script);
+      return {
+        responseContent: response,
+        newPhase: 'complete',
+        thinkingSteps,
+      };
+    }
+
     const isProject = isProjectCreationRequest(userMessage);
     if (!isProject) {
       const localResult = handleLocalResponse(userMessage, state);
