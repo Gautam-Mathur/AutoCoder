@@ -61,6 +61,23 @@ const FEATURE_KEYWORDS: Record<string, string[]> = {
   'kanban': ['kanban', 'board', 'drag and drop', 'columns', 'cards'],
   'multi-language': ['multi-language', 'multilingual', 'i18n', 'internationalization', 'localization', 'translate'],
   'api': ['api', 'rest', 'endpoint', 'integration', 'webhook', 'connect'],
+  'drag-and-drop': ['drag and drop', 'drag-and-drop', 'draggable', 'sortable', 'reorder'],
+  'dark mode': ['dark mode', 'dark theme', 'light mode', 'theme toggle', 'theme switching'],
+  'file upload': ['file upload', 'upload files', 'attachment', 'attachments', 'file manager', 'document upload'],
+  'payment': ['payment', 'payments', 'stripe', 'paypal', 'checkout', 'billing', 'subscription billing', 'payment gateway'],
+  'social login': ['social login', 'google login', 'oauth', 'sso', 'single sign-on', 'sign in with'],
+  'two-factor auth': ['2fa', 'two-factor', 'two factor', 'mfa', 'multi-factor', 'otp', 'authenticator'],
+  'offline': ['offline', 'pwa', 'progressive web app', 'service worker', 'offline-first'],
+  'map': ['map', 'maps', 'geolocation', 'location', 'gps', 'coordinates', 'mapbox', 'leaflet', 'google maps'],
+  'comments': ['comment', 'comments', 'commenting', 'discussion', 'reply', 'replies', 'thread'],
+  'mentions': ['mention', 'mentions', '@mention', 'tagging users'],
+  'tags': ['tag', 'tags', 'tagging', 'label', 'labels', 'categorize'],
+  'favorites': ['favorite', 'favorites', 'bookmark', 'bookmarks', 'save for later', 'wishlist'],
+  'sharing': ['share', 'sharing', 'shareable link', 'invite', 'collaborate', 'collaboration'],
+  'audit log': ['audit log', 'audit trail', 'activity log', 'history', 'changelog'],
+  'qr code': ['qr code', 'qr', 'barcode', 'scan'],
+  'pagination': ['pagination', 'paginate', 'infinite scroll', 'load more'],
+  'accessibility': ['accessibility', 'a11y', 'screen reader', 'aria', 'wcag'],
 };
 
 const WORKFLOW_INDICATORS: Record<string, string[]> = {
@@ -69,6 +86,67 @@ const WORKFLOW_INDICATORS: Record<string, string[]> = {
   'order-fulfillment': ['fulfillment', 'fulfill', 'ship', 'deliver', 'dispatch', 'receive'],
   'scheduling': ['schedule', 'scheduling', 'booking', 'calendar', 'availability', 'slot', 'appointment'],
   'billing': ['billing', 'invoice', 'charge', 'payment', 'pay', 'due', 'overdue'],
+  'onboarding': ['onboarding', 'onboard', 'welcome', 'setup wizard', 'getting started', 'first-time'],
+  'escalation': ['escalation', 'escalate', 'priority raise', 'urgent', 'critical alert'],
+  'refund': ['refund', 'return', 'cancellation', 'cancel order', 'money back', 'chargeback'],
+  'renewal': ['renewal', 'renew', 'subscription', 'recurring', 'auto-renew', 'expiration'],
+  'verification': ['verification', 'verify', 'kyc', 'identity check', 'confirm identity', 'validation'],
+  'audit': ['audit', 'compliance', 'review cycle', 'inspection', 'quality check'],
+  'assignment': ['assign', 'assignment', 'delegate', 'allocate', 'hand off', 'transfer'],
+  'feedback': ['feedback', 'review', 'rating', 'satisfaction', 'survey', 'nps'],
+};
+
+const VERB_INTENT_MAP: Record<string, { workflow?: string; feature?: string }> = {
+  'track': { workflow: 'status-tracking' },
+  'tracking': { workflow: 'status-tracking' },
+  'monitor': { workflow: 'status-tracking', feature: 'charts' },
+  'manage': {},
+  'schedule': { workflow: 'scheduling', feature: 'calendar' },
+  'book': { workflow: 'scheduling', feature: 'calendar' },
+  'sell': { workflow: 'order-fulfillment', feature: 'payment' },
+  'approve': { workflow: 'approval' },
+  'review': { workflow: 'approval' },
+  'assign': { workflow: 'assignment' },
+  'delegate': { workflow: 'assignment' },
+  'deliver': { workflow: 'order-fulfillment' },
+  'ship': { workflow: 'order-fulfillment' },
+  'bill': { workflow: 'billing', feature: 'payment' },
+  'invoice': { workflow: 'billing' },
+  'notify': { feature: 'notification' },
+  'alert': { feature: 'notification' },
+  'report': { feature: 'export' },
+  'analyze': { feature: 'charts' },
+  'visualize': { feature: 'charts' },
+  'search': { feature: 'search' },
+  'filter': { feature: 'search' },
+  'export': { feature: 'export' },
+  'import': { feature: 'import' },
+  'upload': { feature: 'file upload' },
+  'automate': { workflow: 'status-tracking' },
+  'subscribe': { workflow: 'renewal', feature: 'payment' },
+  'onboard': { workflow: 'onboarding' },
+  'verify': { workflow: 'verification' },
+  'audit': { workflow: 'audit', feature: 'audit log' },
+  'collaborate': { feature: 'sharing' },
+  'share': { feature: 'sharing' },
+  'chat': { feature: 'realtime' },
+  'message': { feature: 'realtime' },
+};
+
+const QUALIFIER_SIGNALS: Record<string, { scale?: 'small' | 'medium' | 'large'; impliedFeatures: string[]; impliedWorkflows: string[] }> = {
+  'enterprise': { scale: 'large', impliedFeatures: ['role-based', 'audit log', 'two-factor auth'], impliedWorkflows: ['approval', 'audit'] },
+  'multi-tenant': { scale: 'large', impliedFeatures: ['role-based'], impliedWorkflows: ['onboarding'] },
+  'saas': { scale: 'large', impliedFeatures: ['payment', 'role-based'], impliedWorkflows: ['onboarding', 'renewal'] },
+  'startup': { scale: 'medium', impliedFeatures: ['charts'], impliedWorkflows: [] },
+  'small business': { scale: 'small', impliedFeatures: [], impliedWorkflows: [] },
+  'personal': { scale: 'small', impliedFeatures: [], impliedWorkflows: [] },
+  'simple': { scale: 'small', impliedFeatures: [], impliedWorkflows: [] },
+  'comprehensive': { scale: 'large', impliedFeatures: ['charts', 'export', 'notification'], impliedWorkflows: [] },
+  'advanced': { scale: 'large', impliedFeatures: ['charts', 'role-based'], impliedWorkflows: [] },
+  'basic': { scale: 'small', impliedFeatures: [], impliedWorkflows: [] },
+  'for my team': { scale: 'small', impliedFeatures: ['sharing'], impliedWorkflows: [] },
+  'b2b': { scale: 'large', impliedFeatures: ['role-based', 'export'], impliedWorkflows: ['approval'] },
+  'marketplace': { scale: 'large', impliedFeatures: ['search', 'payment', 'notification'], impliedWorkflows: ['order-fulfillment', 'feedback'] },
 };
 
 const TOPIC_TEMPLATES: Record<string, { appName: string; intro: string; actors: string[]; coreActions: string[]; entities: string[]; features: string[] }> = {
@@ -703,25 +781,340 @@ function inferEntitiesFromTopic(topic: string): string[] {
   return entities.slice(0, 6);
 }
 
+interface UserIntent {
+  statedFeatures: string[];
+  verbWorkflows: string[];
+  verbFeatures: string[];
+  qualifierScale: 'small' | 'medium' | 'large' | null;
+  qualifierImpliedFeatures: string[];
+  qualifierImpliedWorkflows: string[];
+  coreTopic: string;
+}
+
+function extractUserIntent(topic: string): UserIntent {
+  const lower = topic.toLowerCase();
+  const statedFeatures: string[] = [];
+  const verbWorkflows: string[] = [];
+  const verbFeatures: string[] = [];
+  let qualifierScale: 'small' | 'medium' | 'large' | null = null;
+  const qualifierImpliedFeatures: string[] = [];
+  const qualifierImpliedWorkflows: string[] = [];
+
+  const featurePhrasePatterns = [
+    /\bwith\s+(.+?)(?:\s+(?:and|for|that|which|in)\b|$)/gi,
+    /\bincluding\s+(.+?)(?:\s+(?:and|for|that|which)\b|$)/gi,
+    /\bthat (?:has|includes|supports|features)\s+(.+?)(?:\s+(?:and|for)\b|$)/gi,
+  ];
+
+  const connectorSplit = /\s*(?:,\s*|\s+and\s+|\s*&\s*)/;
+
+  for (const pattern of featurePhrasePatterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(lower)) !== null) {
+      const phrase = match[1].trim();
+      const parts = phrase.split(connectorSplit).map(p => p.trim()).filter(p => p.length > 1);
+      for (const part of parts) {
+        for (const [featureName, keywords] of Object.entries(FEATURE_KEYWORDS)) {
+          if (keywords.some(k => part.includes(k))) {
+            if (!statedFeatures.includes(featureName)) statedFeatures.push(featureName);
+          }
+        }
+        if (!statedFeatures.some(f => part.includes(f.replace(/-/g, ' ')))) {
+          const cleaned = part.replace(/\b(a|an|the|some|full|basic|advanced)\b/gi, '').trim();
+          if (cleaned.length > 2 && !statedFeatures.includes(cleaned)) {
+            statedFeatures.push(cleaned);
+          }
+        }
+      }
+    }
+  }
+
+  for (const [featureName, keywords] of Object.entries(FEATURE_KEYWORDS)) {
+    if (keywords.some(k => lower.includes(k)) && !statedFeatures.includes(featureName)) {
+      statedFeatures.push(featureName);
+    }
+  }
+
+  const words = lower.split(/\s+/);
+  for (const word of words) {
+    const cleaned = word.replace(/[^a-z]/g, '');
+    const intent = VERB_INTENT_MAP[cleaned];
+    if (intent) {
+      if (intent.workflow && !verbWorkflows.includes(intent.workflow)) {
+        verbWorkflows.push(intent.workflow);
+      }
+      if (intent.feature && !verbFeatures.includes(intent.feature)) {
+        verbFeatures.push(intent.feature);
+      }
+    }
+  }
+
+  for (const [qualifier, signals] of Object.entries(QUALIFIER_SIGNALS)) {
+    if (lower.includes(qualifier)) {
+      if (signals.scale && !qualifierScale) qualifierScale = signals.scale;
+      for (const f of signals.impliedFeatures) {
+        if (!qualifierImpliedFeatures.includes(f)) qualifierImpliedFeatures.push(f);
+      }
+      for (const w of signals.impliedWorkflows) {
+        if (!qualifierImpliedWorkflows.includes(w)) qualifierImpliedWorkflows.push(w);
+      }
+    }
+  }
+
+  let coreTopic = topic;
+  for (const qualifier of Object.keys(QUALIFIER_SIGNALS)) {
+    coreTopic = coreTopic.replace(new RegExp(`\\b${qualifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi'), '').trim();
+  }
+  coreTopic = coreTopic
+    .replace(/\bwith\s+.+$/i, '')
+    .replace(/\bthat\s+(has|includes|supports|features)\s+.+$/i, '')
+    .replace(/\bincluding\s+.+$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return {
+    statedFeatures,
+    verbWorkflows,
+    verbFeatures,
+    qualifierScale,
+    qualifierImpliedFeatures,
+    qualifierImpliedWorkflows,
+    coreTopic: coreTopic || topic,
+  };
+}
+
+function detectMultipleDomains(topic: string): IndustryDomain[] {
+  const lower = topic.toLowerCase();
+  const domains: IndustryDomain[] = [];
+
+  const domainMatches = detectDomainFromText(lower);
+  if (domainMatches.length > 0 && domainMatches[0].confidence > 0.1) {
+    domains.push(domainMatches[0].domain);
+  }
+
+  const domainPhrasePatterns = [
+    /\bwith\s+(\w[\w\s]*?)(?:\s+(?:management|tracking|system))\b/gi,
+    /\band\s+(\w[\w\s]*?)(?:\s+(?:management|tracking|system))\b/gi,
+  ];
+
+  const allDomains = getAllDomains();
+  const domainIds = new Set(domains.map(d => d.id));
+
+  for (const pattern of domainPhrasePatterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(lower)) !== null) {
+      const phrase = match[1].trim();
+      for (const domain of allDomains) {
+        if (domainIds.has(domain.id)) continue;
+        const domainTerms = [domain.id, domain.name.toLowerCase(), ...domain.keywords];
+        if (domainTerms.some(t => phrase.includes(t) || t.includes(phrase))) {
+          domains.push(domain);
+          domainIds.add(domain.id);
+          break;
+        }
+      }
+    }
+  }
+
+  const connectorSegments = lower.split(/\s+(?:with|and|plus|\+)\s+/);
+  if (connectorSegments.length > 1) {
+    for (const segment of connectorSegments.slice(1)) {
+      const segmentMatches = detectDomainFromText(segment.trim());
+      if (segmentMatches.length > 0 && segmentMatches[0].confidence > 0.1) {
+        const d = segmentMatches[0].domain;
+        if (!domainIds.has(d.id)) {
+          domains.push(d);
+          domainIds.add(d.id);
+        }
+      }
+      for (const domain of allDomains) {
+        if (domainIds.has(domain.id)) continue;
+        const terms = [domain.id, domain.name.toLowerCase(), ...domain.keywords];
+        if (terms.some(t => segment.includes(t))) {
+          domains.push(domain);
+          domainIds.add(domain.id);
+          break;
+        }
+      }
+    }
+  }
+
+  for (const templateKey of Object.keys(TOPIC_TEMPLATES)) {
+    if (lower.includes(templateKey)) {
+      const entityMap = inferEntitiesFromTopic(templateKey);
+      if (entityMap.length > 0) {
+        for (const domain of allDomains) {
+          if (domainIds.has(domain.id)) continue;
+          const terms = [domain.id, domain.name.toLowerCase(), ...domain.keywords];
+          if (terms.some(t => templateKey.includes(t))) {
+            domains.push(domain);
+            domainIds.add(domain.id);
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  return domains;
+}
+
+function mergeMultipleDomains(domains: IndustryDomain[], topic: string, options: PromptGenOptions, intent: UserIntent): PromptEnhancerResult {
+  const scale = options.scale || intent.qualifierScale || 'medium';
+  const scaleDesc = pickScaleDescription(scale);
+  const additions: string[] = [];
+  const sentences: string[] = [];
+  const allEntities: string[] = [];
+  const allWorkflows: string[] = [];
+  const allFeatures: string[] = [];
+
+  sentences.push(`${topic}. Build ${scaleDesc} integrated platform combining ${naturalList(domains.map(d => d.name.toLowerCase()))}.`);
+  additions.push(`Multi-domain: ${domains.map(d => d.name).join(' + ')}`);
+
+  for (const domain of domains) {
+    const moduleCap = scale === 'small' ? 2 : Math.min(3, domain.modules.length);
+    const selectedModules = domain.modules.slice(0, moduleCap);
+
+    for (const mod of selectedModules) {
+      for (const e of mod.entities) {
+        if (!allEntities.includes(e)) allEntities.push(e);
+      }
+    }
+
+    for (const wf of domain.workflows.slice(0, 2)) {
+      if (!allWorkflows.includes(wf.name)) {
+        allWorkflows.push(wf.name);
+        const stateList = wf.states.slice(0, 4).join(', ');
+        sentences.push(`Include ${wf.name.toLowerCase()} workflow (${stateList}).`);
+      }
+    }
+
+    for (const mod of selectedModules) {
+      for (const page of mod.pages) {
+        for (const f of page.features) {
+          if (!allFeatures.includes(f)) allFeatures.push(f);
+        }
+      }
+    }
+  }
+
+  if (allEntities.length > 0) {
+    sentences.push(`Core data entities include ${naturalList(allEntities.slice(0, 10))}.`);
+    additions.push(`Added ${Math.min(allEntities.length, 10)} entities from ${domains.length} domains`);
+  }
+
+  for (const wf of intent.verbWorkflows) {
+    if (!allWorkflows.some(w => w.toLowerCase().includes(wf.replace(/-/g, ' ')))) {
+      sentences.push(`Include ${wf.replace(/-/g, ' ')} workflow.`);
+      allWorkflows.push(wf);
+    }
+  }
+  for (const wf of intent.qualifierImpliedWorkflows) {
+    if (!allWorkflows.some(w => w.toLowerCase().includes(wf.replace(/-/g, ' ')))) {
+      sentences.push(`Include ${wf.replace(/-/g, ' ')} workflow.`);
+      allWorkflows.push(wf);
+    }
+  }
+  if (allWorkflows.length > 0) {
+    additions.push(`Added ${allWorkflows.length} workflows`);
+  }
+
+  const featureList = buildFeatureList(intent, allFeatures, options);
+  sentences.push(`Include features for ${naturalList(featureList)}.`);
+  additions.push(`Added ${featureList.length} features`);
+
+  const primaryDomain = domains[0];
+  if (primaryDomain.roles.length > 0 && options.includeAuth !== false) {
+    const roleNames = primaryDomain.roles.map(r => r.name.toLowerCase());
+    sentences.push(`Support role-based access control with roles for ${naturalList(roleNames)}.`);
+    additions.push(`Added ${roleNames.length} roles`);
+  }
+
+  if (primaryDomain.defaultKPIs.length > 0) {
+    const kpis = primaryDomain.defaultKPIs.slice(0, 4);
+    sentences.push(`The dashboard should display key metrics such as ${naturalList(kpis)}.`);
+    additions.push('Added KPI dashboard');
+  }
+
+  return {
+    prompt: sentences.join(' '),
+    additions,
+    domain: domains.map(d => d.name).join(' + '),
+    entityCount: Math.min(allEntities.length, 10),
+    featureCount: featureList.length,
+  };
+}
+
+function buildFeatureList(intent: UserIntent, domainFeatures: string[], options: PromptGenOptions): string[] {
+  const features: string[] = [];
+
+  for (const sf of intent.statedFeatures) {
+    const readable = sf.replace(/-/g, ' ');
+    if (!features.includes(readable)) features.push(readable);
+  }
+
+  for (const vf of intent.verbFeatures) {
+    const readable = vf.replace(/-/g, ' ');
+    if (!features.includes(readable)) features.push(readable);
+  }
+
+  for (const qf of intent.qualifierImpliedFeatures) {
+    const readable = qf.replace(/-/g, ' ');
+    if (!features.includes(readable)) features.push(readable);
+  }
+
+  if (domainFeatures.includes('search') || domainFeatures.includes('filter-by-status')) {
+    if (!features.includes('search') && !features.includes('search and filtering')) features.push('search and filtering');
+  }
+  if (domainFeatures.includes('export') && !features.includes('export') && !features.includes('data export')) {
+    features.push('data export');
+  }
+  if ((domainFeatures.includes('kpi-cards') || domainFeatures.includes('charts') || options.includeAnalytics) && !features.includes('charts') && !features.includes('analytics charts')) {
+    features.push('analytics charts');
+  }
+  if ((domainFeatures.includes('drag-drop') || domainFeatures.includes('kanban')) && !features.includes('kanban') && !features.includes('kanban boards')) {
+    features.push('kanban boards');
+  }
+  if ((domainFeatures.includes('calendar') || domainFeatures.includes('gantt-chart')) && !features.includes('calendar') && !features.includes('calendar views')) {
+    features.push('calendar views');
+  }
+
+  if (!features.includes('status tracking') && !features.some(f => f.includes('tracking'))) features.push('status tracking');
+  if (options.includeAuth !== false && !features.includes('notification') && !features.includes('email notifications')) features.push('email notifications');
+
+  return features.filter((f, i) => features.indexOf(f) === i);
+}
+
 export function generatePrompt(topic: string, options?: PromptGenOptions): PromptEnhancerResult {
+  const intent = extractUserIntent(topic);
+
   const opts: PromptGenOptions = {
-    scale: 'medium',
+    scale: intent.qualifierScale || 'medium',
     includeAuth: true,
     includeAnalytics: true,
     style: 'detailed',
     ...options,
   };
+  if (intent.qualifierScale && !options?.scale) {
+    opts.scale = intent.qualifierScale;
+  }
 
   const lowerTopic = topic.toLowerCase().trim();
 
-  const templateKey = Object.keys(TOPIC_TEMPLATES).find(k => lowerTopic.includes(k) || k.includes(lowerTopic));
-  if (templateKey) {
-    return buildPromptFromTemplate(topic, TOPIC_TEMPLATES[templateKey], opts);
+  const domains = detectMultipleDomains(lowerTopic);
+  if (domains.length > 1) {
+    return mergeMultipleDomains(domains, topic, opts, intent);
   }
 
-  const domainMatches = detectDomainFromText(lowerTopic);
-  if (domainMatches.length > 0 && domainMatches[0].confidence > 0.1) {
-    return buildPromptFromDomain(domainMatches[0].domain, topic, opts);
+  const templateKey = Object.keys(TOPIC_TEMPLATES).find(k => lowerTopic.includes(k) || k.includes(lowerTopic));
+  if (templateKey) {
+    const result = buildPromptFromTemplate(topic, TOPIC_TEMPLATES[templateKey], opts);
+    return enrichWithIntent(result, intent, opts);
+  }
+
+  if (domains.length === 1) {
+    const result = buildPromptFromDomain(domains[0], topic, opts);
+    return enrichWithIntent(result, intent, opts);
   }
 
   const allDomains = getAllDomains();
@@ -732,11 +1125,77 @@ export function generatePrompt(topic: string, options?: PromptGenOptions): Promp
       ...domain.keywords,
     ];
     if (domainTerms.some(t => lowerTopic.includes(t) || t.includes(lowerTopic))) {
-      return buildPromptFromDomain(domain, topic, opts);
+      const result = buildPromptFromDomain(domain, topic, opts);
+      return enrichWithIntent(result, intent, opts);
     }
   }
 
-  return buildPromptFromKeywords(topic, opts);
+  return buildPromptFromKeywordsEnhanced(topic, opts, intent);
+}
+
+function buildPromptFromKeywordsEnhanced(topic: string, options: PromptGenOptions, intent: UserIntent): PromptEnhancerResult {
+  const result = buildPromptFromKeywords(intent.coreTopic || topic, options);
+  return enrichWithIntent(result, intent, options);
+}
+
+function enrichWithIntent(result: PromptEnhancerResult, intent: UserIntent, options: PromptGenOptions): PromptEnhancerResult {
+  const extra: string[] = [];
+
+  const statedNotInPrompt = intent.statedFeatures.filter(f => {
+    const readable = f.replace(/-/g, ' ');
+    return !result.prompt.toLowerCase().includes(readable);
+  });
+  if (statedNotInPrompt.length > 0) {
+    extra.push(`Additionally include ${naturalList(statedNotInPrompt.map(f => f.replace(/-/g, ' ')))}.`);
+    result.additions.push(`Preserved ${statedNotInPrompt.length} user-stated features`);
+    result.featureCount += statedNotInPrompt.length;
+  }
+
+  const missingVerbWorkflows = intent.verbWorkflows.filter(w => {
+    const readable = w.replace(/-/g, ' ');
+    return !result.prompt.toLowerCase().includes(readable);
+  });
+  if (missingVerbWorkflows.length > 0) {
+    extra.push(`Include workflows for ${naturalList(missingVerbWorkflows.map(w => w.replace(/-/g, ' ')))}.`);
+    result.additions.push(`Added ${missingVerbWorkflows.length} verb-inferred workflows`);
+  }
+
+  const missingVerbFeatures = intent.verbFeatures.filter(f => {
+    const readable = f.replace(/-/g, ' ');
+    return !result.prompt.toLowerCase().includes(readable) && !intent.statedFeatures.includes(f);
+  });
+  if (missingVerbFeatures.length > 0) {
+    extra.push(`Support ${naturalList(missingVerbFeatures.map(f => f.replace(/-/g, ' ')))}.`);
+    result.additions.push(`Added ${missingVerbFeatures.length} verb-inferred features`);
+    result.featureCount += missingVerbFeatures.length;
+  }
+
+  const missingQualifierFeatures = intent.qualifierImpliedFeatures.filter(f => {
+    const readable = f.replace(/-/g, ' ');
+    return !result.prompt.toLowerCase().includes(readable) && !intent.statedFeatures.includes(f);
+  });
+  if (missingQualifierFeatures.length > 0) {
+    extra.push(`Include ${naturalList(missingQualifierFeatures.map(f => f.replace(/-/g, ' ')))}.`);
+    result.additions.push(`Added ${missingQualifierFeatures.length} qualifier-implied features`);
+    result.featureCount += missingQualifierFeatures.length;
+  }
+
+  const missingQualifierWorkflows = intent.qualifierImpliedWorkflows.filter(w => {
+    const readable = w.replace(/-/g, ' ');
+    return !result.prompt.toLowerCase().includes(readable);
+  });
+  if (missingQualifierWorkflows.length > 0) {
+    extra.push(`Include workflows for ${naturalList(missingQualifierWorkflows.map(w => w.replace(/-/g, ' ')))}.`);
+    result.additions.push(`Added ${missingQualifierWorkflows.length} qualifier-implied workflows`);
+  }
+
+  if (extra.length > 0) {
+    result.prompt = result.prompt.trim();
+    if (!result.prompt.endsWith('.')) result.prompt += '.';
+    result.prompt += ' ' + extra.join(' ');
+  }
+
+  return result;
 }
 
 export function upgradePrompt(existingPrompt: string): PromptEnhancerResult {
