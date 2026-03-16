@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "exportedAt": "2026-03-16T00:01:45.775Z",
+  "exportedAt": "2026-03-16T01:37:21.817Z",
   "patterns": [
     {
       "patternType": "entity-structure",
@@ -677,7 +677,7 @@
         ],
         "qualityScore": 90
       },
-      "successCount": 12,
+      "successCount": 13,
       "failureCount": 0,
       "reliability": 1
     },
@@ -3267,7 +3267,7 @@
           "createdAt"
         ]
       },
-      "successCount": 4,
+      "successCount": 6,
       "failureCount": 0,
       "reliability": 1
     },
@@ -3304,7 +3304,7 @@
           "form-wizard view"
         ]
       },
-      "successCount": 2,
+      "successCount": 3,
       "failureCount": 0,
       "reliability": 1
     },
@@ -3378,7 +3378,7 @@
           ]
         }
       },
-      "successCount": 2,
+      "successCount": 3,
       "failureCount": 0,
       "reliability": 1
     },
@@ -3702,7 +3702,7 @@
       "key": "quality-score-general",
       "value": "91",
       "category": "architecture",
-      "frequency": 12
+      "frequency": 13
     }
   ],
   "stats": {
