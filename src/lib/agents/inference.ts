@@ -1,4 +1,18 @@
 import { prisma } from '../db';
+const undici = typeof window === 'undefined' ? require('undici') : null;
+const undiciAgent = undici ? undici.Agent : null;
+const undiciFetch = undici ? undici.fetch : fetch;
+
+// Reusable Undici Agent with a 30-minute idle socket timeout (cached globally to survive dev server hot-reloads)
+const globalForAgent = global as unknown as { ollamaAgent: any };
+const longTimeoutDispatcher = globalForAgent.ollamaAgent ?? (undiciAgent ? new undiciAgent({
+  headersTimeout: 1800000,   // 30 minutes in ms
+  bodyTimeout: 1800000,      // 30 minutes in ms
+  keepAliveTimeout: 1800000, // 30 minutes in ms
+}) : null);
+if (process.env.NODE_ENV !== 'production' && typeof window === 'undefined') {
+  globalForAgent.ollamaAgent = longTimeoutDispatcher;
+}
 
 interface Message {
   role: 'system' | 'user' | 'assistant';
@@ -476,12 +490,14 @@ export async function runInference(
       payload.format = 'json';
     }
 
-    const res = await fetch(`${host}/api/chat`, {
+    const res = await undiciFetch(`${host}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       cache: 'no-store',
       body: JSON.stringify(payload),
       signal: combinedSignal,
+      // Pass the custom dispatcher with extended timeouts using type-casting
+      ...(longTimeoutDispatcher ? { dispatcher: longTimeoutDispatcher } : {} as any),
     });
 
     if (!res.ok) {
@@ -533,7 +549,7 @@ export async function runInference(
         reader.releaseLock();
       }
     } else {
-      const data = await res.json();
+      const data = (await res.json()) as any;
       return data.message.content;
     }
     return accumulatedContent;

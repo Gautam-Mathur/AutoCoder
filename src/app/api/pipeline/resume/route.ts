@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { loadExecutiveMemory, StageLedger } from '@/lib/agents/ruflo/memory';
 
 export async function POST(request: NextRequest) {
   try {
-    const { conversationId } = await request.json();
+    const { conversationId, conflictDescription, resolvedConflictOption } = await request.json();
 
     if (!conversationId) {
       return NextResponse.json({ error: 'conversationId is required' }, { status: 400 });
@@ -15,6 +16,17 @@ export async function POST(request: NextRequest) {
 
     if (!conversation) {
       return NextResponse.json({ error: 'Conversation not found' }, { status: 404 });
+    }
+
+    // Handle conflict resolution log if provided
+    if (conflictDescription && resolvedConflictOption) {
+      const memoryState = await loadExecutiveMemory(conversationId);
+      const ledger = new StageLedger(conversationId, memoryState);
+      await ledger.logDecision({
+        type: 'conflict_resolution',
+        description: conflictDescription,
+        resolvedOption: resolvedConflictOption,
+      });
     }
 
     // Advance stage if paused there

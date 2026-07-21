@@ -37,7 +37,7 @@ export async function GET() {
 
     // Group by model
     const groups: Record<string, { totalTime: number; totalTokens: number; count: number }> = {};
-    outputs.forEach((o) => {
+    outputs.forEach((o: any) => {
       // Normalize model name (e.g. remove "ollama/" prefix if any)
       const modelName = o.model.replace('ollama/', '');
       if (!groups[modelName]) {

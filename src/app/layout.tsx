@@ -15,14 +15,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="h-full antialiased dark">
+    <html lang="en" className="h-full antialiased dark" suppressHydrationWarning>
       <head>
         <link
           rel="stylesheet"
           href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;700&display=swap"
         />
       </head>
-      <body className="bg-slate-950 text-on-surface h-screen overflow-hidden flex flex-col antialiased">
+      <body className="bg-slate-950 text-on-surface h-screen overflow-hidden flex flex-col antialiased" suppressHydrationWarning>
         <AppProvider>
           <div className="flex flex-col h-screen overflow-hidden">
             <TopAppBar />

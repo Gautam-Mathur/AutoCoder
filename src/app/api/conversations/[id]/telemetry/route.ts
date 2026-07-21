@@ -27,7 +27,7 @@ export async function GET(
     const latencyHistory: Array<{ stage: string; timeMs: number }> = [];
     const frequencyMap: Record<string, number> = {};
 
-    history.forEach((h) => {
+    history.forEach((h: any) => {
       const logMsg = h.logs || '';
       if (logMsg.trim().startsWith('{') && logMsg.includes('"telemetryType":"rich_step_log"')) {
         try {
@@ -74,7 +74,7 @@ export async function GET(
     });
 
     // Seed from outputs (successful states)
-    outputs.forEach((out) => {
+    outputs.forEach((out: any) => {
       const tokens = out.tokenUsage || 0;
       if (!tokenUsageMap[out.agentName]) {
         tokenUsageMap[out.agentName] = tokens;

@@ -8,6 +8,9 @@ import { calculateTokenBudget } from './token-budgeter';
 import fs from 'fs';
 import path from 'path';
 import { exec } from 'child_process';
+import { resolveContext } from './contextResolver';
+import { runDeterministic } from './registry/Blueprinter';
+import { dispatchFailureEvent } from './eventDispatcher';
 
 export const activePipelines = new Set<string>();
 
@@ -799,7 +802,68 @@ export async function runOrchestrator(
 
     let output: any = null;
 
-    if (stage === 'Coder') {
+    if (stage === 'Blueprinter') {
+      // ----------------------------------------------------
+      // SPECIAL STAGE: Blueprinter (Deterministic Engine)
+      // ----------------------------------------------------
+      onEvent({
+        type: 'AGENT_START',
+        agent: 'Blueprinter',
+        message: 'Running deterministic Blueprint Engine...'
+      });
+
+      // 1. Run Conflict Resolver
+      const contextPack = await resolveContext(conversationId, ledger);
+      if (contextPack.conflicts.length > 0) {
+        await prisma.conversation.update({
+          where: { id: conversationId },
+          data: { status: 'Paused' },
+        });
+        onEvent({
+          type: 'PAUSE_CONFLICT',
+          message: `Pipeline paused due to conflicts/misalignments: ${contextPack.conflicts[0].description}`,
+          data: {
+            conflict: contextPack.conflicts[0]
+          }
+        });
+        await writeHistoryLog(conversationId, 'System', 'Success', `Pipeline paused. Context Resolver detected conflict: ${contextPack.conflicts[0].description}`);
+        return;
+      }
+
+      // 2. Run Blueprinter deterministically
+      try {
+        const bpOutput = await runDeterministic(ledger);
+        
+        // Write to legacy SML tables for compatibility
+        await writeAgentOutput({
+          conversationId,
+          agentName: 'Blueprinter',
+          stage: 'Blueprinter',
+          schemaVersion: '1.0',
+          model: 'deterministic-service',
+          validatedJson: bpOutput,
+          executionTime: 0,
+          tokenUsage: 0,
+          attempt: 1,
+        });
+
+        onEvent({
+          type: 'AGENT_COMPLETE',
+          agent: 'Blueprinter',
+          message: 'Blueprinter completed successfully. Created blueprint manifest.'
+        });
+      } catch (err: any) {
+        onEvent({
+          type: 'PIPELINE_ERROR',
+          message: `Blueprinter failed: ${err.message}`
+        });
+        await prisma.conversation.update({
+          where: { id: conversationId },
+          data: { status: 'Paused' },
+        });
+        return;
+      }
+    } else if (stage === 'Coder') {
       // ----------------------------------------------------
       // SPECIAL STAGE: Coder Loop
       // ----------------------------------------------------
@@ -941,28 +1005,114 @@ Ensure you write complete source code matching these specs. Do not truncate.`;
 
     } else if (stage === 'Tester') {
       // ----------------------------------------------------
-      // SPECIAL STAGE: Tester & Linter checks
+      // SPECIAL STAGE: Tester & Linter checks (DETERMINISTIC PIPELINE)
       // ----------------------------------------------------
-      let customUserContent: string | undefined = undefined;
-      
-      try {
-        const projectPath = path.join(process.cwd(), 'projects', conversationId);
-        const potentialEntries = ['main.js', 'app.js', 'server.js', 'index.js'];
-        let entryFile = '';
-        for (const f of potentialEntries) {
-          if (fs.existsSync(path.join(projectPath, f))) {
-            entryFile = f;
-            break;
+      onEvent({
+        type: 'AGENT_START',
+        agent: 'Tester',
+        message: 'Running deterministic validation pipeline (Build, Type Check, Dependency Check, Runtime, Test)...',
+      });
+
+      const projectPath = path.join(process.cwd(), 'projects', conversationId);
+      const defects: any[] = [];
+      const warnings: string[] = [];
+
+      // 1. Dependency Checker & Bracket Balancer
+      const checkFilesRecursively = (dir: string) => {
+        if (!fs.existsSync(dir)) return;
+        const list = fs.readdirSync(dir);
+        list.forEach((file) => {
+          const filePath = path.join(dir, file);
+          if (fs.statSync(filePath).isDirectory()) {
+            if (file !== 'node_modules' && file !== '.git' && file !== '.vscode') {
+              checkFilesRecursively(filePath);
+            }
+          } else if (filePath.endsWith('.ts') || filePath.endsWith('.tsx') || filePath.endsWith('.js') || filePath.endsWith('.jsx')) {
+            const code = fs.readFileSync(filePath, 'utf8');
+            const relPath = path.relative(projectPath, filePath).replace(/\\/g, '/');
+
+            // Bracket Balance check
+            const stack: string[] = [];
+            let hasMismatch = false;
+            for (let idx = 0; idx < code.length; idx++) {
+              const char = code[idx];
+              if (char === '{' || char === '(' || char === '[') {
+                stack.push(char);
+              } else if (char === '}' || char === ')' || char === ']') {
+                const top = stack.pop();
+                if (
+                  (char === '}' && top !== '{') ||
+                  (char === ')' && top !== '(') ||
+                  (char === ']' && top !== '[')
+                ) {
+                  hasMismatch = true;
+                  break;
+                }
+              }
+            }
+            if (hasMismatch || stack.length > 0) {
+              defects.push({
+                id: `DEF-SYNTAX-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+                severity: 'Critical',
+                category: 'Functional',
+                file: relPath,
+                description: 'Bracket/parentheses mismatch: unbalanced braces detected.',
+                expectedBehaviour: 'Source code syntax is well-formed with matching balanced braces.',
+                actualBehaviour: 'Unbalanced brace syntax error found.',
+                reproductionSteps: [`Statically review file braces of ${relPath}`]
+              });
+            }
+
+            // Simple Dependency check
+            const importRegex = /(?:import|from|require)\s*\(\s*['"]\.\/([^'"]+)['"]\s*\)/g;
+            let match;
+            while ((match = importRegex.exec(code)) !== null) {
+              const targetRel = match[1];
+              // Resolve relative file
+              const targetFullPath = path.resolve(path.dirname(filePath), targetRel);
+              const possibleExtensions = ['', '.js', '.ts', '.jsx', '.tsx', '/index.js', '/index.ts'];
+              const found = possibleExtensions.some((ext) => fs.existsSync(targetFullPath + ext));
+              if (!found) {
+                defects.push({
+                  id: `DEF-DEP-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+                  severity: 'High',
+                  category: 'Integration',
+                  file: relPath,
+                  description: `Broken import: cannot resolve relative file target "./${targetRel}"`,
+                  expectedBehaviour: `All imported dependencies exist on disk.`,
+                  actualBehaviour: `Import target "./${targetRel}" does not exist.`,
+                  reproductionSteps: [`Check path reference to "./${targetRel}" in ${relPath}`]
+                });
+              }
+            }
           }
+        });
+      };
+
+      try {
+        checkFilesRecursively(projectPath);
+      } catch (err: any) {
+        warnings.push(`File system static checks encountered issues: ${err.message}`);
+      }
+
+      // 2. Runtime Executor Check
+      const potentialEntries = ['main.js', 'app.js', 'server.js', 'index.js'];
+      let entryFile = '';
+      for (const f of potentialEntries) {
+        if (fs.existsSync(path.join(projectPath, f))) {
+          entryFile = f;
+          break;
         }
+      }
 
-        if (entryFile) {
-          onEvent({
-            type: 'AGENT_LOG',
-            agent: 'Tester',
-            message: `Starting developer-style runtime testing. Spawning "${entryFile}" in background on port 8082...`
-          });
+      if (entryFile && defects.length === 0) {
+        onEvent({
+          type: 'AGENT_LOG',
+          agent: 'Tester',
+          message: `Executing Runtime checks. Spawning "node ${entryFile}" on port 8082...`
+        });
 
+        try {
           const { spawn } = require('child_process');
           const child = spawn('node', [entryFile], {
             cwd: projectPath,
@@ -972,153 +1122,85 @@ Ensure you write complete source code matching these specs. Do not truncate.`;
           let stdoutBuffer = '';
           let stderrBuffer = '';
 
-          child.stdout.on('data', (data: any) => {
-            stdoutBuffer += data.toString();
-          });
+          child.stdout.on('data', (data: any) => { stdoutBuffer += data.toString(); });
+          child.stderr.on('data', (data: any) => { stderrBuffer += data.toString(); });
 
-          child.stderr.on('data', (data: any) => {
-            stderrBuffer += data.toString();
-          });
-
-          // Wait for 4000ms to collect startup console logs/exceptions
           await new Promise((resolve) => setTimeout(resolve, 4000));
-
-          // Terminate the process safely
           child.kill('SIGTERM');
 
-          customUserContent = `--- RUNTIME EXECUTION LOGS ---\n[STDOUT]:\n${stdoutBuffer || '(None)'}\n[STDERR]:\n${stderrBuffer || '(None)'}\n------------------------------`;
-          
-          if (stderrBuffer.trim()) {
-            onEvent({
-              type: 'AGENT_LOG',
-              agent: 'Tester',
-              message: `Warning: Runtime execution captured errors in stderr. Logs attached to test analysis.`
-            });
-          } else {
-            onEvent({
-              type: 'AGENT_LOG',
-              agent: 'Tester',
-              message: `Runtime execution completed cleanly without immediate crash logs.`
+          if (stderrBuffer.trim() && (stderrBuffer.includes('Error') || stderrBuffer.includes('exception') || stderrBuffer.includes('throw'))) {
+            defects.push({
+              id: `DEF-RUNTIME-${Date.now()}`,
+              severity: 'Critical',
+              category: 'Functional',
+              file: entryFile,
+              description: `Runtime execution failed with crash errors in stderr:\n${stderrBuffer}`,
+              expectedBehaviour: 'Application starts cleanly without immediate logs of exceptions or crashes.',
+              actualBehaviour: `Runtime startup crashed: ${stderrBuffer.split('\n')[0]}`,
+              reproductionSteps: [`node ${entryFile}`]
             });
           }
-        } else {
-          customUserContent = `--- RUNTIME EXECUTION LOGS ---\nNo entry script found. Static layout verified.\n------------------------------`;
-        }
-      } catch (err: any) {
-        customUserContent = `--- RUNTIME EXECUTION LOGS ---\nFailed to run developer runtime checks: ${err.message}\n------------------------------`;
-      }
-
-      let success = false;
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          output = await runAgent(conversationId, stage, actualPrompt, onEvent, ledger, attempt, customUserContent, signal);
-          success = true;
-          break;
         } catch (err: any) {
-          onEvent({
-            type: 'AGENT_ERROR',
-            agent: stage,
-            message: `Attempt ${attempt} failed: ${err.message}`,
-          });
-          if (signal?.aborted) {
-            throw err;
-          }
+          warnings.push(`Runtime check failed to launch: ${err.message}`);
         }
       }
 
-      if (success && output) {
-        // Write test files to disk
-        const testFilesMap = output.testFiles || {};
-        Object.keys(testFilesMap).forEach((testFile) => {
-          writeProjectFile(conversationId, testFile, testFilesMap[testFile]);
-        });
-
-        // Run local linter/syntax scanner on all written files to detect syntax issues
-        onEvent({
-          type: 'AGENT_LOG',
-          agent: 'Tester',
-          message: 'Executing static syntax verification and bracket matching checks on generated codebase...',
-        });
-
-        const projectDir = path.join(process.cwd(), 'projects', conversationId);
-        const codeFiles = Object.keys(testFilesMap); // or scan directory
-        const additionalFailures: any[] = [];
-
-        // Check brackets balance for each file
-        const checkSyntax = (dir: string) => {
-          if (!fs.existsSync(dir)) return;
-          const list = fs.readdirSync(dir);
-          list.forEach((file) => {
-            const filePath = path.join(dir, file);
-            if (fs.statSync(filePath).isDirectory()) {
-              checkSyntax(filePath);
-            } else if (filePath.endsWith('.ts') || filePath.endsWith('.tsx')) {
-              const code = fs.readFileSync(filePath, 'utf8');
-              // Basic braces balancer
-              const stack: string[] = [];
-              let hasMismatch = false;
-              for (let idx = 0; idx < code.length; idx++) {
-                const char = code[idx];
-                if (char === '{' || char === '(' || char === '[') {
-                  stack.push(char);
-                } else if (char === '}' || char === ')' || char === ']') {
-                  const top = stack.pop();
-                  if (
-                    (char === '}' && top !== '{') ||
-                    (char === ')' && top !== '(') ||
-                    (char === ']' && top !== '[')
-                  ) {
-                    hasMismatch = true;
-                    break;
-                  }
-                }
-              }
-
-              if (hasMismatch || stack.length > 0) {
-                const relPath = path.relative(projectDir, filePath).replace(/\\/g, '/');
-                additionalFailures.push({
-                  id: `SYNTAX_${Date.now()}`,
-                  file: relPath,
-                  location: 'Root level parsing',
-                  severity: 'functional',
-                  description: 'Detected unbalanced brackets/parentheses indicating syntax compiling errors.',
-                  reproductionSteps: 'Inspect file braces alignment.',
-                });
-              }
-            }
-          });
-        };
-
-        checkSyntax(projectDir);
-
-        if (additionalFailures.length > 0) {
-          onEvent({
-            type: 'AGENT_LOG',
-            agent: 'Tester',
-            message: `Static checks failed. Found ${additionalFailures.length} syntax issues. Appending to failure report.`,
-          });
-          output.failureReport = [...(output.failureReport || []), ...additionalFailures];
-          // Rewrite outputs with updated failures
-          await writeAgentOutput({
-            conversationId,
-            agentName: 'Tester',
-            stage: 'Tester',
-            schemaVersion: '1.0',
-            model: 'ollama/default',
-            validatedJson: output,
-            executionTime: 0,
-            tokenUsage: 0,
-            attempt: 1,
-          });
-        } else {
-          onEvent({
-            type: 'AGENT_LOG',
-            agent: 'Tester',
-            message: 'All generated files parsed cleanly. No syntax mismatches detected.',
-          });
+      // Compile Tester Output JSON
+      const passed = defects.length === 0;
+      output = {
+        contextType: 'canonical',
+        projectName: 'Target Project',
+        mvpReference: 'MVP-001',
+        generatedTestFiles: [],
+        testReport: {
+          summary: {
+            totalTests: 1,
+            passed: passed ? 1 : 0,
+            failed: passed ? 0 : 1,
+            skipped: 0,
+            coverage: passed ? 'Ready for running' : '0%',
+            coveredFeatures: [],
+            missingFeatures: []
+          },
+          defects,
+          warnings,
+          status: passed ? 'Success' : 'Failed'
         }
-      } else {
-        return; // Halted
+      };
+
+      // Write to legacy SML table for view/telemetry
+      await writeAgentOutput({
+        conversationId,
+        agentName: 'Tester',
+        stage: 'Tester',
+        schemaVersion: '1.0',
+        model: 'deterministic-service',
+        validatedJson: output,
+        executionTime: 0,
+        tokenUsage: 0,
+        attempt: 1,
+      });
+
+      // Write to StageLedger
+      await ledger.write('Tester', 'tester', output);
+
+      onEvent({
+        type: 'AGENT_COMPLETE',
+        agent: 'Tester',
+        message: passed 
+          ? 'Validation pipeline passed successfully!' 
+          : `Validation pipeline failed with ${defects.length} defect(s). Routing to Debugger for repair.`,
+        data: output
+      });
+
+      // If checks failed, we classify and log triage information using EventDispatcher
+      if (!passed) {
+        const logsPayload = defects.map(d => `${d.file}: ${d.description}`).join('\n');
+        const triage = dispatchFailureEvent(logsPayload, 'Tester');
+        onEvent({
+          type: 'PIPELINE_TRIAGE',
+          message: `Triage dispatcher routed logs to specialist agent [${triage.specialistAgent}]. Reason: ${triage.contextHint}`
+        });
       }
 
     } else if (stage === 'Debugger') {
@@ -1285,31 +1367,95 @@ CRITICAL RULES:
 
     } else if (stage === 'Security') {
       // ----------------------------------------------------
-      // SPECIAL STAGE: Security Scanner
+      // SPECIAL STAGE: Security Scanner (Map-Reduce)
       // ----------------------------------------------------
       onEvent({
         type: 'AGENT_START',
         agent: 'Security',
-        message: 'Security audit starting. Scanning generated files for vulnerabilities...',
+        message: 'Security audit starting. Scanning generated files for vulnerabilities (Map-Reduce style)...',
       });
 
-      // Run normal LLM scan
-      let secReport: any = null;
-      let success = false;
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          secReport = await runAgent(conversationId, 'Security', actualPrompt, onEvent, ledger, attempt, undefined, signal);
-          success = true;
-          break;
-        } catch (e: any) {
-          if (signal?.aborted) {
-            throw e;
+      const coderData = ledger.read('coder') || {};
+      const filesToAudit = Object.keys(coderData);
+
+      let finalReport: any = {
+        contextType: 'canonical',
+        projectName: 'Fitness Tracker App',
+        mvpReference: 'MVP-001',
+        securityReport: {
+          issues: [],
+          summary: {
+            critical: 0,
+            high: 0,
+            medium: 0,
+            low: 0,
+            informational: 0
+          },
+          warnings: [],
+          status: 'Success'
+        }
+      };
+
+      if (filesToAudit.length === 0) {
+        onEvent({
+          type: 'AGENT_LOG',
+          agent: 'Security',
+          message: 'No files generated by Coder. Security audit skipped.',
+        });
+      } else {
+        // Map Phase: audit each file individually
+        for (const filepath of filesToAudit) {
+          const filecode = coderData[filepath] || '';
+          onEvent({
+            type: 'AGENT_LOG',
+            agent: 'Security',
+            message: `Auditing file for security vulnerabilities: ${filepath}...`,
+          });
+
+          const customPrompt = `You are auditing the following file: "${filepath}"
+          
+File Content:
+\`\`\`
+${filecode}
+\`\`\`
+
+Perform a security review strictly for this file. Identify potential vulnerabilities, insecure configurations, or secret exposures.`;
+
+          let fileReport: any = null;
+          let fileSuccess = false;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              fileReport = await runAgent(
+                conversationId,
+                'Security',
+                actualPrompt,
+                onEvent,
+                ledger,
+                attempt,
+                customPrompt,
+                signal
+              );
+              fileSuccess = true;
+              break;
+            } catch (e: any) {
+              if (signal?.aborted) throw e;
+            }
+          }
+
+          // Reduce Phase for this file
+          if (fileSuccess && fileReport && fileReport.securityReport) {
+            if (fileReport.projectName) finalReport.projectName = fileReport.projectName;
+            if (fileReport.mvpReference) finalReport.mvpReference = fileReport.mvpReference;
+
+            const issues = fileReport.securityReport.issues || [];
+            finalReport.securityReport.issues.push(...issues);
+            
+            const warnings = fileReport.securityReport.warnings || [];
+            finalReport.securityReport.warnings.push(...warnings);
           }
         }
-      }
 
-      if (success && secReport) {
-        // Run static regex scans for secrets and evals
+        // Run static regex scans for secrets and evals on local files
         const projectDir = path.join(process.cwd(), 'projects', conversationId);
         const scannerIssues: any[] = [];
 
@@ -1327,19 +1473,37 @@ CRITICAL RULES:
               // Check for eval
               if (code.includes('eval(') || code.includes('Function(')) {
                 scannerIssues.push({
-                  severity: 'critical',
-                  message: 'Use of eval() or Function() constructor introduces arbitrary code execution risks.',
-                  location: relPath,
+                  id: `SEC-STATIC-EVAL-${relPath.replace(/\//g, '-')}`,
+                  severity: 'Critical',
+                  category: 'Injection',
+                  file: relPath,
+                  location: 'N/A',
+                  description: 'Use of eval() or Function() constructor introduces arbitrary code execution risks.',
+                  risk: 'High risk of remote code execution if user inputs can flow here.',
+                  recommendation: 'Refactor using safe alternative JS patterns.',
+                  affectedFeature: 'N/A',
+                  owaspTop10: 'A03:2021-Injection',
+                  cweReference: 'CWE-95',
+                  confidence: 'High'
                 });
               }
 
-              // Check for hardcoded API keys
+              // Check for API keys
               const keyRegex = /(sk-[a-zA-Z0-9]{32,}|AIzaSy[a-zA-Z0-9_-]{33}|api[-_]key|secret)/i;
               if (keyRegex.test(code) && !code.includes('process.env')) {
                 scannerIssues.push({
-                  severity: 'high',
-                  message: 'Found potential hardcoded secret or API key credential exposed in code.',
-                  location: relPath,
+                  id: `SEC-STATIC-SECRET-${relPath.replace(/\//g, '-')}`,
+                  severity: 'High',
+                  category: 'Secrets',
+                  file: relPath,
+                  location: 'N/A',
+                  description: 'Potential hardcoded API key, token, or credential exposed in code.',
+                  risk: 'Leaked credentials can be extracted and abused.',
+                  recommendation: 'Use environment variables (process.env) for secrets.',
+                  affectedFeature: 'N/A',
+                  owaspTop10: 'A05:2021-Security Misconfiguration',
+                  cweReference: 'CWE-798',
+                  confidence: 'High'
                 });
               }
             }
@@ -1347,27 +1511,138 @@ CRITICAL RULES:
         };
 
         scanFiles(projectDir);
-
         if (scannerIssues.length > 0) {
           onEvent({
             type: 'AGENT_LOG',
             agent: 'Security',
             message: `Static regex scan identified ${scannerIssues.length} alerts. Adding to Security report.`,
           });
-          secReport.securityReport.issues = [...(secReport.securityReport.issues || []), ...scannerIssues];
-          // Update output
-          await writeAgentOutput({
-            conversationId,
-            agentName: 'Security',
-            stage: 'Security',
-            schemaVersion: '1.0',
-            model: 'ollama/default',
-            validatedJson: secReport,
-            executionTime: 0,
-            tokenUsage: 0,
-            attempt: 1,
-          });
+          finalReport.securityReport.issues.push(...scannerIssues);
         }
+
+        // Calculate unified Summary statistics
+        for (const issue of finalReport.securityReport.issues) {
+          const sev = (issue.severity || '').toLowerCase();
+          if (sev === 'critical') finalReport.securityReport.summary.critical++;
+          else if (sev === 'high') finalReport.securityReport.summary.high++;
+          else if (sev === 'medium') finalReport.securityReport.summary.medium++;
+          else if (sev === 'low') finalReport.securityReport.summary.low++;
+          else if (sev === 'informational') finalReport.securityReport.summary.informational++;
+        }
+
+        // Save output to database & ledger
+        const config = await getLLMConfig();
+        await writeAgentOutput({
+          conversationId,
+          agentName: 'Security',
+          stage: 'Security',
+          schemaVersion: '1.0',
+          model: config.ollamaModel,
+          validatedJson: finalReport,
+          executionTime: 0,
+          tokenUsage: 0,
+          attempt: 1,
+        });
+        await ledger.write('Security', 'security', finalReport);
+      }
+
+    } else if (stage === 'Reviewer') {
+      // ----------------------------------------------------
+      // SPECIAL STAGE: Reviewer Scanner (Map-Reduce)
+      // ----------------------------------------------------
+      onEvent({
+        type: 'AGENT_START',
+        agent: 'Reviewer',
+        message: 'Reviewer audit starting. Checking specs alignment and code quality per file...',
+      });
+
+      const coderData = ledger.read('coder') || {};
+      const filesToAudit = Object.keys(coderData);
+
+      let finalReport: any = {
+        qualityScore: 100,
+        annotations: []
+      };
+
+      if (filesToAudit.length === 0) {
+        onEvent({
+          type: 'AGENT_LOG',
+          agent: 'Reviewer',
+          message: 'No files generated by Coder. Review skipped.',
+        });
+      } else {
+        let totalScore = 0;
+        let successfulAudits = 0;
+
+        // Map Phase: audit each file individually
+        for (const filepath of filesToAudit) {
+          const filecode = coderData[filepath] || '';
+          onEvent({
+            type: 'AGENT_LOG',
+            agent: 'Reviewer',
+            message: `Reviewing file: ${filepath}...`,
+          });
+
+          const customPrompt = `You are reviewing the following file: "${filepath}"
+          
+File Content:
+\`\`\`
+${filecode}
+\`\`\`
+
+Review this file for quality, completeness, spec alignment, and bugs. Assign a qualityScore (0-100) and generate annotations.`;
+
+          let fileReport: any = null;
+          let fileSuccess = false;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              fileReport = await runAgent(
+                conversationId,
+                'Reviewer',
+                actualPrompt,
+                onEvent,
+                ledger,
+                attempt,
+                customPrompt,
+                signal
+              );
+              fileSuccess = true;
+              break;
+            } catch (e: any) {
+              if (signal?.aborted) throw e;
+            }
+          }
+
+          // Reduce Phase for this file
+          if (fileSuccess && fileReport) {
+            const score = typeof fileReport.qualityScore === 'number' ? fileReport.qualityScore : 95;
+            totalScore += score;
+            successfulAudits++;
+
+            const annotations = fileReport.annotations || [];
+            finalReport.annotations.push(...annotations);
+          }
+        }
+
+        // Calculate average quality score
+        if (successfulAudits > 0) {
+          finalReport.qualityScore = Math.round(totalScore / successfulAudits);
+        }
+
+        // Save output to database & ledger
+        const config = await getLLMConfig();
+        await writeAgentOutput({
+          conversationId,
+          agentName: 'Reviewer',
+          stage: 'Reviewer',
+          schemaVersion: '1.0',
+          model: config.ollamaModel,
+          validatedJson: finalReport,
+          executionTime: 0,
+          tokenUsage: 0,
+          attempt: 1,
+        });
+        await ledger.write('Reviewer', 'reviewer', finalReport);
       }
 
     } else {

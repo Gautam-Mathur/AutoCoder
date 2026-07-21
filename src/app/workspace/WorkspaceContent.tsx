@@ -26,7 +26,8 @@ import {
   Download,
   Gavel,
   Terminal as TerminalIcon,
-  CheckCircle
+  CheckCircle,
+  AlertTriangle
 } from 'lucide-react';
 
 interface FileNode {
@@ -116,6 +117,9 @@ export default function WorkspaceContent() {
   const [clarificationQuestions, setClarificationQuestions] = useState<string[]>([]);
   const [clarificationAnswers, setClarificationAnswers] = useState<string[]>(['', '', '']);
   const [needsClarification, setNeedsClarification] = useState(false);
+  const [needsConflictResolution, setNeedsConflictResolution] = useState(false);
+  const [conflictData, setConflictData] = useState<any>(null);
+  const [selectedConflictOption, setSelectedConflictOption] = useState<string>('');
   const [detailsLoaded, setDetailsLoaded] = useState(false);
   const [streamProgress, setStreamProgress] = useState<any>(null);
 
@@ -387,6 +391,14 @@ export default function WorkspaceContent() {
         eventSource.close();
       }
 
+      if (data.type === 'PAUSE_CONFLICT') {
+        setPipelineStatus('Paused');
+        setNeedsConflictResolution(true);
+        setConflictData(data.data.conflict || null);
+        setSelectedConflictOption(data.data.conflict?.recommendedOption || '');
+        eventSource.close();
+      }
+
       if (data.type === 'PIPELINE_SUCCESS' || data.type === 'PIPELINE_ERROR') {
         setPipelineStatus(data.type === 'PIPELINE_SUCCESS' ? 'Completed' : 'Failed');
         fetchConversationDetails(conversationId);
@@ -438,6 +450,44 @@ export default function WorkspaceContent() {
       }
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  // Handle Conflict Submit
+  const handleConflictSubmit = async () => {
+    if (!conversationId || !conflictData) return;
+    addLog({
+      type: 'SYSTEM',
+      message: `Resolving conflict alignment with choice: "${selectedConflictOption}"...`,
+    });
+
+    try {
+      setNeedsConflictResolution(false);
+
+      const res = await fetch('/api/pipeline/resume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversationId,
+          conflictDescription: conflictData.description,
+          resolvedConflictOption: selectedConflictOption
+        }),
+      });
+
+      if (res.ok) {
+        handleStartPipeline();
+      } else {
+        const data = await res.json();
+        addLog({
+          type: 'PIPELINE_ERROR',
+          message: `Failed to resume pipeline: ${data.error || 'Unknown error'}`,
+        });
+      }
+    } catch (err: any) {
+      addLog({
+        type: 'PIPELINE_ERROR',
+        message: `Failed to resume pipeline: ${err.message}`,
+      });
     }
   };
 
@@ -1350,6 +1400,64 @@ export default function WorkspaceContent() {
                   className="bg-amber-warning text-slate-950 px-4 py-2 rounded text-xs font-bold hover:bg-amber-400 transition-colors flex items-center gap-1 shadow-[0_0_12px_rgba(245,158,11,0.3)]"
                 >
                   Submit Answers <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Conflict Resolution Overlay Modal */}
+        {needsConflictResolution && conflictData && (
+          <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-red-500/50 rounded-lg p-6 max-w-lg w-full flex flex-col gap-4 shadow-[0_0_30px_rgba(239,68,68,0.2)] animate-slide-up">
+              <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+                <AlertTriangle className="w-5 h-5 text-red-500 animate-pulse" />
+                <h4 className="font-bold text-md text-on-surface text-red-400">Context Conflict Detected</h4>
+              </div>
+              <p className="text-xs text-slate-300">
+                The context resolver identified a misalignment in requirements/architectures:
+              </p>
+              <div className="p-3 bg-red-950/20 border border-red-900/40 rounded text-xs text-red-300/90 leading-relaxed font-mono">
+                {conflictData.description}
+              </div>
+              
+              <div className="flex flex-col gap-2.5">
+                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Select Alignment Strategy:</label>
+                {conflictData.options.map((opt: string, idx: number) => {
+                  const isRecommended = opt === conflictData.recommendedOption;
+                  const isSelected = selectedConflictOption === opt;
+                  return (
+                    <button
+                      key={idx}
+                      onClick={() => setSelectedConflictOption(opt)}
+                      className={`w-full p-3 rounded text-left text-xs transition-all border flex flex-col gap-1 ${
+                        isSelected 
+                          ? 'bg-electric-indigo/20 border-electric-indigo text-on-surface shadow-[0_0_12px_rgba(99,102,241,0.2)]' 
+                          : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between w-full">
+                        <span className="font-semibold">{opt}</span>
+                        {isRecommended && (
+                          <span className="px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded text-[8px] font-bold uppercase tracking-wider">Recommended</span>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex justify-end gap-2 mt-2">
+                <button
+                  onClick={handleConflictSubmit}
+                  disabled={!selectedConflictOption}
+                  className={`px-4 py-2 rounded text-xs font-bold transition-all flex items-center gap-1.5 ${
+                    selectedConflictOption
+                      ? 'bg-red-500 text-slate-950 hover:bg-red-400 cursor-pointer shadow-[0_0_12px_rgba(239,68,68,0.3)]'
+                      : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                  }`}
+                >
+                  Resolve &amp; Resume <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>
