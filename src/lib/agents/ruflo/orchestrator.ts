@@ -12,6 +12,42 @@ import { resolveContext } from './contextResolver';
 import { runDeterministic } from './registry/Blueprinter';
 import { dispatchFailureEvent } from './eventDispatcher';
 
+// ─── Infrastructure Failure Detection ───────────────────────────────────────
+
+const INFRA_ERROR_SIGNATURES = [
+  'ollama is not running',
+  'connect econnrefused',
+  'enotfound',
+] as const;
+
+function isInfrastructureError(err: any): boolean {
+  const msg = (err?.message || '').toLowerCase();
+  return INFRA_ERROR_SIGNATURES.some(sig => msg.includes(sig));
+}
+
+async function handleInfrastructurePause(
+  conversationId: string,
+  onEvent: PipelineEventCallback,
+  errorMessage: string
+): Promise<void> {
+  onEvent({
+    type: 'PIPELINE_ERROR',
+    message: `⚠️ INFRASTRUCTURE FAILURE: LLM provider unreachable.\n` +
+             `Error: ${errorMessage}\n` +
+             `Pipeline paused. Please start Ollama and click Resume to retry.`,
+  });
+  await prisma.conversation.update({
+    where: { id: conversationId },
+    data: { status: 'Paused' },
+  });
+  await writeHistoryLog(
+    conversationId,
+    'System',
+    'Failed',
+    `Pipeline paused due to infrastructure failure: ${errorMessage}`
+  );
+}
+
 export const activePipelines = new Set<string>();
 
 async function classifyIsSoftwareRequest(
@@ -1095,6 +1131,66 @@ Ensure you write complete source code matching these specs. Do not truncate.`;
         warnings.push(`File system static checks encountered issues: ${err.message}`);
       }
 
+      // ─── HTML-JS Integration Check (Fix 4) ───
+      try {
+        const isVanillaProject = !fs.existsSync(path.join(projectPath, 'package.json'));
+        if (isVanillaProject) {
+          const findFilesRecursively = (dir: string): string[] => {
+            let results: string[] = [];
+            if (!fs.existsSync(dir)) return results;
+            const list = fs.readdirSync(dir);
+            list.forEach((file) => {
+              const filePath = path.join(dir, file);
+              const stat = fs.statSync(filePath);
+              if (stat.isDirectory()) {
+                if (file !== 'node_modules' && file !== '.git') {
+                  results = results.concat(findFilesRecursively(filePath));
+                }
+              } else {
+                results.push(filePath);
+              }
+            });
+            return results;
+          };
+
+          const allProjectFiles = findFilesRecursively(projectPath);
+          const htmlFiles = allProjectFiles.filter(f => f.endsWith('.html') || f.endsWith('.htm'));
+          const jsFiles = allProjectFiles.filter(f => (f.endsWith('.js') || f.endsWith('.mjs')) && !f.includes('.min.'));
+
+          for (const htmlFile of htmlFiles) {
+            const htmlContent = fs.readFileSync(htmlFile, 'utf8');
+            for (const jsFile of jsFiles) {
+              const relPath = path.relative(path.dirname(htmlFile), jsFile).replace(/\\/g, '/');
+              const baseName = path.basename(jsFile);
+              
+              // Match multiple script element layouts including module formats
+              const scriptRegex = new RegExp(`<script[^>]*src=["'](?:\\.\\/)?(${escapeRegex(relPath)}|${escapeRegex(baseName)})["'][^>]*>`, 'i');
+              const isLinked = scriptRegex.test(htmlContent);
+
+              if (!isLinked) {
+                defects.push({
+                  id: `DEF-INTEGRATION-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+                  severity: 'Critical',
+                  category: 'Integration',
+                  file: path.relative(projectPath, htmlFile).replace(/\\/g, '/'),
+                  description: `HTML file loads no script tag linking to javascript asset "${path.relative(projectPath, jsFile).replace(/\\/g, '/')}".`,
+                  expectedBehaviour: `Script src tags are placed within "${path.basename(htmlFile)}" referencing relative path "${relPath}".`,
+                  actualBehaviour: `Script import tag referencing "${relPath}" is absent.`,
+                  reproductionSteps: [`Ensure <script src="${relPath}"></script> is included.`]
+                });
+              }
+            }
+          }
+        }
+      } catch (err: any) {
+        warnings.push(`HTML script tag verification failed: ${err.message}`);
+      }
+
+      // Helper to escape regex special characters
+      function escapeRegex(str: string): string {
+        return str.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+      }
+
       // 2. Runtime Executor Check
       const potentialEntries = ['main.js', 'app.js', 'server.js', 'index.js'];
       let entryFile = '';
@@ -1143,6 +1239,72 @@ Ensure you write complete source code matching these specs. Do not truncate.`;
         } catch (err: any) {
           warnings.push(`Runtime check failed to launch: ${err.message}`);
         }
+      }
+
+      // ─── Constraint Compliance Audit (Fix 3) ───
+      try {
+        const queenData = ledger.read('taskSpec') || {};
+        const constraints: string[] = queenData.constraints || [];
+        
+        const CONSTRAINT_API_MAP: Array<{
+          keywords: string[];
+          patterns: RegExp[];
+          label: string;
+        }> = [
+          {
+            keywords: ['localstorage', 'local storage', 'browser storage', 'offline storage'],
+            patterns: [
+              /localStorage\.(getItem|setItem|removeItem|clear)/,
+              /localForage|localforage/i,
+              /store\.(set|get|remove)/i,
+              /lowdb/i,
+              /chrome\.storage/
+            ],
+            label: 'localStorage / Client Persistence API'
+          },
+          {
+            keywords: ['indexeddb', 'indexed db'],
+            patterns: [/indexedDB|IDBFactory|window\.indexedDB/i],
+            label: 'IndexedDB API'
+          },
+          {
+            keywords: ['websocket', 'web socket', 'real-time', 'realtime socket'],
+            patterns: [/new WebSocket\(|\.addEventListener\('message'/],
+            label: 'WebSocket Connection'
+          },
+          {
+            keywords: ['fetch api', 'rest api', 'http request', 'ajax'],
+            patterns: [/fetch\(|axios\.|XMLHttpRequest/],
+            label: 'Fetch/AJAX Client'
+          }
+        ];
+
+        const coderFilesMap = ledger.read('coder') || {};
+        const combinedCode = Object.values(coderFilesMap).join('\n');
+
+        for (const constraint of constraints) {
+          const lower = constraint.toLowerCase();
+          for (const item of CONSTRAINT_API_MAP) {
+            const hasKeyword = item.keywords.some(kw => lower.includes(kw));
+            if (hasKeyword) {
+              const apiFound = item.patterns.some(p => p.test(combinedCode));
+              if (!apiFound) {
+                defects.push({
+                  id: `DEF-CONSTRAINT-${Date.now()}`,
+                  severity: 'Critical',
+                  category: 'Functional',
+                  file: 'project-wide',
+                  description: `Required constraint: "${constraint}" mandates access to storage/networking APIs. No calls matching ${item.label} were detected in output code.`,
+                  expectedBehaviour: `Application implements ${item.label} to satisfy project requirements.`,
+                  actualBehaviour: `No codebase usage of ${item.label} detected.`,
+                  reproductionSteps: [`Inspect files to verify integration of ${item.label}.`]
+                });
+              }
+            }
+          }
+        }
+      } catch (err: any) {
+        warnings.push(`Constraint verification audit failed: ${err.message}`);
       }
 
       // Compile Tester Output JSON
@@ -1231,8 +1393,12 @@ Ensure you write complete source code matching these specs. Do not truncate.`;
               onEvent({
                 type: 'AGENT_LOG',
                 agent: 'Debugger',
-                message: `Debugger failed on attempt ${attempt}.`,
+                message: `Debugger failed on attempt ${attempt}: ${e.message}`,
               });
+              if (isInfrastructureError(e)) {
+                await handleInfrastructurePause(conversationId, onEvent, e.message);
+                return;
+              }
               if (signal?.aborted) {
                 throw e;
               }
@@ -1334,6 +1500,10 @@ CRITICAL RULES:
                   await ledger.write('Coder', 'coder', updatedCoderState);
                 }
               } catch (err: any) {
+                if (isInfrastructureError(err)) {
+                  await handleInfrastructurePause(conversationId, onEvent, err.message);
+                  return;
+                }
                 onEvent({
                   type: 'AGENT_LOG',
                   agent: 'Coder',
@@ -1643,6 +1813,44 @@ Review this file for quality, completeness, spec alignment, and bugs. Assign a q
           attempt: 1,
         });
         await ledger.write('Reviewer', 'reviewer', finalReport);
+
+        // ─── Fix 2: Reviewer Quality Ship Gate ───
+        const qualityGateOverride = memoryState.qualityGateOverride === true;
+        
+        // Reset override immediately on entry so it cannot stick across crashed/incomplete runs
+        if (qualityGateOverride) {
+          memoryState.qualityGateOverride = false;
+          await saveExecutiveMemory(conversationId, memoryState);
+        }
+
+        const errorAnnotations = finalReport.annotations.filter((a: any) => a.severity === 'error');
+        if (errorAnnotations.length > 0 && !qualityGateOverride) {
+          const annotationSummaries = errorAnnotations.map((a: any) => `• [${a.file}] ${a.note}`).join('\n');
+          
+          // Set override in state for next resume action
+          memoryState.qualityGateOverride = true;
+          await saveExecutiveMemory(conversationId, memoryState);
+
+          onEvent({
+            type: 'PIPELINE_ERROR',
+            message: `🛑 QUALITY GATE BLOCKED: Reviewer identified ${errorAnnotations.length} error-level annotation(s) preventing ship:\n` +
+                     `${annotationSummaries}\n\n` +
+                     `Please apply bugfixes to resolve these issues, or click Resume to acknowledge and bypass.`,
+          });
+
+          await prisma.conversation.update({
+            where: { id: conversationId },
+            data: { status: 'Paused' },
+          });
+
+          await writeHistoryLog(
+            conversationId,
+            'Reviewer',
+            'Failed',
+            `Quality Gate blocked ship due to ${errorAnnotations.length} errors. Next resume will bypass.`
+          );
+          return;
+        }
       }
 
     } else {

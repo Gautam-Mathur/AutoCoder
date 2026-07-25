@@ -103,7 +103,11 @@ export async function runDeterministic(ledger: StageLedger): Promise<any> {
 
   // Helper: Assign compile order based on file semantics (Topological Build Order)
   const getCompileOrder = (filepath: string) => {
-    const name = filepath.toLowerCase();
+    const name = path.basename(filepath).toLowerCase();
+    const HTML_ENTRY_PATTERN = /^(index|main|app)\.(html|htm)$/i;
+    if (HTML_ENTRY_PATTERN.test(name)) {
+      return 999;
+    }
     if (name.includes('config') || name.includes('constant') || name.includes('types') || name.includes('db')) {
       return 1; // Infrastructure/configuration compiles first
     }
@@ -228,6 +232,34 @@ export async function runDeterministic(ledger: StageLedger): Promise<any> {
         bp.compileAfter.push(other.id);
       }
     });
+  });
+
+  // Inject script and link stylesheet requirements into HTML entry points using path-relative calculations
+  const HTML_ENTRY_PATTERN = /^(index|main|app)\.(html|htm)$/i;
+  blueprints.forEach((bp: any) => {
+    if (HTML_ENTRY_PATTERN.test(path.basename(bp.file))) {
+      // Find JS siblings
+      const jsSiblings = blueprints.filter(
+        (other: any) => /\.(js|mjs|jsx)$/i.test(other.file) && other.file !== bp.file
+      );
+      jsSiblings.forEach((jsBp: any) => {
+        const relPath = path.relative(path.dirname(bp.file), jsBp.file).replace(/\\/g, '/');
+        bp.consumedApis.push(
+          `REQUIRED: Include <script src="${relPath}"></script> in the HTML body to load script assets.`
+        );
+      });
+
+      // Find CSS siblings
+      const cssSiblings = blueprints.filter(
+        (other: any) => /\.css$/i.test(other.file) && other.file !== bp.file
+      );
+      cssSiblings.forEach((cssBp: any) => {
+        const relPath = path.relative(path.dirname(bp.file), cssBp.file).replace(/\\/g, '/');
+        bp.consumedApis.push(
+          `REQUIRED: Include <link rel="stylesheet" href="${relPath}"> in the HTML <head> to load style assets.`
+        );
+      });
+    }
   });
 
   return { blueprints };

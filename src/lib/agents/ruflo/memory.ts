@@ -23,6 +23,7 @@ export interface MemoryState {
   invalidated: string[];      // Invalidated agent stages needing re-run
   hashes: Record<string, string>; // Filepath -> MD5 hash mapping
   decisions: any[];           // Historical LLM decisions log
+  qualityGateOverride?: boolean; // Override flag for quality gate
 }
 
 export const OWNERSHIP = Object.freeze({
