@@ -1465,7 +1465,7 @@ export default function WorkspaceContent() {
         )}
 
         {/* Approval Gate Overlay Card */}
-        {pipelineStatus === 'Paused' && currentStage === 'Architect' && (
+        {pipelineStatus === 'Paused' && (currentStage === 'Architect' || currentStage === 'SystemsArchitect') && (
           <div className="absolute inset-x-0 bottom-36 z-50 flex justify-center px-4 pointer-events-none">
             <div className="glass-panel w-full max-w-lg p-4 rounded-xl shadow-[0_0_30px_rgba(99,102,241,0.2)] flex flex-col gap-3 pointer-events-auto animate-slide-up">
               <div className="flex items-start justify-between">

@@ -31,8 +31,8 @@ export async function POST(request: NextRequest) {
 
     // Advance stage if paused there
     let nextStage = conversation.currentStage;
-    if (conversation.currentStage === 'Architect') {
-      nextStage = 'System';
+    if (conversation.currentStage === 'SystemsArchitect' || conversation.currentStage === 'Architect') {
+      nextStage = 'BackendArchitect';
     } else if (conversation.currentStage === 'Queen') {
       nextStage = 'Planner';
     }

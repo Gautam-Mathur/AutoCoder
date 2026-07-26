@@ -1,3 +1,5 @@
+import { runInference } from '../inference';
+
 export type FailureType = 
   | 'syntax'
   | 'compilation'
@@ -104,3 +106,39 @@ export function dispatchFailureEvent(
     contextHint: 'Execute root-cause analysis on test runner failure log and implement surgical repairs.'
   };
 }
+
+export async function executeSpecialistRecovery(
+  conversationId: string,
+  errorLog: string,
+  failedFile: string,
+  currentCode: string
+): Promise<{ file: string; patchCode: string }> {
+  const specialistPrompt = `You are the Debugger Specialist. Analyze the failure: ${errorLog}
+Target File: ${failedFile}
+Current Code:
+${currentCode}
+
+Provide a targeted patch code to fix the defect. Output only JSON: {"file": "${failedFile}", "patchCode": "your_patched_code_here"}`;
+
+  try {
+    const responseText = await runInference([
+      { role: 'system', content: specialistPrompt }
+    ], {
+      temperature: 0.1,
+      format: 'json'
+    });
+
+    const parsed = JSON.parse(responseText.trim());
+    return {
+      file: parsed.file || failedFile,
+      patchCode: parsed.patchCode || currentCode
+    };
+  } catch (err) {
+    console.error('Specialist recovery failed, using original code:', err);
+    return {
+      file: failedFile,
+      patchCode: currentCode
+    };
+  }
+}
+

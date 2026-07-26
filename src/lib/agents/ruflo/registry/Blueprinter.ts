@@ -82,6 +82,12 @@ export async function runDeterministic(ledger: StageLedger): Promise<any> {
 
   const blueprints: any[] = [];
 
+  // Build Global Symbol Table to resolve dependency mappings
+  const symbolTable: Record<string, string> = {};
+  dbEntities.forEach((ent: any) => { if (ent.name) symbolTable[ent.name] = 'database'; });
+  apis.forEach((api: any) => { if (api.id) symbolTable[api.id] = 'api'; });
+  components.forEach((comp: any) => { if (comp.name) symbolTable[comp.name] = 'component'; });
+
   // Helper: Detect language/profile from file extension
   const getLanguageDetails = (filepath: string) => {
     const ext = path.extname(filepath).toLowerCase();
@@ -196,6 +202,29 @@ export async function runDeterministic(ledger: StageLedger): Promise<any> {
       validationRules.push('Must compile cleanly with no TypeScript diagnostics errors');
     }
 
+    // Resolve dynamic module dependencies
+    const dependencyModuleNames: string[] = owningModule.dependsOn || [];
+    const moduleFileDependencies = filesList
+      .filter((f: any) => dependencyModuleNames.includes(f.module) && f.path !== filepath)
+      .map((f: any) => f.path);
+
+    // Resolve symbols used / imported
+    const fileImports: string[] = [];
+    const fileExports: string[] = [];
+
+    if (langInfo.language === 'TypeScript' || langInfo.language === 'TSX' || langInfo.language === 'JavaScript') {
+      apis.forEach((api: any) => {
+        if (api.id && (owningModule.purpose?.includes(api.id) || filepath.includes(api.id))) {
+          fileImports.push(api.id);
+        }
+      });
+      components.forEach((comp: any) => {
+        if (comp.name && filepath.includes(comp.name)) {
+          fileExports.push(comp.name);
+        }
+      });
+    }
+
     blueprints.push({
       id: `BP_${String(idx + 1).padStart(3, '0')}`,
       file: filepath,
@@ -207,9 +236,9 @@ export async function runDeterministic(ledger: StageLedger): Promise<any> {
       purpose: owningModule.purpose || `Implements features for module: ${owningModule.name || moduleName}`,
       compileOrder: order,
       compileAfter: [], // Populated dynamically in topological ordering pass
-      imports: [],
-      exports: [],
-      dependencies: [],
+      imports: fileImports,
+      exports: fileExports,
+      dependencies: moduleFileDependencies,
       interfaces: [],
       classes: [],
       functions: [],

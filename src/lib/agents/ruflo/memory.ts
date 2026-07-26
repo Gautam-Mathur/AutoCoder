@@ -27,16 +27,21 @@ export interface MemoryState {
 }
 
 export const OWNERSHIP = Object.freeze({
-  Queen:     ['taskSpec'],
-  Planner:   ['planner'],
-  Architect: ['architect'],
-  System:    ['system'],
-  Designer:  ['designer'],
-  Coder:     ['coder'],
-  Debugger:  ['debugger'],
-  Security:  ['security'],
-  Reviewer:  ['reviewer'],
-  Tester:    ['tester'],
+  Queen:             ['taskSpec'],
+  Planner:           ['planner'],
+  Architect:         ['architect'],
+  SystemsArchitect:  ['architect'],
+  System:            ['system'],
+  BackendArchitect:  ['system'],
+  Designer:          ['designer'],
+  UIUXArchitect:     ['designer'],
+  Coder:             ['coder'],
+  Debugger:          ['debugger'],
+  Security:          ['security'],
+  SecurityAuditor:   ['security'],
+  Reviewer:          ['reviewer'],
+  VerificationAgent: ['reviewer'],
+  Tester:            ['tester'],
 });
 
 export async function loadExecutiveMemory(conversationId: string): Promise<MemoryState> {

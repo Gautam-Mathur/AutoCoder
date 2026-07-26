@@ -10,7 +10,8 @@ import path from 'path';
 import { exec } from 'child_process';
 import { resolveContext } from './contextResolver';
 import { runDeterministic } from './registry/Blueprinter';
-import { dispatchFailureEvent } from './eventDispatcher';
+import { dispatchFailureEvent, executeSpecialistRecovery } from './eventDispatcher';
+import { buildMinimalContext } from './contentAssistant';
 
 // ─── Infrastructure Failure Detection ───────────────────────────────────────
 
@@ -223,7 +224,7 @@ export async function runAgent(
   await writeHistoryLog(conversationId, agentName, 'Retrying', `Agent ${agentName} started (Attempt ${attempt}/3)...`);
 
   const startTime = Date.now();
-  const contextData = await buildUserContext(ledger, agentName);
+  const contextData = await buildMinimalContext(ledger, agentName);
   const config = await getLLMConfig();
   await writeHistoryLog(conversationId, agentName, 'Retrying', `Active Model: ${config.ollamaModel}. Context payload assembled.`);
 
@@ -808,18 +809,27 @@ export async function runOrchestrator(
     const pipelineStages = [
       'Queen',
       'Planner',
-      'Architect',
-      'System',
-      'Designer',
+      'SystemsArchitect',
+      'BackendArchitect',
+      'UIUXArchitect',
       'Blueprinter',
       'Coder',
       'Tester',
-      'Debugger',
-      'Security',
-      'Reviewer'
+      'VerificationAgent',
+      'SecurityAuditor'
     ];
 
-    let startIndex = pipelineStages.indexOf(currentStage);
+    const legacyStageMap: Record<string, string> = {
+      Architect: 'SystemsArchitect',
+      System: 'BackendArchitect',
+      Designer: 'UIUXArchitect',
+      Reviewer: 'VerificationAgent',
+      Security: 'SecurityAuditor',
+      Debugger: 'Tester'
+    };
+    const mappedStage = legacyStageMap[currentStage] || currentStage;
+
+    let startIndex = pipelineStages.indexOf(mappedStage);
     if (startIndex === -1) {
       startIndex = 0;
     }
@@ -1355,7 +1365,7 @@ Ensure you write complete source code matching these specs. Do not truncate.`;
         data: output
       });
 
-      // If checks failed, we classify and log triage information using EventDispatcher
+      // If checks failed, we classify and log triage information, then execute Specialist Recovery
       if (!passed) {
         const logsPayload = defects.map(d => `${d.file}: ${d.description}`).join('\n');
         const triage = dispatchFailureEvent(logsPayload, 'Tester');
@@ -1363,176 +1373,85 @@ Ensure you write complete source code matching these specs. Do not truncate.`;
           type: 'PIPELINE_TRIAGE',
           message: `Triage dispatcher routed logs to specialist agent [${triage.specialistAgent}]. Reason: ${triage.contextHint}`
         });
-      }
 
-    } else if (stage === 'Debugger') {
-      // ----------------------------------------------------
-      // SPECIAL STAGE: Debugger & Surgical Coder Repair Loop
-      // ----------------------------------------------------
-      const testOutput = await queryAgentOutput(conversationId, 'Tester', 'testReport');
-      const defects = testOutput?.defects || [];
-
-      if (defects.length > 0) {
         if (repairLoops < 3) {
           repairLoops++;
           onEvent({
             type: 'AGENT_START',
-            agent: 'Debugger',
-            message: `Debugger activated (Loop Run ${repairLoops}/3). Analyzing ${defects.length} defect reports...`,
+            agent: triage.specialistAgent,
+            message: `${triage.specialistAgent} Specialist Recovery activated (Loop Run ${repairLoops}/3). Resolving defect in ${defects[0].file}...`,
           });
 
-          // Run Debugger to analyze defects and generate repair instructions
-          let debugOutput: any = null;
-          let success = false;
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            try {
-              debugOutput = await runAgent(conversationId, 'Debugger', actualPrompt, onEvent, ledger, attempt, undefined, signal);
-              success = true;
-              break;
-            } catch (e: any) {
-              onEvent({
-                type: 'AGENT_LOG',
-                agent: 'Debugger',
-                message: `Debugger failed on attempt ${attempt}: ${e.message}`,
-              });
-              if (isInfrastructureError(e)) {
-                await handleInfrastructurePause(conversationId, onEvent, e.message);
-                return;
-              }
-              if (signal?.aborted) {
-                throw e;
-              }
+          const failedFile = defects[0].file;
+
+          // Retrieve current code content
+          const coderOut = await queryAgentOutput(conversationId, 'Coder', failedFile);
+          let currentCode = coderOut?.code || '';
+          if (!currentCode) {
+            const projectPath = path.join(process.cwd(), 'projects', conversationId);
+            const filePath = path.join(projectPath, failedFile);
+            if (fs.existsSync(filePath)) {
+              currentCode = fs.readFileSync(filePath, 'utf8');
             }
           }
 
-          if (success && debugOutput && debugOutput.debugReport && Array.isArray(debugOutput.debugReport.issues)) {
-            onEvent({
-              type: 'AGENT_LOG',
-              agent: 'Debugger',
-              message: `Debugger identified root causes for ${debugOutput.debugReport.issues.length} issues. Invoking Coder under surgical repair profile...`,
-            });
+          try {
+            const recoveryResult = await executeSpecialistRecovery(
+              conversationId,
+              logsPayload,
+              failedFile,
+              currentCode
+            );
 
-            for (const issue of debugOutput.debugReport.issues) {
-              // 1. Retrieve current code content
-              const coderOut = await queryAgentOutput(conversationId, 'Coder', issue.file);
-              let currentCode = coderOut?.code || '';
-              if (!currentCode) {
-                const projectPath = path.join(process.cwd(), 'projects', conversationId);
-                const filePath = path.join(projectPath, issue.file);
-                if (fs.existsSync(filePath)) {
-                  currentCode = fs.readFileSync(filePath, 'utf8');
-                }
-              }
+            if (recoveryResult && recoveryResult.patchCode) {
+              // Write corrected code to disk
+              writeProjectFile(conversationId, failedFile, recoveryResult.patchCode);
 
-              // 2. Invoke Coder under surgical repair instructions
-              const repairInstructionsPrompt = `You are performing a surgical bug fix on the file: "${issue.file}"
-         
-The Tester Agent reported the following defect:
-- ID: ${issue.testerDefectId}
-- Severity: ${issue.severity}
-- Category: ${issue.category}
-- Location: ${issue.location}
-- Description: ${issue.rootCause}
+              // Update Coder output in SML
+              await writeAgentOutput({
+                conversationId,
+                agentName: 'Coder',
+                stage: failedFile,
+                schemaVersion: '1.0',
+                model: 'ollama/default',
+                validatedJson: { file: failedFile, code: recoveryResult.patchCode },
+                executionTime: 0,
+                tokenUsage: recoveryResult.patchCode.length / 4,
+                attempt: 1,
+              });
 
-The Debugger Agent diagnosed the root cause:
-"${issue.rootCause}"
-
-Recommended Fix:
-"${issue.recommendedFix}"
-
-Surgical Repair Instructions:
-${JSON.stringify(issue.implementationInstructions, null, 2)}
-
-Current File Code:
-\`\`\`
-${currentCode}
-\`\`\`
-
-CRITICAL RULES:
-1. DO NOT change the overall file structure or rewrite unrelated lines of code.
-2. Fix ONLY the lines/logic responsible for the reported defect.
-3. Ensure all existing imports, exports, and functions remain intact unless they are directly buggy.
-4. Return the complete, updated source code for this file.`;
+              // Update Coder state in StageLedger
+              const currentCoderState = ledger.read('coder') || {};
+              const updatedCoderState = {
+                ...currentCoderState,
+                [failedFile]: recoveryResult.patchCode
+              };
+              await ledger.write('Coder', 'coder', updatedCoderState);
 
               onEvent({
                 type: 'AGENT_LOG',
-                agent: 'Coder',
-                message: `Surgically repairing file: ${issue.file}...`,
+                agent: triage.specialistAgent,
+                message: `Specialist Recovery applied patch to ${failedFile}. Re-running Tester stage to verify fix (Loop Run ${repairLoops}/3)...`,
               });
 
-              try {
-                const repairOutput = await runAgent(
-                  conversationId,
-                  'Coder',
-                  actualPrompt,
-                  onEvent,
-                  ledger,
-                  1,
-                  repairInstructionsPrompt,
-                  signal,
-                  undefined,
-                  issue.file
-                );
-
-                if (repairOutput && repairOutput.code) {
-                  // Write corrected code to disk
-                  writeProjectFile(conversationId, issue.file, repairOutput.code);
-
-                  // Update Coder output in SML
-                  await writeAgentOutput({
-                    conversationId,
-                    agentName: 'Coder',
-                    stage: issue.file,
-                    schemaVersion: '1.0',
-                    model: 'ollama/default',
-                    validatedJson: { file: issue.file, code: repairOutput.code },
-                    executionTime: 0,
-                    tokenUsage: repairOutput.code.length / 4,
-                    attempt: 1,
-                  });
-
-                  // Update Coder state in StageLedger
-                  const currentCoderState = ledger.read('coder') || {};
-                  const updatedCoderState = {
-                    ...currentCoderState,
-                    [issue.file]: repairOutput.code
-                  };
-                  await ledger.write('Coder', 'coder', updatedCoderState);
-                }
-              } catch (err: any) {
-                if (isInfrastructureError(err)) {
-                  await handleInfrastructurePause(conversationId, onEvent, err.message);
-                  return;
-                }
-                onEvent({
-                  type: 'AGENT_LOG',
-                  agent: 'Coder',
-                  message: `Surgical repair failed for ${issue.file}: ${err.message}`,
-                });
-              }
+              // Loop back to Tester stage
+              i--;
+              continue;
             }
-
-            // Loop back to Tester stage
-            i = pipelineStages.indexOf('Tester') - 1;
+          } catch (recoveryErr: any) {
             onEvent({
               type: 'AGENT_LOG',
-              agent: 'Debugger',
-              message: `Surgical repairs applied. Re-running Tester stage to verify fixes (Loop Run ${repairLoops}/3)...`,
+              agent: triage.specialistAgent,
+              message: `Specialist Recovery failed for ${failedFile}: ${recoveryErr.message}`,
             });
           }
         } else {
           onEvent({
             type: 'AGENT_LOG',
-            agent: 'Debugger',
-            message: `Tester defects remain, but repair loop reached maximum limit of 3 runs. Proceeding to Security.`,
+            agent: 'Tester',
+            message: `Tester defects remain, but repair loop reached maximum limit of 3 runs. Proceeding to next stage.`,
           });
         }
-      } else {
-        onEvent({
-          type: 'AGENT_LOG',
-          agent: 'Debugger',
-          message: 'All tests passed successfully with 0 defects. Debugger skipped.',
-        });
       }
 
     } else if (stage === 'Security') {
@@ -1960,16 +1879,16 @@ Review this file for quality, completeness, spec alignment, and bugs. Assign a q
       }
     }
 
-    if (stage === 'Architect') {
+    if (stage === 'SystemsArchitect') {
       await prisma.conversation.update({
         where: { id: conversationId },
         data: { status: 'Paused' },
       });
       onEvent({
         type: 'PAUSE_APPROVAL_GATE',
-        message: `Pipeline paused at Approval Gate (Architect Review completed). Awaiting user approval to generate code.`,
+        message: `Pipeline paused at Approval Gate (SystemsArchitect Review completed). Awaiting user approval to generate code.`,
       });
-      await writeHistoryLog(conversationId, 'System', 'Success', 'Pipeline paused at Architect Approval Gate. Awaiting user approval to generate code.');
+      await writeHistoryLog(conversationId, 'System', 'Success', 'Pipeline paused at SystemsArchitect Approval Gate. Awaiting user approval to generate code.');
       return;
     }
 
