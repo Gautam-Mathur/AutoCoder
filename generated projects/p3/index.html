@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calculator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .calculator {
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        
+        .display {
+            background-color: #f8fafc;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        .btn-number, .btn-operator, .btn-function {
+            transition: all 0.2s ease;
+        }
+        
+        .btn-number:hover, .btn-operator:hover, .btn-function:hover {
+            transform: scale(1.05);
+        }
+        
+        .btn-equals {
+            background-color: #3b82f6;
+            color: white;
+        }
+        
+        .btn-equals:hover {
+            background-color: #2563eb;
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+    <div class="calculator bg-white w-full max-w-md">
+        <div class="display p-6 text-right">
+            <div id="previous-operand" class="text-gray-500 text-lg h-6"></div>
+            <div id="current-operand" class="text-3xl font-bold text-gray-800 h-12 overflow-x-auto whitespace-nowrap"></div>
+        </div>
+        
+        <div class="grid grid-cols-4 gap-2 p-4">
+            <button class="btn-function bg-gray-200 hover:bg-gray-300 p-4 rounded-lg text-lg font-medium" data-action="clear">C</button>
+            <button class="btn-function bg-gray-200 hover:bg-gray-300 p-4 rounded-lg text-lg font-medium" data-action="delete">DEL</button>
+            <button class="btn-function bg-gray-200 hover:bg-gray-300 p-4 rounded-lg text-lg font-medium" data-action="percentage">%</button>
+            <button class="btn-operator bg-blue-100 hover:bg-blue-200 p-4 rounded-lg text-xl font-bold" data-operation="/">/</button>
+            
+            <button class="btn-number bg-gray-50 hover:bg-gray-100 p-4 rounded-lg text-xl font-medium" data-number="7">7</button>
+            <button class="btn-number bg-gray-50 hover:bg-gray-100 p-4 rounded-lg text-xl font-medium" data-number="8">8</button>
+            <button class="btn-number bg-gray-50 hover:bg-gray-100 p-4 rounded-lg text-xl font-medium" data-number="9">9</button>
+            <button class="btn-operator bg-blue-100 hover:bg-blue-200 p-4 rounded-lg text-xl font-bold" data-operation="*">×</button>
+            
+            <button class="btn-number bg-gray-50 hover:bg-gray-100 p-4 rounded-lg text-xl font-medium" data-number="4">4</button>
+            <button class="btn-number bg-gray-50 hover:bg-gray-100 p-4 rounded-lg text-xl font-medium" data-number="5">5</button>
+            <button class="btn-number bg-gray-50 hover:bg-gray-100 p-4 rounded-lg text-xl font-medium" data-number="6">6</button>
+            <button class="btn-operator bg-blue-100 hover:bg-blue-200 p-4 rounded-lg text-xl font-bold" data-operation="-">-</button>
+            
+            <button class="btn-number bg-gray-50 hover:bg-gray-100 p-4 rounded-lg text-xl font-medium" data-number="1">1</button>
+            <button class="btn-number bg-gray-50 hover:bg-gray-100 p-4 rounded-lg text-xl font-medium" data-number="2">2</button>
+            <button class="btn-number bg-gray-50 hover:bg-gray-100 p-4 rounded-lg text-xl font-medium" data-number="3">3</button>
+            <button class="btn-operator bg-blue-100 hover:bg-blue-200 p-4 rounded-lg text-xl font-bold" data-operation=">+">+</button>
+            
+            <button class="btn-number bg-gray-50 hover:bg-gray-100 p-4 rounded-lg text-xl font-medium" data-number="0">0</button>
+            <button class="btn-number bg-gray-50 hover:bg-gray-100 p-4 rounded-lg text-xl font-medium" data-number=".">.</button>
+            <button class="btn-equals bg-blue-500 hover:bg-blue-600 p-4 rounded-lg text-xl font-bold" data-action="calculate">=</button>
+        </div>
+    </div>
+    
+    <script>
+        // Calculator logic
+        const previousOperandElement = document.getElementById('previous-operand');
+        const currentOperandElement = document.getElementById('current-operand');
+        
+        let currentOperand = '0';
+        let previousOperand = '';
+        let operation = undefined;
+        
+        function updateDisplay() {
+            currentOperandElement.textContent = currentOperand;
+            if (operation != null) {
+                previousOperandElement.textContent = `${previousOperand} ${getOperationSymbol(operation)}`;
+            } else {
+                previousOperandElement.textContent = previousOperand;
+            }
+        }
+        
+        function getOperationSymbol(op) {
+            switch(op) {
+                case '+': return '+';
+                case '-': return '-';
+                case '*': return '×';
+                case '/': return '÷';
+                default: return op;
+            }
+        }
+        
+        function appendNumber(number) {
+            if (currentOperand === '0' || currentOperand === 'Error') {
+                currentOperand = number;
+            } else {
+                currentOperand += number;
+            }
+        }
+        
+        function chooseOperation(op) {
+            if (currentOperand === '') return;
+            if (previousOperand !== '') {
+                calculate();
+            }
+            operation = op;
+            previousOperand = currentOperand;
+            currentOperand = '';
+        }
+        
+        function calculate() {
+            let computation;
+            const prev = parseFloat(previousOperand);
+            const current = parseFloat(currentOperand);
+            if (isNaN(prev) || isNaN(current)) return;
+            
+            switch (operation) {
+                case '+':
+                    computation = prev + current;
+                    break;
+                case '-':
+                    computation = prev - current;
+                    break;
+                case '*':
+                    computation = prev * current;
+                    break;
+                case '/':
+                    if (current === 0) {
+                        currentOperand = 'Error';
+                        return;
+                    }
+                    computation = prev / current;
+                    break;
+                default:
+                    return;
+            }
+            
+            currentOperand = computation.toString();
+            operation = undefined;
+            previousOperand = '';
+        }
+        
+        function clear() {
+            currentOperand = '0';
+            previousOperand = '';
+            operation = undefined;
+        }
+        
+        function deleteNumber() {
+            if (currentOperand.length === 1 || (currentOperand.length === 2 && currentOperand.startsWith('-'))) {
+                currentOperand = '0';
+            } else {
+                currentOperand = currentOperand.slice(0, -1);
+            }
+        }
+        
+        function percentage() {
+            if (currentOperand === '0' || currentOperand === 'Error') return;
+            const value = parseFloat(currentOperand);
+            currentOperand = (value / 100).toString();
+        }
+        
+        // Event listeners
+        document.querySelectorAll('[data-number]').forEach(button => {
+            button.addEventListener('click', () => {
+                appendNumber(button.dataset.number);
+                updateDisplay();
+            });
+        });
+        
+        document.querySelectorAll('[data-operation]').forEach(button => {
+            button.addEventListener('click', () => {
+                chooseOperation(button.dataset.operation);
+                updateDisplay();
+            });
+        });
+        
+        document.querySelector('[data-action="calculate"]').addEventListener('click', () => {
+            calculate();
+            updateDisplay();
+        });
+        
+        document.querySelector('[data-action="clear"]').addEventListener('click', () => {
+            clear();
+            updateDisplay();
+        });
+        
+        document.querySelector('[data-action="delete"]').addEventListener('click', () => {
+            deleteNumber();
+            updateDisplay();
+        });
+        
+        document.querySelector('[data-action="percentage"]').addEventListener('click', () => {
+            percentage();
+            updateDisplay();
+        });
+        
+        // Initialize display
+        updateDisplay();
+    </script>
+</body>
+</html>

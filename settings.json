@@ -1,7 +1,7 @@
 {
   "provider": "ollama",
   "ollamaHost": "http://localhost:11434",
-  "ollamaModel": "DeepSeek-Coder-V2:latest",
+  "ollamaModel": "qwen3-coder:30b",
   "openaiApiKey": "",
   "openaiModel": "gpt-4o-mini",
   "anthropicApiKey": "",

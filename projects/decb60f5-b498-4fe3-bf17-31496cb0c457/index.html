@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HRMS Application</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100">
+  <div id="root" class="min-h-screen flex flex-col">
+    <!-- Header -->
+    <header class="bg-blue-600 text-white shadow-md">
+      <div class="container mx-auto px-4 py-3 flex justify-between items-center">
+        <h1 class="text-xl font-bold">Human Resource Management System</h1>
+        <nav>
+          <ul class="flex space-x-4">
+            <li><a href="#" class="hover:underline">Dashboard</a></li>
+            <li><a href="#" class="hover:underline">Employees</a></li>
+            <li><a href="#" class="hover:underline">Departments</a></li>
+            <li><a href="#" class="hover:underline">Reports</a></li>
+            <li><a href="#" class="hover:underline">Settings</a></li>
+          </ul>
+        </nav>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-grow container mx-auto px-4 py-6">
+      <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+        <h2 class="text-2xl font-semibold text-gray-800 mb-4">Welcome to HRMS</h2>
+        <p class="text-gray-600 mb-4">Manage your organization's human resources efficiently with our comprehensive HR management system.</p>
+        
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+          <div class="bg-blue-50 p-4 rounded-lg border border-blue-100">
+            <h3 class="font-medium text-blue-800 mb-2">Employee Management</h3>
+            <p class="text-sm text-gray-600">Add, update, and manage employee records and information.</p>
+          </div>
+          
+          <div class="bg-green-50 p-4 rounded-lg border border-green-100">
+            <h3 class="font-medium text-green-800 mb-2">Payroll Processing</h3>
+            <p class="text-sm text-gray-600">Calculate and process employee salaries and benefits.</p>
+          </div>
+          
+          <div class="bg-purple-50 p-4 rounded-lg border border-purple-100">
+            <h3 class="font-medium text-purple-800 mb-2">Leave Management</h3>
+            <p class="text-sm text-gray-600">Track and approve employee leave requests.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stats Section -->
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div class="bg-white p-4 rounded-lg shadow">
+          <p class="text-gray-500 text-sm">Total Employees</p>
+          <p class="text-2xl font-bold">1,248</p>
+        </div>
+        
+        <div class="bg-white p-4 rounded-lg shadow">
+          <p class="text-gray-500 text-sm">Active Departments</p>
+          <p class="text-2xl font-bold">12</p>
+        </div>
+        
+        <div class="bg-white p-4 rounded-lg shadow">
+          <p class="text-gray-500 text-sm">Pending Leave Requests</p>
+          <p class="text-2xl font-bold">23</p>
+        </div>
+        
+        <div class="bg-white p-4 rounded-lg shadow">
+          <p class="text-gray-500 text-sm">New Hires (This Month)</p>
+          <p class="text-2xl font-bold">12</p>
+        </div>
+      </div>
+
+      <!-- Recent Activity -->
+      <div class="bg-white rounded-lg shadow-md p-6">
+        <h3 class="text-lg font-semibold text-gray-800 mb-4">Recent Activity</h3>
+        <ul class="space-y-3">
+          <li class="flex items-start border-b pb-3">
+            <div class="bg-blue-100 rounded-full p-2 mr-3">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-blue-600" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v2H7a1 1 0 100 2h2v2a1 1 0 102 0v-2h2a1 1 0 100-2h-2V7z" clip-rule="evenodd" />
+              </svg>
+            </div>
+            <div>
+              <p class="font-medium">New employee added</p>
+              <p class="text-sm text-gray-500">John Smith joined the Marketing department</p>
+              <p class="text-xs text-gray-400">2 hours ago</p>
+            </div>
+          </li>
+          
+          <li class="flex items-start border-b pb-3">
+            <div class="bg-green-100 rounded-full p-2 mr-3">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-green-600" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+              </svg>
+            </div>
+            <div>
+              <p class="font-medium">Leave approved</p>
+              <p class="text-sm text-gray-500">Sarah Johnson's vacation request approved</p>
+              <p class="text-xs text-gray-400">5 hours ago</p>
+            </div>
+          </li>
+          
+          <li class="flex items-start">
+            <div class="bg-yellow-100 rounded-full p-2 mr-3">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-yellow-600" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
+                <path fill-rule="evenodd" d="M.458 10C1.732 5.943 6.615 3 12 3s10.268 2.943 11.542 7c-1.274 4.057-6.156 7-11.542 7S1.732 14.057.458 10zM14 10a2 2 0 11-4 0 2 2 0 014 0z" clip-rule="evenodd" />
+              </svg>
+            </div>
+            <div>
+              <p class="font-medium">Performance review due</p>
+              <p class="text-sm text-gray-500">Monthly performance reviews are due for all employees</p>
+              <p class="text-xs text-gray-400">1 day ago</p>
+            </div>
+          </li>
+        </ul>
+      </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-gray-800 text-white py-6">
+      <div class="container mx-auto px-4 text-center">
+        <p>&copy; 2023 Human Resource Management System. All rights reserved.</p>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>
