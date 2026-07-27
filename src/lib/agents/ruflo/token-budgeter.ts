@@ -4,6 +4,12 @@ import { AGENT_DEFS } from './agents';
 export interface TokenBudgetResult {
   budget: number;
   timeoutMs: number;
+  breakdown: {
+    featuresCount?: number;
+    fileCount?: number;
+    totalCodeChars?: number;
+    formulaApplied: string;
+  };
 }
 
 export function calculateTokenBudget(
@@ -11,17 +17,29 @@ export function calculateTokenBudget(
   ledger: StageLedger
 ): TokenBudgetResult {
   let budget = 16384; // Default base fallback
+  const breakdown: {
+    featuresCount?: number;
+    fileCount?: number;
+    totalCodeChars?: number;
+    formulaApplied: string;
+  } = {
+    formulaApplied: 'base_default'
+  };
 
   // 1. Task-based Scaling Math
   if (agentName === 'Planner') {
     const taskSpec = ledger.read('taskSpec');
     const featuresCount = taskSpec?.mvpScope?.included?.length || 0;
     budget = 16384 + (featuresCount * 1024);
+    breakdown.featuresCount = featuresCount;
+    breakdown.formulaApplied = '16384 + (featuresCount * 1024)';
   } 
   else if (agentName === 'Architect' || agentName === 'SystemsArchitect') {
     const planner = ledger.read('planner');
     const featuresCount = planner?.features?.length || 0;
     budget = 16384 + (featuresCount * 1024);
+    breakdown.featuresCount = featuresCount;
+    breakdown.formulaApplied = '16384 + (featuresCount * 1024)';
   }
   else if (agentName === 'System' || agentName === 'BackendArchitect' || agentName === 'Designer' || agentName === 'UIUXArchitect') {
     const planner = ledger.read('planner');
@@ -29,11 +47,16 @@ export function calculateTokenBudget(
     const architect = ledger.read('architect');
     const fileCount = architect?.projectStructure?.files?.length || 0;
     budget = 16384 + (featuresCount * 1024) + (fileCount * 1024);
+    breakdown.featuresCount = featuresCount;
+    breakdown.fileCount = fileCount;
+    breakdown.formulaApplied = '16384 + (featuresCount * 1024) + (fileCount * 1024)';
   } 
   else if (agentName === 'Coder') {
     const architect = ledger.read('architect');
     const fileCount = architect?.projectStructure?.files?.length || 0;
     budget = 32768 + (fileCount * 2048);
+    breakdown.fileCount = fileCount;
+    breakdown.formulaApplied = '32768 + (fileCount * 2048)';
   } 
   else if (agentName === 'Debugger' || agentName === 'Tester') {
     const coderState = ledger.read('coder') || {};
@@ -45,6 +68,8 @@ export function calculateTokenBudget(
     });
     const totalTokens = Math.round(totalChars / 4);
     budget = Math.max(16384, Math.round(totalTokens * 0.5));
+    breakdown.totalCodeChars = totalChars;
+    breakdown.formulaApplied = 'max(16384, round((totalCodeChars / 4) * 0.5))';
   } 
   else {
     // For other agents (Queen, Reviewer, Security), fall back to metadata configurations
@@ -52,15 +77,16 @@ export function calculateTokenBudget(
     if (def && typeof def.maxTokens === 'number') {
       budget = Math.max(16384, def.maxTokens);
     }
+    breakdown.formulaApplied = 'agent_def_max_tokens_fallback';
   }
 
   // 2. Timeout Scaling Math: scale timeout linearly to calculated token budget (240s to 3600s)
-  // Maps budget between 16384 and 32768 onto 240s to 3600s
   const timeoutSeconds = Math.max(240, Math.min(3600, Math.round((budget / 32768) * 3360 + 240)));
   const timeoutMs = timeoutSeconds * 1000;
 
   return {
     budget,
-    timeoutMs
+    timeoutMs,
+    breakdown
   };
 }

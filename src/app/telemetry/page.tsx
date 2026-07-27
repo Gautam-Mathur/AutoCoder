@@ -39,12 +39,47 @@ export default function TelemetryDashboard() {
   const [telemetry, setTelemetry] = useState<TelemetryData | null>(null);
   const [conversationsList, setConversationsList] = useState<any[]>([]);
   const [filter, setFilter] = useState<'ALL' | 'SUCCESS' | 'FAILED'>('ALL');
+  const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
+  const [sortBy, setSortBy] = useState<'TIME_DESC' | 'TIME_ASC' | 'DURATION_DESC' | 'DURATION_ASC'>('TIME_DESC');
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
   const [pipelineStatus, setPipelineStatus] = useState<string>('Idle');
   const [currentStage, setCurrentStage] = useState<string>('Queen');
   const [selectedLog, setSelectedLog] = useState<any | null>(null);
   const [telemetrySubTab, setTelemetrySubTab] = useState<'inflow' | 'thought' | 'outflow' | 'orchestration' | 'schema' | 'ledger' | 'memory'>('inflow');
+
+  const categorizeLog = (log: LogRecord): string => {
+    const stage = (log.stage || '').toLowerCase();
+    const text = (log.logs || '').toLowerCase();
+
+    if (stage === 'specialistrecovery' || text.includes('specialist recovery') || text.includes('triage') || text.includes('debugger')) {
+      return 'Event-Triggered Recovery';
+    }
+    if (stage === 'blueprinter' || text.includes('blueprint engine') || text.includes('context resolver')) {
+      return 'Deterministic Engine';
+    }
+    if (stage === 'security' || text.includes('static regex security scan') || text.includes('owasp')) {
+      return 'Security Scans';
+    }
+    if (text.includes('context optimized') || text.includes('minimal context')) {
+      return 'Context Optimization';
+    }
+    if (text.includes('approval gate') || text.includes('quality gate') || text.includes('pause')) {
+      return 'Quality & Gates';
+    }
+    return 'LLM Specialist Inference';
+  };
+
+  const getLogDuration = (log: LogRecord): number => {
+    if (log.logs.trim().startsWith('{') && log.logs.includes('"telemetryType":"rich_step_log"')) {
+      try {
+        const parsed = JSON.parse(log.logs);
+        return parsed.orchestration?.durationMs || 0;
+      } catch (e) {}
+    }
+    const match = log.logs.match(/in (\d+)ms/);
+    return match ? parseInt(match[1], 10) : 0;
+  };
 
   // Fetch list of conversations to support switching projects in telemetry
   useEffect(() => {
@@ -165,19 +200,37 @@ export default function TelemetryDashboard() {
     };
   }, [activeId]);
 
-  const filteredLogs = logsList.filter((log) => {
-    if (filter === 'SUCCESS' && log.status !== 'Success') return false;
-    if (filter === 'FAILED' && log.status !== 'Failed') return false;
-    if (searchTerm) {
-      const term = searchTerm.toLowerCase();
-      return (
-        log.stage.toLowerCase().includes(term) ||
-        log.logs.toLowerCase().includes(term) ||
-        log.status.toLowerCase().includes(term)
-      );
-    }
-    return true;
-  });
+  const filteredLogs = logsList
+    .filter((log) => {
+      if (filter === 'SUCCESS' && log.status !== 'Success') return false;
+      if (filter === 'FAILED' && log.status !== 'Failed' && log.status !== 'Retrying') return false;
+      if (categoryFilter !== 'ALL' && categorizeLog(log) !== categoryFilter) return false;
+
+      if (searchTerm) {
+        const term = searchTerm.toLowerCase();
+        return (
+          log.stage.toLowerCase().includes(term) ||
+          log.logs.toLowerCase().includes(term) ||
+          log.status.toLowerCase().includes(term)
+        );
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'TIME_DESC') {
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      }
+      if (sortBy === 'TIME_ASC') {
+        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      }
+      if (sortBy === 'DURATION_DESC') {
+        return getLogDuration(b) - getLogDuration(a);
+      }
+      if (sortBy === 'DURATION_ASC') {
+        return getLogDuration(a) - getLogDuration(b);
+      }
+      return 0;
+    });
 
   const getTokenPieGradient = () => {
     if (!telemetry || telemetry.tokenUsage.length === 0) {
@@ -526,46 +579,86 @@ export default function TelemetryDashboard() {
         {/* Left: Logs List / Table */}
         <div className="flex-1 flex flex-col overflow-hidden h-full">
           {/* Table Toolbar */}
-          <div className="p-3 border-b border-slate-700 flex flex-col md:flex-row gap-4 justify-between items-start md:items-center bg-slate-900/50">
-            <div className="flex items-center gap-3">
-              <ListFilter className="w-4 h-4 text-slate-400" />
-              <h3 className="text-xs font-bold text-on-surface uppercase tracking-wider">Execution Log</h3>
+          {/* Table Toolbar */}
+          <div className="p-3 border-b border-slate-700 flex flex-col gap-3 bg-slate-900/50">
+            <div className="flex flex-col md:flex-row gap-4 justify-between items-start md:items-center">
+              <div className="flex items-center gap-3">
+                <ListFilter className="w-4 h-4 text-slate-400" />
+                <h3 className="text-xs font-bold text-on-surface uppercase tracking-wider">Execution Telemetry Logger</h3>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+                {/* Search */}
+                <div className="relative w-full md:w-48">
+                  <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
+                  <input
+                    type="text"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 text-xs rounded pl-8 pr-3 py-1 outline-none focus:border-electric-indigo"
+                    placeholder="Search logs..."
+                  />
+                </div>
+
+                {/* Status Filter buttons */}
+                <div className="flex bg-slate-950 rounded border border-slate-700 p-0.5">
+                  <button
+                    onClick={() => setFilter('ALL')}
+                    className={`px-2 py-1 text-[10px] font-bold rounded ${filter === 'ALL' ? 'bg-slate-800 text-on-surface' : 'text-slate-400'}`}
+                  >
+                    All Status
+                  </button>
+                  <button
+                    onClick={() => setFilter('SUCCESS')}
+                    className={`px-2 py-1 text-[10px] font-bold rounded ${filter === 'SUCCESS' ? 'bg-slate-800 text-on-surface' : 'text-slate-400'}`}
+                  >
+                    Success
+                  </button>
+                  <button
+                    onClick={() => setFilter('FAILED')}
+                    className={`px-2 py-1 text-[10px] font-bold rounded ${filter === 'FAILED' ? 'bg-slate-800 text-on-surface' : 'text-slate-400'}`}
+                  >
+                    Failed
+                  </button>
+                </div>
+
+                {/* Sort By Select */}
+                <select
+                  value={sortBy}
+                  onChange={(e: any) => setSortBy(e.target.value)}
+                  className="bg-slate-950 border border-slate-700 text-[10px] text-slate-300 font-mono rounded px-2 py-1 outline-none focus:border-electric-indigo"
+                >
+                  <option value="TIME_DESC">Sort: Newest First</option>
+                  <option value="TIME_ASC">Sort: Oldest First</option>
+                  <option value="DURATION_DESC">Sort: Slowest First</option>
+                  <option value="DURATION_ASC">Sort: Fastest First</option>
+                </select>
+              </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-              {/* Search */}
-              <div className="relative w-full md:w-48">
-                <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
-                <input
-                  type="text"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 text-xs rounded pl-8 pr-3 py-1 outline-none focus:border-electric-indigo"
-                  placeholder="Filter logs..."
-                />
-              </div>
-
-              {/* Filter buttons */}
-              <div className="flex bg-slate-950 rounded border border-slate-700 p-0.5">
+            {/* Category Filter Tabs */}
+            <div className="flex items-center gap-1 overflow-x-auto pb-1 border-t border-slate-800/80 pt-2 font-mono text-[10px]">
+              {[
+                { id: 'ALL', label: 'All Categories' },
+                { id: 'LLM Specialist Inference', label: 'LLM Inference' },
+                { id: 'Deterministic Engine', label: 'Deterministic Engine' },
+                { id: 'Event-Triggered Recovery', label: 'Event Recovery' },
+                { id: 'Security Scans', label: 'Security Scans' },
+                { id: 'Context Optimization', label: 'Context Optimization' },
+                { id: 'Quality & Gates', label: 'Gates & Approval' },
+              ].map((tab) => (
                 <button
-                  onClick={() => setFilter('ALL')}
-                  className={`px-2 py-1 text-[10px] font-bold rounded ${filter === 'ALL' ? 'bg-slate-800 text-on-surface' : 'text-slate-400'}`}
+                  key={tab.id}
+                  onClick={() => setCategoryFilter(tab.id)}
+                  className={`px-2.5 py-1 rounded-full whitespace-nowrap transition-colors border ${
+                    categoryFilter === tab.id
+                      ? 'bg-electric-indigo/20 border-electric-indigo text-on-surface font-bold'
+                      : 'border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                  }`}
                 >
-                  All
+                  {tab.label}
                 </button>
-                <button
-                  onClick={() => setFilter('SUCCESS')}
-                  className={`px-2 py-1 text-[10px] font-bold rounded ${filter === 'SUCCESS' ? 'bg-slate-800 text-on-surface' : 'text-slate-400'}`}
-                >
-                  Success
-                </button>
-                <button
-                  onClick={() => setFilter('FAILED')}
-                  className={`px-2 py-1 text-[10px] font-bold rounded ${filter === 'FAILED' ? 'bg-slate-800 text-on-surface' : 'text-slate-400'}`}
-                >
-                  Error
-                </button>
-              </div>
+              ))}
             </div>
           </div>
 
@@ -581,21 +674,23 @@ export default function TelemetryDashboard() {
               </div>
             ) : filteredLogs.length === 0 ? (
               <div className="p-12 text-center text-xs text-slate-500">
-                No log entries match the filters.
+                No log entries match the active category, search, or status filters.
               </div>
             ) : (
               <table className="w-full text-left border-collapse font-mono text-xs">
                 <thead className="sticky top-0 bg-slate-950 z-10 text-[10px] text-slate-400 border-b border-slate-700">
                   <tr>
-                    <th className="p-3 font-medium tracking-wider w-36">Time</th>
-                    <th className="p-3 font-medium tracking-wider w-36">Agent Name</th>
-                    <th className="p-3 font-medium tracking-wider">Command / Action</th>
-                    <th className="p-3 font-medium tracking-wider w-24">Result</th>
+                    <th className="p-3 font-medium tracking-wider w-32">Time</th>
+                    <th className="p-3 font-medium tracking-wider w-40">Category</th>
+                    <th className="p-3 font-medium tracking-wider w-36">Stage / Agent</th>
+                    <th className="p-3 font-medium tracking-wider">Telemetry Action Log</th>
+                    <th className="p-3 font-medium tracking-wider w-24">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
                   {filteredLogs.map((log) => {
                     const isSuccess = log.status === 'Success';
+                    const category = categorizeLog(log);
                     const isSelected = selectedLog && (selectedLog.executionMemory?.stage === log.stage || (selectedLog.thought === log.logs));
                     return (
                       <tr 
@@ -622,10 +717,27 @@ export default function TelemetryDashboard() {
                         <td className="p-3 text-slate-500 whitespace-nowrap">
                           {new Date(log.createdAt).toLocaleTimeString()}
                         </td>
+                        <td className="p-3 whitespace-nowrap">
+                          <span className={`px-2 py-0.5 rounded text-[9px] font-bold border ${
+                            category === 'Deterministic Engine'
+                              ? 'bg-purple-500/10 border-purple-500/20 text-purple-400'
+                              : category === 'Event-Triggered Recovery'
+                              ? 'bg-rose-500/10 border-rose-500/20 text-rose-400'
+                              : category === 'Security Scans'
+                              ? 'bg-teal-500/10 border-teal-500/20 text-teal-400'
+                              : category === 'Context Optimization'
+                              ? 'bg-cyan-500/10 border-cyan-500/20 text-cyan-400'
+                              : category === 'Quality & Gates'
+                              ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+                              : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400'
+                          }`}>
+                            {category}
+                          </span>
+                        </td>
                         <td className="p-3">
                           <div className="flex items-center gap-2">
                             <span className={`w-1.5 h-1.5 rounded-full ${isSuccess ? 'bg-electric-indigo' : 'bg-red-500'}`} />
-                            <span className="text-on-surface">{log.stage}</span>
+                            <span className="text-on-surface font-semibold">{log.stage}</span>
                           </div>
                         </td>
                         <td className="p-3 max-w-md truncate">

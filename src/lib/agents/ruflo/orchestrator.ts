@@ -240,9 +240,11 @@ export async function runAgent(
   await writeHistoryLog(conversationId, legacyAgentName, 'Retrying', `Agent ${agentName} started (Attempt ${attempt}/3)...`);
 
   const startTime = Date.now();
-  const contextData = await buildMinimalContext(ledger, agentName);
+  const contextResult = await buildMinimalContext(ledger, agentName);
+  const contextData = typeof contextResult === 'string' ? contextResult : contextResult.contextText;
   const config = await getLLMConfig();
-  await writeHistoryLog(conversationId, legacyAgentName, 'Retrying', `Active Model: ${config.ollamaModel}. Context payload assembled.`);
+  const contextStats = typeof contextResult === 'object' ? ` (Context Optimized: ${contextResult.bytesSaved} bytes saved, ${contextResult.reductionRatio}% reduction)` : '';
+  await writeHistoryLog(conversationId, legacyAgentName, 'Retrying', `Active Model: ${config.ollamaModel}. Context payload assembled${contextStats}.`);
 
   const constraintsBlock = `\n\nActive Model Constraints:
 - Output MUST be valid, parseable JSON. Do not include markdown code blocks (e.g. \`\`\`json) in the raw response, return raw text representing JSON.
@@ -895,11 +897,22 @@ export async function runOrchestrator(
         });
         await writeHistoryLog(conversationId, 'System', 'Success', `Pipeline paused. Context Resolver detected conflict: ${contextPack.conflicts[0].description}`);
         return;
+      } else {
+        onEvent({
+          type: 'AGENT_LOG',
+          agent: 'System',
+          message: 'Context Resolver checked specifications and verified 0 cross-contract conflicts.'
+        });
+        await writeHistoryLog(conversationId, 'System', 'Success', 'Context Resolver check passed cleanly with 0 specification conflicts.');
       }
 
       // 2. Run Blueprinter deterministically
       try {
+        const bpStartTime = Date.now();
+        await writeHistoryLog(conversationId, 'Blueprinter', 'Retrying', 'Running deterministic Blueprint Engine module graph solver...');
         const bpOutput = await runDeterministic(ledger);
+        const bpDuration = Date.now() - bpStartTime;
+        const blueprintCount = Array.isArray(bpOutput?.blueprints) ? bpOutput.blueprints.length : 0;
         
         // Write to legacy SML tables for compatibility
         await writeAgentOutput({
@@ -909,21 +922,24 @@ export async function runOrchestrator(
           schemaVersion: '1.0',
           model: 'deterministic-service',
           validatedJson: bpOutput,
-          executionTime: 0,
+          executionTime: bpDuration,
           tokenUsage: 0,
           attempt: 1,
         });
 
+        await writeHistoryLog(conversationId, 'Blueprinter', 'Success', `Blueprint Engine compiled ${blueprintCount} file blueprints deterministically in ${bpDuration}ms.`);
+
         onEvent({
           type: 'AGENT_COMPLETE',
           agent: 'Blueprinter',
-          message: 'Blueprinter completed successfully. Created blueprint manifest.'
+          message: `Blueprinter completed successfully. Created ${blueprintCount} file blueprint manifests.`
         });
       } catch (err: any) {
         onEvent({
           type: 'PIPELINE_ERROR',
           message: `Blueprinter failed: ${err.message}`
         });
+        await writeHistoryLog(conversationId, 'Blueprinter', 'Failed', `Blueprinter failed: ${err.message}`);
         await prisma.conversation.update({
           where: { id: conversationId },
           data: { status: 'Paused' },
@@ -1377,6 +1393,12 @@ Ensure you write complete source code matching these specs. Do not truncate.`;
       // Write to StageLedger
       await ledger.write('Tester', 'tester', output);
 
+      if (passed) {
+        await writeHistoryLog(conversationId, 'Tester', 'Success', 'Validation pipeline passed successfully with 0 static or runtime defects.');
+      } else {
+        await writeHistoryLog(conversationId, 'Tester', 'Failed', `Validation pipeline failed with ${defects.length} defect(s).`);
+      }
+
       onEvent({
         type: 'AGENT_COMPLETE',
         agent: 'Tester',
@@ -1421,7 +1443,8 @@ Ensure you write complete source code matching these specs. Do not truncate.`;
               conversationId,
               logsPayload,
               failedFile,
-              currentCode
+              currentCode,
+              ledger
             );
 
             if (recoveryResult && recoveryResult.patchCode) {
@@ -1568,20 +1591,23 @@ Perform a security review strictly for this file. Identify potential vulnerabili
         // Run static regex scans for secrets and evals on local files
         const projectDir = path.join(process.cwd(), 'projects', conversationId);
         const scannerIssues: any[] = [];
-
+        let scannedFilesCount = 0;
         const scanFiles = (dir: string) => {
           if (!fs.existsSync(dir)) return;
-          const list = fs.readdirSync(dir);
-          list.forEach((file) => {
-            const filePath = path.join(dir, file);
-            if (fs.statSync(filePath).isDirectory()) {
-              scanFiles(filePath);
-            } else if (filePath.endsWith('.ts') || filePath.endsWith('.tsx') || filePath.endsWith('.js')) {
-              const code = fs.readFileSync(filePath, 'utf8');
-              const relPath = path.relative(projectDir, filePath).replace(/\\/g, '/');
+          const entries = fs.readdirSync(dir, { withFileTypes: true });
+          entries.forEach((entry) => {
+            const fullPath = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+              if (entry.name !== 'node_modules' && entry.name !== '.git') {
+                scanFiles(fullPath);
+              }
+            } else if (entry.isFile() && (entry.name.endsWith('.js') || entry.name.endsWith('.ts') || entry.name.endsWith('.html'))) {
+              scannedFilesCount++;
+              const code = fs.readFileSync(fullPath, 'utf8');
+              const relPath = path.relative(projectDir, fullPath).replace(/\\/g, '/');
 
-              // Check for eval
-              if (code.includes('eval(') || code.includes('Function(')) {
+              // Check for eval/Function injection
+              if (/\beval\s*\(|\bnew\s+Function\s*\(/.test(code)) {
                 scannerIssues.push({
                   id: `SEC-STATIC-EVAL-${relPath.replace(/\//g, '-')}`,
                   severity: 'Critical',
@@ -1621,6 +1647,12 @@ Perform a security review strictly for this file. Identify potential vulnerabili
         };
 
         scanFiles(projectDir);
+        await writeHistoryLog(
+          conversationId,
+          'Security',
+          'Success',
+          `Static regex security scan evaluated ${scannedFilesCount} file(s) and identified ${scannerIssues.length} alert(s).`
+        );
         if (scannerIssues.length > 0) {
           onEvent({
             type: 'AGENT_LOG',
@@ -1654,6 +1686,7 @@ Perform a security review strictly for this file. Identify potential vulnerabili
           attempt: 1,
         });
         await ledger.write('Security', 'security', finalReport);
+        await writeHistoryLog(conversationId, 'Security', 'Success', `SecurityAuditor completed full map-reduce audit and security scan.`);
       }
 
     } else if (stage === 'Reviewer') {

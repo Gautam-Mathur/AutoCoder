@@ -1,4 +1,6 @@
 import { runInference } from '../inference';
+import { writeHistoryLog, writeRichTelemetryLog } from './orchestrator';
+import { StageLedger } from './memory';
 
 export type FailureType = 
   | 'syntax'
@@ -111,7 +113,8 @@ export async function executeSpecialistRecovery(
   conversationId: string,
   errorLog: string,
   failedFile: string,
-  currentCode: string
+  currentCode: string,
+  ledger?: StageLedger
 ): Promise<{ file: string; patchCode: string }> {
   const specialistPrompt = `You are the Debugger Specialist. Analyze the failure: ${errorLog}
 Target File: ${failedFile}
@@ -119,6 +122,9 @@ Current Code:
 ${currentCode}
 
 Provide a targeted patch code to fix the defect. Output only JSON: {"file": "${failedFile}", "patchCode": "your_patched_code_here"}`;
+
+  const startTime = Date.now();
+  await writeHistoryLog(conversationId, 'SpecialistRecovery', 'Retrying', `Specialist Recovery started for target file: ${failedFile}`);
 
   try {
     const responseText = await runInference([
@@ -129,12 +135,35 @@ Provide a targeted patch code to fix the defect. Output only JSON: {"file": "${f
     });
 
     const parsed = JSON.parse(responseText.trim());
+    const durationMs = Date.now() - startTime;
+
+    if (ledger) {
+      await writeRichTelemetryLog({
+        conversationId,
+        agentName: 'SpecialistRecovery',
+        status: 'Success',
+        systemInstructions: specialistPrompt,
+        userContent: `Target File: ${failedFile}\nError Log: ${errorLog}`,
+        rawOutput: responseText,
+        parsedJson: parsed,
+        durationMs,
+        attempt: 1,
+        model: 'ollama/specialist-debugger',
+        budget: 16384,
+        timeoutMs: 300000,
+        schema: { type: 'object', properties: { file: { type: 'string' }, patchCode: { type: 'string' } } },
+        ledger
+      });
+    }
+
+    await writeHistoryLog(conversationId, 'SpecialistRecovery', 'Success', `Specialist Recovery compiled surgical patch for ${failedFile} in ${durationMs}ms.`);
+
     return {
       file: parsed.file || failedFile,
       patchCode: parsed.patchCode || currentCode
     };
-  } catch (err) {
-    console.error('Specialist recovery failed, using original code:', err);
+  } catch (err: any) {
+    await writeHistoryLog(conversationId, 'SpecialistRecovery', 'Failed', `Specialist Recovery failed: ${err.message}`);
     return {
       file: failedFile,
       patchCode: currentCode
