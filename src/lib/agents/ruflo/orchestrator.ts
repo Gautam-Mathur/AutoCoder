@@ -203,7 +203,7 @@ export async function runAgent(
   conversationId: string,
   agentName: string,
   userPromptText: string,
-  onEvent: PipelineEventCallback,
+  rawOnEvent: PipelineEventCallback,
   ledger: StageLedger,
   attempt: number = 1,
   customUserContent?: string,
@@ -216,17 +216,33 @@ export async function runAgent(
     throw new Error(`Unknown agent: ${agentName}`);
   }
 
+  const legacyNameMap: Record<string, string> = {
+    SystemsArchitect: 'Architect',
+    BackendArchitect: 'System',
+    UIUXArchitect: 'Designer',
+    VerificationAgent: 'Reviewer',
+    SecurityAuditor: 'Security',
+  };
+  const legacyAgentName = legacyNameMap[agentName] || agentName;
+
+  const onEvent: PipelineEventCallback = (event) => {
+    if (event && event.agent === agentName) {
+      event.agent = legacyAgentName;
+    }
+    rawOnEvent(event);
+  };
+
   onEvent({
     type: 'AGENT_START',
     agent: agentName,
     message: `Agent ${agentName} started (Attempt ${attempt}/3)...`,
   });
-  await writeHistoryLog(conversationId, agentName, 'Retrying', `Agent ${agentName} started (Attempt ${attempt}/3)...`);
+  await writeHistoryLog(conversationId, legacyAgentName, 'Retrying', `Agent ${agentName} started (Attempt ${attempt}/3)...`);
 
   const startTime = Date.now();
   const contextData = await buildMinimalContext(ledger, agentName);
   const config = await getLLMConfig();
-  await writeHistoryLog(conversationId, agentName, 'Retrying', `Active Model: ${config.ollamaModel}. Context payload assembled.`);
+  await writeHistoryLog(conversationId, legacyAgentName, 'Retrying', `Active Model: ${config.ollamaModel}. Context payload assembled.`);
 
   const constraintsBlock = `\n\nActive Model Constraints:
 - Output MUST be valid, parseable JSON. Do not include markdown code blocks (e.g. \`\`\`json) in the raw response, return raw text representing JSON.
@@ -264,7 +280,7 @@ Original Instruction:
   });
   await writeHistoryLog(
     conversationId,
-    agentName,
+    legacyAgentName,
     'Retrying',
     `Executing LLM inference request on model "${config.ollamaModel}". Dynamic Budget: ${budget} tokens. Timeout: ${Math.round(timeoutMs / 1000)}s.`
   );
@@ -450,7 +466,7 @@ Original Instruction:
         agent: agentName,
         message: `JSON parse failed. Attempting cleanup...`,
       });
-      await writeHistoryLog(conversationId, agentName, 'Retrying', `JSON parse failed, executing regular expression fallback extraction...`);
+      await writeHistoryLog(conversationId, legacyAgentName, 'Retrying', `JSON parse failed, executing regular expression fallback extraction...`);
       const jsonMatch = cleanJsonText.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         try {
@@ -458,7 +474,7 @@ Original Instruction:
         } catch (e) {
           await writeRichTelemetryLog({
             conversationId,
-            agentName,
+            agentName: legacyAgentName,
             status: 'Failed',
             systemInstructions,
             userContent,
@@ -479,7 +495,7 @@ Original Instruction:
       } else {
         await writeRichTelemetryLog({
           conversationId,
-          agentName,
+          agentName: legacyAgentName,
           status: 'Failed',
           systemInstructions,
           userContent,
@@ -510,7 +526,7 @@ Original Instruction:
     });
     await writeRichTelemetryLog({
       conversationId,
-      agentName,
+      agentName: legacyAgentName,
       status: 'Failed',
       systemInstructions,
       userContent,
@@ -540,8 +556,8 @@ Original Instruction:
   // Save to legacy SML tables for backwards-compatibility with telemetry/workspace views
   await writeAgentOutput({
     conversationId,
-    agentName,
-    stage: agentName,
+    agentName: legacyAgentName,
+    stage: legacyAgentName,
     schemaVersion: '1.0',
     model: config.ollamaModel,
     validatedJson: parsedJson,
@@ -594,7 +610,7 @@ Original Instruction:
 
   await writeRichTelemetryLog({
     conversationId,
-    agentName,
+    agentName: legacyAgentName,
     status: 'Success',
     systemInstructions,
     userContent,

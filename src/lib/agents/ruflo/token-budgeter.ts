@@ -18,12 +18,12 @@ export function calculateTokenBudget(
     const featuresCount = taskSpec?.mvpScope?.included?.length || 0;
     budget = 16384 + (featuresCount * 1024);
   } 
-  else if (agentName === 'Architect') {
+  else if (agentName === 'Architect' || agentName === 'SystemsArchitect') {
     const planner = ledger.read('planner');
     const featuresCount = planner?.features?.length || 0;
     budget = 16384 + (featuresCount * 1024);
   }
-  else if (agentName === 'System' || agentName === 'Designer') {
+  else if (agentName === 'System' || agentName === 'BackendArchitect' || agentName === 'Designer' || agentName === 'UIUXArchitect') {
     const planner = ledger.read('planner');
     const featuresCount = planner?.features?.length || 0;
     const architect = ledger.read('architect');
