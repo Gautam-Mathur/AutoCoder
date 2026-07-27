@@ -555,12 +555,17 @@ Original Instruction:
     Queen: 'taskSpec',
     Planner: 'planner',
     Architect: 'architect',
+    SystemsArchitect: 'architect',
     System: 'system',
+    BackendArchitect: 'system',
     Designer: 'designer',
+    UIUXArchitect: 'designer',
     Coder: 'coder',
     Debugger: 'debugger',
     Security: 'security',
+    SecurityAuditor: 'security',
     Reviewer: 'reviewer',
+    VerificationAgent: 'reviewer',
     Tester: 'tester',
   };
   const field = fieldMap[agentName];
