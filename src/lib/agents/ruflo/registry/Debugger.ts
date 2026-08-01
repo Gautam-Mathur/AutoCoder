@@ -117,55 +117,77 @@ Avoid temporary workarounds unless explicitly required.
 export const schema = {
   type: 'object',
   properties: {
-    contextType: { type: 'string', const: 'canonical' },
-    projectName: { type: 'string' },
-    mvpReference: { type: 'string' },
-    debugReport: {
+    summary: {
       type: 'object',
       properties: {
-        issues: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'string' },
-              testerDefectId: { type: 'string' },
-              severity: { type: 'string', enum: ['Critical', 'High', 'Medium', 'Low'] },
-              category: { type: 'string', enum: ['Compilation', 'Runtime', 'Functional', 'Integration', 'API', 'UI', 'Security', 'Performance'] },
-              file: { type: 'string' },
-              module: { type: 'string' },
-              class: { type: 'string' },
-              function: { type: 'string' },
-              location: { type: 'string' },
-              rootCause: { type: 'string' },
-              stackTrace: { type: 'string' },
-              impact: { type: 'string' },
-              recommendedFix: { type: 'string' },
-              implementationInstructions: { type: 'array', items: { type: 'string' } },
-              regressionRisk: { type: 'string', enum: ['Low', 'Medium', 'High'] }
-            },
-            required: [
-              'id', 'testerDefectId', 'severity', 'category', 'file', 'module', 'class', 'function',
-              'location', 'rootCause', 'stackTrace', 'impact', 'recommendedFix', 'implementationInstructions', 'regressionRisk'
-            ]
-          }
-        },
-        summary: {
-          type: 'object',
-          properties: {
-            issuesDetected: { type: 'integer' },
-            issuesResolved: { type: 'integer' },
-            remainingIssues: { type: 'integer' }
+        status: { type: 'string', enum: ['RESOLVED', 'PARTIALLY_RESOLVED', 'FAILED', 'Success', 'Partial', 'Failed'] },
+        resolvedDefects: { type: 'number' },
+        remainingDefects: { type: 'number' },
+        modifiedFiles: { type: 'number' }
+      }
+    },
+    fixes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          defectId: { type: 'string' },
+          status: { type: 'string', enum: ['RESOLVED', 'PARTIALLY_RESOLVED', 'FAILED'] },
+          rootCause: { type: 'string' },
+          resolution: { type: 'string' },
+          modifiedFiles: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                path: { type: 'string' },
+                changes: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      type: { type: 'string', enum: ['ADD', 'MODIFY', 'DELETE'] },
+                      description: { type: 'string' }
+                    }
+                  }
+                }
+              }
+            }
           },
-          required: ['issuesDetected', 'issuesResolved', 'remainingIssues']
-        },
+          regressionRisk: { type: 'string', enum: ['LOW', 'MEDIUM', 'HIGH', 'Low', 'Medium', 'High'] }
+        }
+      }
+    },
+    generatedFiles: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          language: { type: 'string' },
+          code: { type: 'string' }
+        }
+      }
+    },
+    validation: {
+      type: 'object',
+      properties: {
+        resolvedDefectIds: { type: 'array', items: { type: 'string' } },
+        remainingDefectIds: { type: 'array', items: { type: 'string' } },
         warnings: { type: 'array', items: { type: 'string' } },
-        status: { type: 'string', enum: ['Success', 'Partial', 'Failed'] }
-      },
-      required: ['issues', 'summary', 'warnings', 'status']
+        notes: { type: 'array', items: { type: 'string' } }
+      }
+    },
+    metadata: {
+      type: 'object',
+      properties: {
+        version: { type: 'string' },
+        generatedAt: { type: 'string' },
+        status: { type: 'string' }
+      }
     }
-  },
-  required: ['contextType', 'projectName', 'mvpReference', 'debugReport']
+  }
 };
 
 export async function getContext(ledger: StageLedger): Promise<string> {

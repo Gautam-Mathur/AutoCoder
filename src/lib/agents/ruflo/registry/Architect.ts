@@ -89,74 +89,100 @@ When designing the architecture:
 export const schema = {
   type: 'object',
   properties: {
-    contextType: { type: 'string', const: 'canonical' },
-    projectName: { type: 'string' },
-    mvpReference: { type: 'string' },
-    architectureStyle: { type: 'string' },
-    projectStructure: {
+    architecture: {
       type: 'object',
       properties: {
-        root: { type: 'string' },
-        directories: { type: 'array', items: { type: 'string' } },
-        files: {
-          type: 'array',
-          minItems: 1,
-          items: {
-            type: 'object',
-            properties: {
-              path: { type: 'string' },
-              module: { type: 'string' }
-            },
-            required: ['path', 'module']
-          }
-        }
-      },
-      required: ['root', 'directories', 'files']
+        style: { type: 'string' },
+        reasoning: { type: 'string' }
+      }
     },
+    architectureStyle: { type: 'string' },
     modules: {
       type: 'array',
-      minItems: 1,
       items: {
         type: 'object',
         properties: {
           id: { type: 'string' },
           name: { type: 'string' },
+          description: { type: 'string' },
           purpose: { type: 'string' },
           supportsFeatures: { type: 'array', items: { type: 'string' } },
-          directories: { type: 'array', items: { type: 'string' } },
-          files: { type: 'array', items: { type: 'string' } },
           dependsOn: { type: 'array', items: { type: 'string' } },
-          usedBy: { type: 'array', items: { type: 'string' } }
+          ownedDirectories: { type: 'array', items: { type: 'string' } },
+          ownedFiles: { type: 'array', items: { type: 'string' } }
+        }
+      }
+    },
+    projectStructure: {
+      type: 'object',
+      properties: {
+        root: { type: 'string' },
+        directories: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              path: { type: 'string' },
+              moduleId: { type: 'string' }
+            }
+          }
         },
-        required: ['id', 'name', 'purpose', 'supportsFeatures', 'directories', 'files', 'dependsOn', 'usedBy']
+        files: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              path: { type: 'string' },
+              moduleId: { type: 'string' },
+              module: { type: 'string' },
+              purpose: { type: 'string' },
+              type: { type: 'string' }
+            }
+          }
+        }
       }
     },
     sharedResources: {
-      type: 'object',
-      properties: {
-        configuration: { type: 'array', items: { type: 'string' } },
-        constants: { type: 'array', items: { type: 'string' } },
-        types: { type: 'array', items: { type: 'string' } },
-        utilities: { type: 'array', items: { type: 'string' } },
-        middleware: { type: 'array', items: { type: 'string' } },
-        assets: { type: 'array', items: { type: 'string' } },
-        environment: { type: 'array', items: { type: 'string' } },
-        others: { type: 'array', items: { type: 'string' } }
-      },
-      required: ['configuration', 'constants', 'types', 'utilities', 'middleware', 'assets', 'environment', 'others']
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          name: { type: 'string' },
+          type: { type: 'string' },
+          purpose: { type: 'string' },
+          usedByModules: { type: 'array', items: { type: 'string' } }
+        }
+      }
+    },
+    moduleDependencies: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          moduleId: { type: 'string' },
+          dependsOn: { type: 'array', items: { type: 'string' } }
+        }
+      }
     },
     projectConventions: {
       type: 'object',
       properties: {
         namingConvention: { type: 'string' },
         folderConvention: { type: 'string' },
-        codingConvention: { type: 'string' },
-        importConvention: { type: 'string' }
-      },
-      required: ['namingConvention', 'folderConvention', 'codingConvention', 'importConvention']
+        importConvention: { type: 'string' },
+        codeOrganization: { type: 'string' }
+      }
+    },
+    metadata: {
+      type: 'object',
+      properties: {
+        version: { type: 'string' },
+        generatedAt: { type: 'string' },
+        status: { type: 'string' }
+      }
     }
-  },
-  required: ['contextType', 'projectName', 'mvpReference', 'architectureStyle', 'projectStructure', 'modules', 'sharedResources', 'projectConventions']
+  }
 };
 
 export async function getContext(ledger: StageLedger): Promise<string> {

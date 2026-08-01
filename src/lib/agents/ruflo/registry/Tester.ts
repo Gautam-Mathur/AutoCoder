@@ -116,65 +116,109 @@ Only report genuine implementation defects.
 export const schema = {
   type: 'object',
   properties: {
-    contextType: { type: 'string', const: 'canonical' },
-    projectName: { type: 'string' },
-    mvpReference: { type: 'string' },
-    generatedTestFiles: {
+    summary: {
+      type: 'object',
+      properties: {
+        overallStatus: { type: 'string', enum: ['PASSED', 'PASSED_WITH_WARNINGS', 'FAILED', 'Success', 'Partial', 'Failed'] },
+        totalTests: { type: 'number' },
+        passedTests: { type: 'number' },
+        failedTests: { type: 'number' },
+        skippedTests: { type: 'number' }
+      }
+    },
+    coverage: {
+      type: 'object',
+      properties: {
+        features: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              featureId: { type: 'string' },
+              status: { type: 'string', enum: ['PASSED', 'FAILED', 'PARTIAL'] },
+              testedRequirements: { type: 'array', items: { type: 'string' } }
+            }
+          }
+        },
+        functionalRequirements: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              requirementId: { type: 'string' },
+              status: { type: 'string', enum: ['PASSED', 'FAILED', 'PARTIAL'] }
+            }
+          }
+        },
+        nonFunctionalRequirements: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              category: { type: 'string' },
+              status: { type: 'string', enum: ['PASSED', 'FAILED', 'NOT_APPLICABLE'] },
+              notes: { type: 'string' }
+            }
+          }
+        }
+      }
+    },
+    testCases: {
       type: 'array',
       items: {
         type: 'object',
         properties: {
           id: { type: 'string' },
-          path: { type: 'string' },
-          targetFile: { type: 'string' },
-          coversFeature: { type: 'string' },
-          type: { type: 'string' },
-          language: { type: 'string' },
-          content: { type: 'string' }
-        },
-        required: ['id', 'path', 'targetFile', 'coversFeature', 'type', 'language', 'content']
+          name: { type: 'string' },
+          type: { type: 'string', enum: ['UNIT', 'INTEGRATION', 'SYSTEM', 'E2E'] },
+          relatedFeatureId: { type: 'string' },
+          relatedRequirementIds: { type: 'array', items: { type: 'string' } },
+          expectedResult: { type: 'string' },
+          actualResult: { type: 'string' },
+          status: { type: 'string', enum: ['PASSED', 'FAILED', 'SKIPPED'] },
+          affectedFiles: { type: 'array', items: { type: 'string' } }
+        }
       }
     },
-    testReport: {
+    defects: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          title: { type: 'string' },
+          description: { type: 'string' },
+          severity: { type: 'string', enum: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'Critical', 'High', 'Medium', 'Low'] },
+          category: { type: 'string', enum: ['FUNCTIONAL', 'UI', 'API', 'DATABASE', 'SECURITY', 'PERFORMANCE', 'VALIDATION', 'INTEGRATION'] },
+          relatedFeatureId: { type: 'string' },
+          relatedRequirementIds: { type: 'array', items: { type: 'string' } },
+          affectedFiles: { type: 'array', items: { type: 'string' } },
+          expectedBehavior: { type: 'string' },
+          actualBehavior: { type: 'string' },
+          reproductionSteps: { type: 'array', items: { type: 'string' } },
+          rootCauseHypothesis: { type: 'string' }
+        }
+      }
+    },
+    generatedTests: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          file: { type: 'string' },
+          purpose: { type: 'string' }
+        }
+      }
+    },
+    metadata: {
       type: 'object',
       properties: {
-        summary: {
-          type: 'object',
-          properties: {
-            totalTests: { type: 'integer' },
-            passed: { type: 'integer' },
-            failed: { type: 'integer' },
-            skipped: { type: 'integer' },
-            coverage: { type: 'string' },
-            coveredFeatures: { type: 'array', items: { type: 'string' } },
-            missingFeatures: { type: 'array', items: { type: 'string' } }
-          },
-          required: ['totalTests', 'passed', 'failed', 'skipped', 'coverage', 'coveredFeatures', 'missingFeatures']
-        },
-        defects: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'string' },
-              severity: { type: 'string', enum: ['Critical', 'High', 'Medium', 'Low'] },
-              category: { type: 'string', enum: ['Functional', 'Integration', 'API', 'UI', 'Security', 'Performance', 'Validation'] },
-              file: { type: 'string' },
-              description: { type: 'string' },
-              expectedBehaviour: { type: 'string' },
-              actualBehaviour: { type: 'string' },
-              reproductionSteps: { type: 'array', items: { type: 'string' } }
-            },
-            required: ['id', 'severity', 'category', 'file', 'description', 'expectedBehaviour', 'actualBehaviour', 'reproductionSteps']
-          }
-        },
-        warnings: { type: 'array', items: { type: 'string' } },
-        status: { type: 'string', enum: ['Success', 'Partial', 'Failed'] }
-      },
-      required: ['summary', 'defects', 'warnings', 'status']
+        version: { type: 'string' },
+        generatedAt: { type: 'string' },
+        status: { type: 'string' }
+      }
     }
-  },
-  required: ['contextType', 'projectName', 'mvpReference', 'generatedTestFiles', 'testReport']
+  }
 };
 
 export async function getContext(ledger: StageLedger): Promise<string> {

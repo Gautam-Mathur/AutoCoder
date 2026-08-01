@@ -80,6 +80,20 @@ export async function saveExecutiveMemory(conversationId: string, state: MemoryS
   });
 }
 
+function getNestedValue(obj: any, path: string): any {
+  if (!obj || typeof obj !== 'object') return undefined;
+  const parts = path.split('.');
+  let curr = obj;
+  for (const part of parts) {
+    if (curr && typeof curr === 'object' && part in curr) {
+      curr = curr[part];
+    } else {
+      return undefined;
+    }
+  }
+  return curr;
+}
+
 export class StageLedger {
   private conversationId: string;
   private state: MemoryState;
@@ -116,6 +130,11 @@ export class StageLedger {
     for (const key of select) {
       if (key in data) {
         result[key] = data[key];
+      } else if (key.includes('.')) {
+        const val = getNestedValue(data, key);
+        if (val !== undefined) {
+          result[key] = val;
+        }
       }
     }
     return result;

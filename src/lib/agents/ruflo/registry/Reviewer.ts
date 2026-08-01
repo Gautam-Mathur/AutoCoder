@@ -107,7 +107,86 @@ Avoid subjective preferences.
 export const schema = {
   type: 'object',
   properties: {
-    qualityScore: { type: 'integer' },
+    summary: {
+      type: 'object',
+      properties: {
+        overallAssessment: { type: 'string', enum: ['APPROVED', 'APPROVED_WITH_RECOMMENDATIONS', 'REQUIRES_REWORK', 'REJECTED'] },
+        engineeringQuality: { type: 'string', enum: ['EXCELLENT', 'GOOD', 'FAIR', 'POOR'] },
+        releaseReadiness: { type: 'string', enum: ['READY', 'READY_WITH_MINOR_IMPROVEMENTS', 'NOT_READY'] }
+      }
+    },
+    requirementCoverage: {
+      type: 'object',
+      properties: {
+        features: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              featureId: { type: 'string' },
+              status: { type: 'string', enum: ['COMPLETE', 'PARTIAL', 'MISSING'] },
+              notes: { type: 'string' }
+            }
+          }
+        },
+        functionalRequirements: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              requirementId: { type: 'string' },
+              status: { type: 'string', enum: ['SATISFIED', 'PARTIAL', 'UNSATISFIED'] }
+            }
+          }
+        }
+      }
+    },
+    architectureReview: {
+      type: 'object',
+      properties: {
+        structureConsistency: { type: 'string', enum: ['PASS', 'FAIL'] },
+        moduleOrganization: { type: 'string', enum: ['PASS', 'FAIL'] },
+        dependencyQuality: { type: 'string', enum: ['PASS', 'FAIL'] },
+        projectOrganization: { type: 'string', enum: ['PASS', 'FAIL'] },
+        notes: { type: 'array', items: { type: 'string' } }
+      }
+    },
+    codeQuality: {
+      type: 'object',
+      properties: {
+        readability: { type: 'string', enum: ['EXCELLENT', 'GOOD', 'FAIR', 'POOR'] },
+        maintainability: { type: 'string', enum: ['EXCELLENT', 'GOOD', 'FAIR', 'POOR'] },
+        modularity: { type: 'string', enum: ['EXCELLENT', 'GOOD', 'FAIR', 'POOR'] },
+        consistency: { type: 'string', enum: ['EXCELLENT', 'GOOD', 'FAIR', 'POOR'] },
+        notes: { type: 'array', items: { type: 'string' } }
+      }
+    },
+    findings: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          severity: { type: 'string', enum: ['HIGH', 'MEDIUM', 'LOW'] },
+          category: { type: 'string', enum: ['ARCHITECTURE', 'CODE_QUALITY', 'MAINTAINABILITY', 'CONSISTENCY', 'DOCUMENTATION', 'BEST_PRACTICE'] },
+          title: { type: 'string' },
+          description: { type: 'string' },
+          affectedFiles: { type: 'array', items: { type: 'string' } },
+          recommendation: { type: 'string' }
+        }
+      }
+    },
+    strengths: { type: 'array', items: { type: 'string' } },
+    recommendations: { type: 'array', items: { type: 'string' } },
+    metadata: {
+      type: 'object',
+      properties: {
+        version: { type: 'string' },
+        generatedAt: { type: 'string' },
+        status: { type: 'string' }
+      }
+    },
+    qualityScore: { type: 'number' },
     annotations: {
       type: 'array',
       items: {
@@ -115,14 +194,12 @@ export const schema = {
         properties: {
           file: { type: 'string' },
           note: { type: 'string' },
-          agent: { type: 'string', enum: ['Reviewer'] },
-          severity: { type: 'string', enum: ['info', 'warn', 'error'] }
-        },
-        required: ['file', 'note', 'agent', 'severity']
+          agent: { type: 'string' },
+          severity: { type: 'string' }
+        }
       }
     }
-  },
-  required: ['qualityScore', 'annotations']
+  }
 };
 
 export async function getContext(ledger: StageLedger): Promise<string> {

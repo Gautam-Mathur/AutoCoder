@@ -109,61 +109,115 @@ Recommendations should preserve the existing project architecture whenever possi
 export const schema = {
   type: 'object',
   properties: {
-    contextType: { type: 'string', const: 'canonical' },
-    projectName: { type: 'string' },
-    mvpReference: { type: 'string' },
-    securityReport: {
+    summary: {
       type: 'object',
       properties: {
-        issues: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'string' },
-              severity: { type: 'string', enum: ['Critical', 'High', 'Medium', 'Low', 'Informational'] },
-              category: {
-                type: 'string',
-                enum: [
-                  'Authentication', 'Authorization', 'Input Validation', 'Injection', 'XSS', 'CSRF', 'SSRF',
-                  'File Upload', 'Security Headers', 'Session Management', 'Configuration', 'Secrets',
-                  'Dependency', 'API', 'Cryptography', 'Transport Security', 'Other'
-                ]
-              },
-              file: { type: 'string' },
-              location: { type: 'string' },
-              description: { type: 'string' },
-              risk: { type: 'string' },
-              recommendation: { type: 'string' },
-              affectedFeature: { type: 'string' },
-              owaspTop10: { type: 'string' },
-              cweReference: { type: 'string' },
-              confidence: { type: 'string', enum: ['High', 'Medium', 'Low'] }
-            },
-            required: [
-              'id', 'severity', 'category', 'file', 'location', 'description', 'risk', 'recommendation',
-              'affectedFeature', 'owaspTop10', 'cweReference', 'confidence'
-            ]
-          }
-        },
-        summary: {
+        overallSecurityStatus: { type: 'string', enum: ['SECURE', 'SECURE_WITH_WARNINGS', 'VULNERABLE', 'CRITICAL'] },
+        securityScore: { type: 'number' },
+        overallRisk: { type: 'string', enum: ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'] }
+      }
+    },
+    securityRequirements: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          requirement: { type: 'string' },
+          status: { type: 'string', enum: ['SATISFIED', 'PARTIAL', 'UNSATISFIED'] },
+          notes: { type: 'string' }
+        }
+      }
+    },
+    securityChecks: {
+      type: 'object',
+      properties: {
+        authentication: {
           type: 'object',
           properties: {
-            critical: { type: 'integer' },
-            high: { type: 'integer' },
-            medium: { type: 'integer' },
-            low: { type: 'integer' },
-            informational: { type: 'integer' }
-          },
-          required: ['critical', 'high', 'medium', 'low', 'informational']
+            status: { type: 'string', enum: ['PASS', 'FAIL', 'NOT_APPLICABLE'] },
+            findings: { type: 'array', items: { type: 'string' } }
+          }
         },
-        warnings: { type: 'array', items: { type: 'string' } },
-        status: { type: 'string', enum: ['Success', 'Partial', 'Failed'] }
-      },
-      required: ['issues', 'summary', 'warnings', 'status']
+        authorization: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', enum: ['PASS', 'FAIL', 'NOT_APPLICABLE'] },
+            findings: { type: 'array', items: { type: 'string' } }
+          }
+        },
+        inputValidation: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', enum: ['PASS', 'FAIL', 'NOT_APPLICABLE'] },
+            findings: { type: 'array', items: { type: 'string' } }
+          }
+        },
+        dataProtection: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', enum: ['PASS', 'FAIL', 'NOT_APPLICABLE'] },
+            findings: { type: 'array', items: { type: 'string' } }
+          }
+        },
+        secretManagement: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', enum: ['PASS', 'FAIL', 'NOT_APPLICABLE'] },
+            findings: { type: 'array', items: { type: 'string' } }
+          }
+        },
+        configuration: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', enum: ['PASS', 'FAIL', 'NOT_APPLICABLE'] },
+            findings: { type: 'array', items: { type: 'string' } }
+          }
+        },
+        dependencySecurity: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', enum: ['PASS', 'FAIL', 'NOT_APPLICABLE'] },
+            findings: { type: 'array', items: { type: 'string' } }
+          }
+        },
+        apiSecurity: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', enum: ['PASS', 'FAIL', 'NOT_APPLICABLE'] },
+            findings: { type: 'array', items: { type: 'string' } }
+          }
+        }
+      }
+    },
+    vulnerabilities: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          title: { type: 'string' },
+          description: { type: 'string' },
+          severity: { type: 'string', enum: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFORMATIONAL', 'Critical', 'High', 'Medium', 'Low'] },
+          category: { type: 'string', enum: ['AUTHENTICATION', 'AUTHORIZATION', 'INPUT_VALIDATION', 'DATA_EXPOSURE', 'CONFIGURATION', 'DEPENDENCY', 'API', 'SECRET_MANAGEMENT', 'OTHER'] },
+          affectedFiles: { type: 'array', items: { type: 'string' } },
+          attackSurface: { type: 'string' },
+          businessImpact: { type: 'string' },
+          evidence: { type: 'string' },
+          recommendation: { type: 'string' }
+        }
+      }
+    },
+    securityStrengths: { type: 'array', items: { type: 'string' } },
+    recommendations: { type: 'array', items: { type: 'string' } },
+    metadata: {
+      type: 'object',
+      properties: {
+        version: { type: 'string' },
+        generatedAt: { type: 'string' },
+        status: { type: 'string' }
+      }
     }
-  },
-  required: ['contextType', 'projectName', 'mvpReference', 'securityReport']
+  }
 };
 
 export async function getContext(ledger: StageLedger): Promise<string> {

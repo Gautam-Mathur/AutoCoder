@@ -95,9 +95,6 @@ When designing the backend:
 export const schema = {
   type: 'object',
   properties: {
-    contextType: { type: 'string', const: 'canonical' },
-    projectName: { type: 'string' },
-    mvpReference: { type: 'string' },
     database: {
       type: 'object',
       properties: {
@@ -109,17 +106,24 @@ export const schema = {
             properties: {
               id: { type: 'string' },
               name: { type: 'string' },
+              description: { type: 'string' },
               purpose: { type: 'string' },
+              supportsFeatures: { type: 'array', items: { type: 'string' } },
               fields: { type: 'array', items: { type: 'string' } },
-              relationships: { type: 'array', items: { type: 'string' } },
-              indexes: { type: 'array', items: { type: 'string' } },
-              constraints: { type: 'array', items: { type: 'string' } }
-            },
-            required: ['id', 'name', 'purpose', 'fields', 'relationships', 'indexes', 'constraints']
+              relationships: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    entity: { type: 'string' },
+                    type: { type: 'string' }
+                  }
+                }
+              }
+            }
           }
         }
-      },
-      required: ['type', 'entities']
+      }
     },
     apis: {
       type: 'array',
@@ -128,45 +132,29 @@ export const schema = {
         properties: {
           id: { type: 'string' },
           name: { type: 'string' },
-          method: { type: 'string' },
+          description: { type: 'string' },
           route: { type: 'string' },
-          purpose: { type: 'string' },
-          featureId: { type: 'string' },
-          request: { type: 'object' },
-          response: { type: 'object' },
-          middleware: { type: 'array', items: { type: 'string' } }
-        },
-        required: ['id', 'name', 'method', 'route', 'purpose', 'featureId', 'request', 'response', 'middleware']
-      }
-    },
-    routing: {
-      type: 'object',
-      properties: {
-        routerStructure: {
-          type: 'array',
-          items: {
+          method: { type: 'string' },
+          request: {
             type: 'object',
             properties: {
-              apiId: { type: 'string' },
-              path: { type: 'string' }
-            },
-            required: ['apiId', 'path']
-          }
-        },
-        routeGroups: { type: 'array', items: { type: 'string' } }
-      },
-      required: ['routerStructure', 'routeGroups']
-    },
-    middleware: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          name: { type: 'string' },
-          purpose: { type: 'string' },
-          appliesTo: { type: 'array', items: { type: 'string' } }
-        },
-        required: ['name', 'purpose', 'appliesTo']
+              body: { type: 'array', items: { type: 'string' } },
+              query: { type: 'array', items: { type: 'string' } },
+              params: { type: 'array', items: { type: 'string' } }
+            }
+          },
+          response: {
+            type: 'object',
+            properties: {
+              success: { type: 'string' },
+              error: { type: 'string' }
+            }
+          },
+          authentication: { type: 'boolean' },
+          authorization: { type: 'string' },
+          supportsFeatures: { type: 'array', items: { type: 'string' } },
+          serviceId: { type: 'string' }
+        }
       }
     },
     services: {
@@ -176,37 +164,85 @@ export const schema = {
         properties: {
           id: { type: 'string' },
           name: { type: 'string' },
+          description: { type: 'string' },
+          responsibilities: { type: 'array', items: { type: 'string' } },
+          supportsFeatures: { type: 'array', items: { type: 'string' } },
+          consumedEntities: { type: 'array', items: { type: 'string' } },
+          consumedApis: { type: 'array', items: { type: 'string' } }
+        }
+      }
+    },
+    middleware: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          name: { type: 'string' },
           purpose: { type: 'string' },
-          usedByApis: { type: 'array', items: { type: 'string' } }
-        },
-        required: ['id', 'name', 'purpose', 'usedByApis']
+          appliesTo: { type: 'array', items: { type: 'string' } },
+          order: { type: 'number' }
+        }
       }
     },
     configuration: {
       type: 'object',
       properties: {
-        environmentVariables: { type: 'array', items: { type: 'string' } },
-        storage: { type: 'array', items: { type: 'string' } },
-        cache: { type: 'array', items: { type: 'string' } },
-        externalServices: { type: 'array', items: { type: 'string' } },
-        authentication: { type: 'array', items: { type: 'string' } },
-        authorization: { type: 'array', items: { type: 'string' } },
-        others: { type: 'array', items: { type: 'string' } }
-      },
-      required: ['environmentVariables', 'storage', 'cache', 'externalServices', 'authentication', 'authorization', 'others']
+        environmentVariables: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              required: { type: 'boolean' },
+              purpose: { type: 'string' }
+            }
+          }
+        },
+        externalServices: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              purpose: { type: 'string' }
+            }
+          }
+        }
+      }
     },
-    backendRules: {
+    validationRules: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          target: { type: 'string' },
+          rule: { type: 'string' },
+          supportsFeature: { type: 'string' }
+        }
+      }
+    },
+    businessRules: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          description: { type: 'string' },
+          supportsFeature: { type: 'string' }
+        }
+      }
+    },
+    metadata: {
       type: 'object',
       properties: {
-        validationRules: { type: 'array', items: { type: 'string' } },
-        businessRules: { type: 'array', items: { type: 'string' } },
-        errorHandling: { type: 'array', items: { type: 'string' } },
-        securityPolicies: { type: 'array', items: { type: 'string' } }
-      },
-      required: ['validationRules', 'businessRules', 'errorHandling', 'securityPolicies']
+        version: { type: 'string' },
+        generatedAt: { type: 'string' },
+        status: { type: 'string' }
+      }
     }
-  },
-  required: ['contextType', 'projectName', 'mvpReference', 'database', 'apis', 'routing', 'middleware', 'services', 'configuration', 'backendRules']
+  }
 };
 
 export async function getContext(ledger: StageLedger): Promise<string> {

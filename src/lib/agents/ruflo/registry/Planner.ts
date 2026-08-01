@@ -72,9 +72,54 @@ When planning:
 export const schema = {
   type: 'object',
   properties: {
-    contextType: { type: 'string', const: 'canonical' },
-    projectName: { type: 'string' },
-    mvpReference: { type: 'string' },
+    technology: {
+      type: 'object',
+      properties: {
+        frontend: {
+          type: 'object',
+          properties: {
+            framework: { type: 'string' },
+            language: { type: 'string' },
+            styling: { type: 'array', items: { type: 'string' } },
+            stateManagement: { type: 'string' },
+            routing: { type: 'string' },
+            buildTool: { type: 'string' }
+          }
+        },
+        backend: {
+          type: 'object',
+          properties: {
+            framework: { type: 'string' },
+            language: { type: 'string' },
+            runtime: { type: 'string' }
+          }
+        },
+        database: {
+          type: 'object',
+          properties: {
+            type: { type: 'string' },
+            provider: { type: 'string' },
+            orm: { type: 'string' }
+          }
+        },
+        authentication: {
+          type: 'object',
+          properties: {
+            required: { type: 'boolean' },
+            strategy: { type: 'string' }
+          }
+        },
+        deployment: {
+          type: 'object',
+          properties: {
+            frontend: { type: 'string' },
+            backend: { type: 'string' },
+            database: { type: 'string' }
+          }
+        },
+        additionalTechnologies: { type: 'array', items: { type: 'string' } }
+      }
+    },
     recommendedTechStack: {
       type: 'object',
       properties: {
@@ -84,54 +129,65 @@ export const schema = {
         authentication: { type: 'string' },
         deployment: { type: 'string' },
         additionalTechnologies: { type: 'array', items: { type: 'string' } }
-      },
-      required: ['frontend', 'backend', 'database', 'authentication', 'deployment', 'additionalTechnologies']
+      }
     },
     features: {
       type: 'array',
-      minItems: 1,
       items: {
         type: 'object',
         properties: {
           id: { type: 'string' },
-          mvpReference: { type: 'string' },
           name: { type: 'string' },
           description: { type: 'string' },
-          priority: { type: 'string', enum: ['Critical', 'High', 'Medium', 'Low'] }
-        },
-        required: ['id', 'mvpReference', 'name', 'description', 'priority']
+          priority: { type: 'string', enum: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'Critical', 'High', 'Medium', 'Low'] },
+          dependsOn: { type: 'array', items: { type: 'string' } },
+          requirements: { type: 'array', items: { type: 'string' } }
+        }
       }
     },
-    functionalRequirements: { type: 'array', items: { type: 'string' } },
+    functionalRequirements: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          description: { type: 'string' },
+          featureId: { type: 'string' }
+        }
+      }
+    },
     nonFunctionalRequirements: {
       type: 'object',
       properties: {
-        security: { type: 'array', items: { type: 'string' } },
         performance: { type: 'array', items: { type: 'string' } },
+        security: { type: 'array', items: { type: 'string' } },
         scalability: { type: 'array', items: { type: 'string' } },
-        usability: { type: 'array', items: { type: 'string' } },
+        reliability: { type: 'array', items: { type: 'string' } },
         maintainability: { type: 'array', items: { type: 'string' } },
         accessibility: { type: 'array', items: { type: 'string' } },
-        reliability: { type: 'array', items: { type: 'string' } }
-      },
-      required: ['security', 'performance', 'scalability', 'usability', 'maintainability', 'accessibility', 'reliability']
+        usability: { type: 'array', items: { type: 'string' } }
+      }
     },
-    deliverables: { type: 'array', items: { type: 'string' } },
-    agentInstructions: {
+    acceptanceCriteria: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          featureId: { type: 'string' },
+          criteria: { type: 'string' }
+        }
+      }
+    },
+    metadata: {
       type: 'object',
       properties: {
-        architect: { type: 'string' },
-        system: { type: 'string' },
-        designer: { type: 'string' },
-        coder: { type: 'string' },
-        tester: { type: 'string' },
-        debugger: { type: 'string' },
-        security: { type: 'string' }
-      },
-      required: ['architect', 'system', 'designer', 'coder', 'tester', 'debugger', 'security']
+        version: { type: 'string' },
+        generatedAt: { type: 'string' },
+        status: { type: 'string' }
+      }
     }
-  },
-  required: ['contextType', 'projectName', 'mvpReference', 'recommendedTechStack', 'features', 'functionalRequirements', 'nonFunctionalRequirements', 'deliverables', 'agentInstructions']
+  }
 };
 
 export async function getContext(ledger: StageLedger): Promise<string> {

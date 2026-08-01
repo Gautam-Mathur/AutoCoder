@@ -108,27 +108,35 @@ When designing the interface:
 export const schema = {
   type: 'object',
   properties: {
-    contextType: { type: 'string', const: 'canonical' },
-    projectName: { type: 'string' },
-    mvpReference: { type: 'string' },
-    designPhilosophy: {
+    designSystem: {
       type: 'object',
       properties: {
+        designStyle: { type: 'string' },
         theme: { type: 'string' },
-        designPrinciples: { type: 'array', items: { type: 'string' } },
-        targetExperience: { type: 'string' },
-        brandingGuidelines: { type: 'array', items: { type: 'string' } }
-      },
-      required: ['theme', 'designPrinciples', 'targetExperience', 'brandingGuidelines']
+        colorPalette: { type: 'array', items: { type: 'string' } },
+        typography: { type: 'array', items: { type: 'string' } },
+        spacing: { type: 'string' },
+        iconography: { type: 'string' },
+        responsiveStrategy: { type: 'string' }
+      }
     },
     navigation: {
       type: 'object',
       properties: {
-        primaryNavigation: { type: 'array', items: { type: 'string' } },
-        secondaryNavigation: { type: 'array', items: { type: 'string' } },
-        userFlows: { type: 'array', items: { type: 'string' } }
-      },
-      required: ['primaryNavigation', 'secondaryNavigation', 'userFlows']
+        type: { type: 'string' },
+        entryPoint: { type: 'string' },
+        flows: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              name: { type: 'string' },
+              steps: { type: 'array', items: { type: 'string' } }
+            }
+          }
+        }
+      }
     },
     pages: {
       type: 'array',
@@ -137,12 +145,13 @@ export const schema = {
         properties: {
           id: { type: 'string' },
           name: { type: 'string' },
+          route: { type: 'string' },
           purpose: { type: 'string' },
-          layout: { type: 'string' },
-          supportsFeature: { type: 'string' },
-          components: { type: 'array', items: { type: 'string' } }
-        },
-        required: ['id', 'name', 'purpose', 'layout', 'supportsFeature', 'components']
+          supportsFeatures: { type: 'array', items: { type: 'string' } },
+          components: { type: 'array', items: { type: 'string' } },
+          apiDependencies: { type: 'array', items: { type: 'string' } },
+          entityDependencies: { type: 'array', items: { type: 'string' } }
+        }
       }
     },
     components: {
@@ -152,48 +161,45 @@ export const schema = {
         properties: {
           id: { type: 'string' },
           name: { type: 'string' },
+          type: { type: 'string' },
+          parentPageId: { type: 'string' },
           purpose: { type: 'string' },
-          pageId: { type: 'string' },
-          variants: { type: 'array', items: { type: 'string' } },
-          states: { type: 'array', items: { type: 'string' } }
-        },
-        required: ['id', 'name', 'purpose', 'pageId', 'variants', 'states']
+          reusable: { type: 'boolean' },
+          supportsFeatures: { type: 'array', items: { type: 'string' } },
+          apiDependencies: { type: 'array', items: { type: 'string' } },
+          entityDependencies: { type: 'array', items: { type: 'string' } }
+        }
       }
     },
-    designSystem: {
+    interactionDesign: {
       type: 'object',
       properties: {
-        colors: { type: 'array', items: { type: 'string' } },
-        typography: { type: 'array', items: { type: 'string' } },
-        spacing: { type: 'array', items: { type: 'string' } },
-        icons: { type: 'array', items: { type: 'string' } },
-        animations: { type: 'array', items: { type: 'string' } },
-        responsiveBreakpoints: { type: 'array', items: { type: 'string' } },
-        elevation: { type: 'array', items: { type: 'string' } },
-        borders: { type: 'array', items: { type: 'string' } }
-      },
-      required: ['colors', 'typography', 'spacing', 'icons', 'animations', 'responsiveBreakpoints', 'elevation', 'borders']
+        loadingStates: { type: 'array', items: { type: 'string' } },
+        emptyStates: { type: 'array', items: { type: 'string' } },
+        errorStates: { type: 'array', items: { type: 'string' } },
+        successStates: { type: 'array', items: { type: 'string' } },
+        feedbackPatterns: { type: 'array', items: { type: 'string' } },
+        animations: { type: 'array', items: { type: 'string' } }
+      }
     },
     accessibility: {
       type: 'object',
       properties: {
-        standards: { type: 'array', items: { type: 'string' } },
-        requirements: { type: 'array', items: { type: 'string' } }
-      },
-      required: ['standards', 'requirements']
+        keyboardNavigation: { type: 'boolean' },
+        screenReaderSupport: { type: 'boolean' },
+        responsive: { type: 'boolean' },
+        additionalRequirements: { type: 'array', items: { type: 'string' } }
+      }
     },
-    interactionGuidelines: {
+    metadata: {
       type: 'object',
       properties: {
-        feedback: { type: 'array', items: { type: 'string' } },
-        transitions: { type: 'array', items: { type: 'string' } },
-        errorStates: { type: 'array', items: { type: 'string' } },
-        loadingStates: { type: 'array', items: { type: 'string' } }
-      },
-      required: ['feedback', 'transitions', 'errorStates', 'loadingStates']
+        version: { type: 'string' },
+        generatedAt: { type: 'string' },
+        status: { type: 'string' }
+      }
     }
-  },
-  required: ['contextType', 'projectName', 'mvpReference', 'designPhilosophy', 'navigation', 'pages', 'components', 'designSystem', 'accessibility', 'interactionGuidelines']
+  }
 };
 
 export async function getContext(ledger: StageLedger): Promise<string> {
