@@ -24,19 +24,23 @@ export async function buildMinimalContext(ledger: StageLedger, agentName: string
     switch (agentName) {
       case 'SystemsArchitect':
       case 'Architect':
-        contextObject.planner = ledger.read('planner');
+        contextObject.queen = ledger.query('Architect', { fromAgent: 'Queen', select: ['projectName', 'projectGoal', 'mvpScope.included', 'constraints'] });
+        contextObject.planner = ledger.query('Architect', { fromAgent: 'Planner', select: ['recommendedTechStack', 'features', 'functionalRequirements', 'nonFunctionalRequirements.performance', 'nonFunctionalRequirements.scalability'] });
         break;
 
       case 'BackendArchitect':
       case 'System':
-        contextObject.systemsArchitect = ledger.read('architect');
-        contextObject.planner = ledger.read('planner');
+        contextObject.queen = ledger.query('System', { fromAgent: 'Queen', select: ['projectName', 'projectGoal', 'constraints'] });
+        contextObject.planner = ledger.query('System', { fromAgent: 'Planner', select: ['recommendedTechStack', 'features', 'functionalRequirements', 'nonFunctionalRequirements.security', 'nonFunctionalRequirements.reliability'] });
+        contextObject.systemsArchitect = ledger.query('System', { fromAgent: 'Architect', select: ['modules', 'projectStructure.files'] });
         break;
 
       case 'UIUXArchitect':
       case 'Designer':
-        contextObject.systemsArchitect = ledger.read('architect');
-        contextObject.backendArchitect = ledger.read('system');
+        contextObject.queen = ledger.query('Designer', { fromAgent: 'Queen', select: ['projectName', 'projectGoal', 'mvpScope.included', 'constraints'] });
+        contextObject.planner = ledger.query('Designer', { fromAgent: 'Planner', select: ['recommendedTechStack', 'features', 'functionalRequirements', 'nonFunctionalRequirements.accessibility', 'nonFunctionalRequirements.usability'] });
+        contextObject.systemsArchitect = ledger.query('Designer', { fromAgent: 'Architect', select: ['modules', 'projectStructure.files'] });
+        contextObject.backendArchitect = ledger.query('Designer', { fromAgent: 'System', select: ['apis', 'database.entities'] });
         contextObject.conventions = knowledgeResolver.conventions('typescript');
         break;
 

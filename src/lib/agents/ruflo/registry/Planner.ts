@@ -137,7 +137,7 @@ export const schema = {
 export async function getContext(ledger: StageLedger): Promise<string> {
   const data = ledger.query('Planner', {
     fromAgent: 'Queen',
-    select: ['projectName', 'problemStatement', 'projectDescription', 'projectGoal', 'mvpScope', 'constraints', 'risks', 'agentInstructions']
+    select: ['projectName', 'problemStatement', 'projectDescription', 'projectGoal', 'mvpScope', 'constraints', 'risks']
   });
   return JSON.stringify({ Queen: data }, null, 2);
 }

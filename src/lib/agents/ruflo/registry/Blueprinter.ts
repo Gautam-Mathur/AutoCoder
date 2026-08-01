@@ -68,10 +68,10 @@ export async function getContext(ledger: StageLedger): Promise<string> {
  * Deterministically constructs application blueprints from contract specifications (No LLM).
  */
 export async function runDeterministic(ledger: StageLedger): Promise<any> {
-  const planner = ledger.read('planner') || {};
+  const planner = ledger.query('Blueprinter', { fromAgent: 'Planner', select: ['features'] }) || {};
   const architect = ledger.read('architect') || {};
-  const system = ledger.read('system') || {};
-  const designer = ledger.read('designer') || {};
+  const system = ledger.query('Blueprinter', { fromAgent: 'System', select: ['database', 'apis', 'services'] }) || {};
+  const designer = ledger.query('Blueprinter', { fromAgent: 'Designer', select: ['pages', 'components'] }) || {};
 
   const filesList = architect.projectStructure?.files || [];
   const modules = architect.modules || [];
