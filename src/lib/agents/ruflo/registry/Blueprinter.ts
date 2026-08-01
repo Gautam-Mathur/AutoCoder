@@ -10,122 +10,41 @@ export const systemPrompt = `DETERMINISTIC BLUEPRINT ENGINE`;
 export const schema = {
   type: 'object',
   properties: {
-    manifest: {
-      type: 'object',
-      properties: {
-        projectName: { type: 'string' },
-        projectStructure: {
-          type: 'object',
-          properties: {
-            root: { type: 'string' },
-            directories: { type: 'array', items: { type: 'string' } },
-            files: { type: 'array', items: { type: 'string' } }
-          }
-        },
-        entryFiles: { type: 'array', items: { type: 'string' } },
-        compileOrder: { type: 'array', items: { type: 'string' } },
-        dependencyGraph: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              moduleId: { type: 'string' },
-              dependsOn: { type: 'array', items: { type: 'string' } }
-            }
-          }
-        },
-        languageProfiles: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              language: { type: 'string' },
-              framework: { type: 'string' },
-              runtime: { type: 'string' }
-            }
-          }
-        }
-      }
-    },
     blueprints: {
       type: 'array',
       items: {
         type: 'object',
         properties: {
           id: { type: 'string' },
-          file: {
-            type: 'object',
-            properties: {
-              path: { type: 'string' },
-              type: { type: 'string' },
-              language: { type: 'string' }
-            }
-          },
-          ownership: {
-            type: 'object',
-            properties: {
-              moduleId: { type: 'string' },
-              featureIds: { type: 'array', items: { type: 'string' } },
-              plannerRequirementIds: { type: 'array', items: { type: 'string' } }
-            }
-          },
+          file: { type: 'string' },
+          moduleId: { type: 'string' },
+          featureIds: { type: 'array', items: { type: 'string' } },
+          plannerRequirementIds: { type: 'array', items: { type: 'string' } },
+          language: { type: 'string' },
+          languageProfile: { type: 'string' },
           purpose: { type: 'string' },
-          implementationObjective: { type: 'string' },
-          compile: {
-            type: 'object',
-            properties: {
-              order: { type: 'number' },
-              after: { type: 'array', items: { type: 'string' } }
-            }
-          },
-          dependencies: {
-            type: 'object',
-            properties: {
-              imports: { type: 'array', items: { type: 'string' } },
-              exports: { type: 'array', items: { type: 'string' } },
-              external: { type: 'array', items: { type: 'string' } }
-            }
-          },
-          backend: {
-            type: 'object',
-            properties: {
-              implementedApis: { type: 'array', items: { type: 'string' } },
-              consumedApis: { type: 'array', items: { type: 'string' } },
-              databaseEntities: { type: 'array', items: { type: 'string' } }
-            }
-          },
-          frontend: {
-            type: 'object',
-            properties: {
-              pageId: { type: 'string' },
-              componentIds: { type: 'array', items: { type: 'string' } }
-            }
-          },
-          implementation: {
-            type: 'object',
-            properties: {
-              requiredSymbols: { type: 'array', items: { type: 'string' } },
-              producedSymbols: { type: 'array', items: { type: 'string' } },
-              acceptanceCriteria: { type: 'array', items: { type: 'string' } },
-              implementationChecklist: { type: 'array', items: { type: 'string' } },
-              allowedConstructs: { type: 'array', items: { type: 'string' } },
-              forbiddenConstructs: { type: 'array', items: { type: 'string' } },
-              validationRules: { type: 'array', items: { type: 'string' } }
-            }
-          }
+          compileOrder: { type: 'number' },
+          compileAfter: { type: 'array', items: { type: 'string' } },
+          imports: { type: 'array', items: { type: 'string' } },
+          exports: { type: 'array', items: { type: 'string' } },
+          dependencies: { type: 'array', items: { type: 'string' } },
+          interfaces: { type: 'array', items: { type: 'string' } },
+          classes: { type: 'array', items: { type: 'string' } },
+          functions: { type: 'array', items: { type: 'string' } },
+          implementedApis: { type: 'array', items: { type: 'string' } },
+          consumedApis: { type: 'array', items: { type: 'string' } },
+          databaseEntities: { type: 'array', items: { type: 'string' } },
+          designerPageId: { type: 'string' },
+          designerComponentIds: { type: 'array', items: { type: 'string' } },
+          acceptanceCriteria: { type: 'array', items: { type: 'string' } },
+          allowedConstructs: { type: 'array', items: { type: 'string' } },
+          forbiddenConstructs: { type: 'array', items: { type: 'string' } },
+          validationRules: { type: 'array', items: { type: 'string' } }
         }
-      }
-    },
-    metadata: {
-      type: 'object',
-      properties: {
-        version: { type: 'string' },
-        generatedAt: { type: 'string' },
-        status: { type: 'string', enum: ['COMPLETE', 'PARTIAL', 'ERROR'] }
       }
     }
   },
-  required: ['manifest', 'blueprints']
+  required: ['blueprints']
 };
 
 export async function getContext(ledger: StageLedger): Promise<string> {
