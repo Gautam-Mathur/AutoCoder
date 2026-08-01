@@ -11,6 +11,7 @@ export interface MemoryState {
   // Implementation Phase
   system: any | null;         // System
   designer: any | null;       // Designer
+  blueprinter: any | null;    // Blueprinter
   coder: Record<string, any>; // Coder: filepath -> code content
 
   // Verification Phase
@@ -35,6 +36,7 @@ export const OWNERSHIP = Object.freeze({
   BackendArchitect:  ['system'],
   Designer:          ['designer'],
   UIUXArchitect:     ['designer'],
+  Blueprinter:       ['blueprinter'],
   Coder:             ['coder'],
   Debugger:          ['debugger'],
   Security:          ['security'],
@@ -61,6 +63,7 @@ export async function loadExecutiveMemory(conversationId: string): Promise<Memor
     architect: null,
     system: null,
     designer: null,
+    blueprinter: null,
     coder: {},
     debugger: null,
     security: null,

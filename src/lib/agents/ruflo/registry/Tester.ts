@@ -119,7 +119,7 @@ export const schema = {
     summary: {
       type: 'object',
       properties: {
-        overallStatus: { type: 'string', enum: ['PASSED', 'PASSED_WITH_WARNINGS', 'FAILED', 'Success', 'Partial', 'Failed'] },
+        overallStatus: { type: 'string', enum: ['PASSED', 'PASSED_WITH_WARNINGS', 'FAILED'] },
         totalTests: { type: 'number' },
         passedTests: { type: 'number' },
         failedTests: { type: 'number' },
@@ -188,7 +188,7 @@ export const schema = {
           id: { type: 'string' },
           title: { type: 'string' },
           description: { type: 'string' },
-          severity: { type: 'string', enum: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'Critical', 'High', 'Medium', 'Low'] },
+          severity: { type: 'string', enum: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] },
           category: { type: 'string', enum: ['FUNCTIONAL', 'UI', 'API', 'DATABASE', 'SECURITY', 'PERFORMANCE', 'VALIDATION', 'INTEGRATION'] },
           relatedFeatureId: { type: 'string' },
           relatedRequirementIds: { type: 'array', items: { type: 'string' } },
@@ -215,10 +215,11 @@ export const schema = {
       properties: {
         version: { type: 'string' },
         generatedAt: { type: 'string' },
-        status: { type: 'string' }
+        status: { type: 'string', enum: ['COMPLETE', 'PARTIAL', 'ERROR'] }
       }
     }
-  }
+  },
+  required: ['summary', 'defects']
 };
 
 export async function getContext(ledger: StageLedger): Promise<string> {

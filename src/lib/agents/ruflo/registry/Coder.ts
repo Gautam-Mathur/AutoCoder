@@ -144,7 +144,7 @@ export async function getContext(ledger: StageLedger): Promise<string> {
   });
   const designerData = ledger.query('Coder', {
     fromAgent: 'Designer',
-    select: ['pages', 'components', 'designSystem', 'navigation', 'designPhilosophy', 'interactionGuidelines']
+    select: ['pages', 'components', 'designSystem', 'navigation', 'interactionDesign']
   });
 
   // Read previously generated code files from the ledger

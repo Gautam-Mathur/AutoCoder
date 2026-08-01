@@ -239,10 +239,11 @@ export const schema = {
       properties: {
         version: { type: 'string' },
         generatedAt: { type: 'string' },
-        status: { type: 'string' }
+        status: { type: 'string', enum: ['COMPLETE', 'PARTIAL', 'ERROR'] }
       }
     }
-  }
+  },
+  required: ['database', 'apis', 'services']
 };
 
 export async function getContext(ledger: StageLedger): Promise<string> {

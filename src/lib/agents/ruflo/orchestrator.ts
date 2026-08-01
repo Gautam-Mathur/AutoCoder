@@ -927,6 +927,8 @@ export async function runOrchestrator(
           attempt: 1,
         });
 
+        await ledger.write('Blueprinter', 'blueprinter', bpOutput);
+
         await writeHistoryLog(conversationId, 'Blueprinter', 'Success', `Blueprint Engine compiled ${blueprintCount} file blueprints deterministically in ${bpDuration}ms.`);
 
         onEvent({

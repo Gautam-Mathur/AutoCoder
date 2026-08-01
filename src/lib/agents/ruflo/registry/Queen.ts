@@ -55,31 +55,15 @@ When information is missing:
 export const schema = {
   type: 'object',
   properties: {
-    project: {
+    projectName: { type: 'string' },
+    problemStatement: { type: 'string' },
+    projectDescription: { type: 'string' },
+    projectGoal: { type: 'string' },
+    mvpScope: {
       type: 'object',
       properties: {
-        id: { type: 'string' },
-        name: { type: 'string' },
-        type: { type: 'string' },
-        summary: { type: 'string' },
-        problemStatement: { type: 'string' },
-        goal: { type: 'string' },
-        targetUsers: { type: 'array', items: { type: 'string' } },
-        platforms: { type: 'array', items: { type: 'string' } },
-        deploymentTarget: { type: 'string' }
-      }
-    },
-    scope: {
-      type: 'object',
-      properties: {
-        mvp: {
-          type: 'object',
-          properties: {
-            included: { type: 'array', items: { type: 'string' } },
-            excluded: { type: 'array', items: { type: 'string' } }
-          }
-        },
-        futureScope: { type: 'array', items: { type: 'string' } }
+        included: { type: 'array', items: { type: 'string' } },
+        excluded: { type: 'array', items: { type: 'string' } }
       }
     },
     constraints: {
@@ -112,21 +96,11 @@ export const schema = {
       properties: {
         version: { type: 'string' },
         generatedAt: { type: 'string' },
-        status: { type: 'string' }
-      }
-    },
-    projectName: { type: 'string' },
-    problemStatement: { type: 'string' },
-    projectDescription: { type: 'string' },
-    projectGoal: { type: 'string' },
-    mvpScope: {
-      type: 'object',
-      properties: {
-        included: { type: 'array', items: { type: 'string' } },
-        excluded: { type: 'array', items: { type: 'string' } }
+        status: { type: 'string', enum: ['COMPLETE', 'PARTIAL', 'ERROR'] }
       }
     }
-  }
+  },
+  required: ['projectName', 'problemStatement', 'projectDescription', 'projectGoal', 'mvpScope', 'constraints']
 };
 
 export async function getContext(ledger: StageLedger): Promise<string> {

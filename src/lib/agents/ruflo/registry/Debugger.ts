@@ -120,7 +120,7 @@ export const schema = {
     summary: {
       type: 'object',
       properties: {
-        status: { type: 'string', enum: ['RESOLVED', 'PARTIALLY_RESOLVED', 'FAILED', 'Success', 'Partial', 'Failed'] },
+        status: { type: 'string', enum: ['RESOLVED', 'PARTIALLY_RESOLVED', 'FAILED'] },
         resolvedDefects: { type: 'number' },
         remainingDefects: { type: 'number' },
         modifiedFiles: { type: 'number' }
@@ -155,7 +155,7 @@ export const schema = {
               }
             }
           },
-          regressionRisk: { type: 'string', enum: ['LOW', 'MEDIUM', 'HIGH', 'Low', 'Medium', 'High'] }
+          regressionRisk: { type: 'string', enum: ['LOW', 'MEDIUM', 'HIGH'] }
         }
       }
     },
@@ -184,10 +184,11 @@ export const schema = {
       properties: {
         version: { type: 'string' },
         generatedAt: { type: 'string' },
-        status: { type: 'string' }
+        status: { type: 'string', enum: ['COMPLETE', 'PARTIAL', 'ERROR'] }
       }
     }
-  }
+  },
+  required: ['summary', 'fixes']
 };
 
 export async function getContext(ledger: StageLedger): Promise<string> {
@@ -201,7 +202,7 @@ export async function getContext(ledger: StageLedger): Promise<string> {
   });
   const testerData = ledger.query('Debugger', {
     fromAgent: 'Tester',
-    select: ['testReport.defects']
+    select: ['defects']
   });
   const coderData = ledger.read('coder') || {};
   return JSON.stringify({

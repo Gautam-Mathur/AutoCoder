@@ -89,13 +89,6 @@ When designing the architecture:
 export const schema = {
   type: 'object',
   properties: {
-    architecture: {
-      type: 'object',
-      properties: {
-        style: { type: 'string' },
-        reasoning: { type: 'string' }
-      }
-    },
     architectureStyle: { type: 'string' },
     modules: {
       type: 'array',
@@ -179,10 +172,11 @@ export const schema = {
       properties: {
         version: { type: 'string' },
         generatedAt: { type: 'string' },
-        status: { type: 'string' }
+        status: { type: 'string', enum: ['COMPLETE', 'PARTIAL', 'ERROR'] }
       }
     }
-  }
+  },
+  required: ['architectureStyle', 'modules', 'projectStructure', 'projectConventions']
 };
 
 export async function getContext(ledger: StageLedger): Promise<string> {

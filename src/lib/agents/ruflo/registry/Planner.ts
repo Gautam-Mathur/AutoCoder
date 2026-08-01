@@ -72,54 +72,6 @@ When planning:
 export const schema = {
   type: 'object',
   properties: {
-    technology: {
-      type: 'object',
-      properties: {
-        frontend: {
-          type: 'object',
-          properties: {
-            framework: { type: 'string' },
-            language: { type: 'string' },
-            styling: { type: 'array', items: { type: 'string' } },
-            stateManagement: { type: 'string' },
-            routing: { type: 'string' },
-            buildTool: { type: 'string' }
-          }
-        },
-        backend: {
-          type: 'object',
-          properties: {
-            framework: { type: 'string' },
-            language: { type: 'string' },
-            runtime: { type: 'string' }
-          }
-        },
-        database: {
-          type: 'object',
-          properties: {
-            type: { type: 'string' },
-            provider: { type: 'string' },
-            orm: { type: 'string' }
-          }
-        },
-        authentication: {
-          type: 'object',
-          properties: {
-            required: { type: 'boolean' },
-            strategy: { type: 'string' }
-          }
-        },
-        deployment: {
-          type: 'object',
-          properties: {
-            frontend: { type: 'string' },
-            backend: { type: 'string' },
-            database: { type: 'string' }
-          }
-        },
-        additionalTechnologies: { type: 'array', items: { type: 'string' } }
-      }
-    },
     recommendedTechStack: {
       type: 'object',
       properties: {
@@ -139,7 +91,7 @@ export const schema = {
           id: { type: 'string' },
           name: { type: 'string' },
           description: { type: 'string' },
-          priority: { type: 'string', enum: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'Critical', 'High', 'Medium', 'Low'] },
+          priority: { type: 'string', enum: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] },
           dependsOn: { type: 'array', items: { type: 'string' } },
           requirements: { type: 'array', items: { type: 'string' } }
         }
@@ -184,10 +136,11 @@ export const schema = {
       properties: {
         version: { type: 'string' },
         generatedAt: { type: 'string' },
-        status: { type: 'string' }
+        status: { type: 'string', enum: ['COMPLETE', 'PARTIAL', 'ERROR'] }
       }
     }
-  }
+  },
+  required: ['recommendedTechStack', 'features', 'functionalRequirements', 'nonFunctionalRequirements']
 };
 
 export async function getContext(ledger: StageLedger): Promise<string> {

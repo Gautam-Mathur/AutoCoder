@@ -197,7 +197,7 @@ export const schema = {
           id: { type: 'string' },
           title: { type: 'string' },
           description: { type: 'string' },
-          severity: { type: 'string', enum: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFORMATIONAL', 'Critical', 'High', 'Medium', 'Low'] },
+          severity: { type: 'string', enum: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFORMATIONAL'] },
           category: { type: 'string', enum: ['AUTHENTICATION', 'AUTHORIZATION', 'INPUT_VALIDATION', 'DATA_EXPOSURE', 'CONFIGURATION', 'DEPENDENCY', 'API', 'SECRET_MANAGEMENT', 'OTHER'] },
           affectedFiles: { type: 'array', items: { type: 'string' } },
           attackSurface: { type: 'string' },
@@ -214,10 +214,11 @@ export const schema = {
       properties: {
         version: { type: 'string' },
         generatedAt: { type: 'string' },
-        status: { type: 'string' }
+        status: { type: 'string', enum: ['COMPLETE', 'PARTIAL', 'ERROR'] }
       }
     }
-  }
+  },
+  required: ['summary', 'vulnerabilities']
 };
 
 export async function getContext(ledger: StageLedger): Promise<string> {
@@ -229,10 +230,15 @@ export async function getContext(ledger: StageLedger): Promise<string> {
     fromAgent: 'Planner',
     select: ['nonFunctionalRequirements.security', 'features']
   });
+  const systemData = ledger.query('Security', {
+    fromAgent: 'System',
+    select: ['apis', 'configuration']
+  });
   const coderData = ledger.read('coder') || {};
   return JSON.stringify({
     Queen: queenData,
     Planner: plannerData,
+    System: systemData,
     Coder: coderData
   }, null, 2);
 }
