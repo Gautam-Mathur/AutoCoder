@@ -693,8 +693,14 @@ export default function WorkspaceContent() {
   const renderAgentOutputCard = (agentName: string, data: any) => {
     if (!data) return null;
 
-    switch (agentName) {
-      case 'Queen':
+    const normalizedAgent = agentName === 'SystemsArchitect' ? 'Architect' :
+      agentName === 'BackendArchitect' ? 'System' :
+      agentName === 'UIUXArchitect' ? 'Designer' :
+      agentName === 'VerificationAgent' ? 'Reviewer' :
+      agentName === 'SecurityAuditor' ? 'Security' : agentName;
+
+    switch (normalizedAgent) {
+      case 'Queen': {
         if (data.contextType === 'validationError' || data.status === 'Rejected') {
           return (
             <div className="mt-3 p-3 bg-slate-900 border border-red-500/40 rounded-lg text-slate-300 space-y-2 w-full max-w-md select-text">
@@ -706,249 +712,334 @@ export default function WorkspaceContent() {
             </div>
           );
         }
+        const name = data.project?.name || data.projectName || 'Project';
+        const id = data.project?.id || data.mvpId || 'N/A';
+        const problem = data.project?.problemStatement || data.problemStatement || '';
+        const included = data.scope?.mvp?.included || data.mvpScope?.included || [];
+        const excluded = data.scope?.mvp?.excluded || data.mvpScope?.excluded || [];
+
         return (
           <div className="mt-3 p-3 bg-slate-900 border border-slate-700/80 rounded-lg text-slate-300 space-y-2 select-text w-full max-w-md">
             <div className="text-xs font-bold text-electric-indigo">👑 Queen Project Definition</div>
             <div className="text-[11px] grid grid-cols-2 gap-x-2 gap-y-1">
-              <span className="text-slate-500">MVP ID:</span> <span>{data.mvpId}</span>
-              <span className="text-slate-500">Project Name:</span> <span>{data.projectName}</span>
+              <span className="text-slate-500">MVP ID:</span> <span>{id}</span>
+              <span className="text-slate-500">Project Name:</span> <span>{name}</span>
             </div>
-            <div className="text-[11px] text-slate-400 mt-1 border-t border-slate-850 pt-1">
-              <strong>Problem:</strong> {data.problemStatement}
-            </div>
+            {problem && (
+              <div className="text-[11px] text-slate-400 mt-1 border-t border-slate-850 pt-1">
+                <strong>Problem:</strong> {problem}
+              </div>
+            )}
             <div className="text-[10px] grid grid-cols-2 gap-2 mt-2 pt-2 border-t border-slate-850">
               <div>
                 <span className="text-emerald-400 font-bold">✓ Included:</span>
                 <ul className="list-disc pl-3 text-slate-400 space-y-0.5 mt-0.5">
-                  {Array.isArray(data.mvpScope?.included) && data.mvpScope.included.slice(0, 3).map((item: string, i: number) => <li key={i}>{item}</li>)}
+                  {Array.isArray(included) && included.slice(0, 3).map((item: string, i: number) => <li key={i}>{typeof item === 'string' ? item : JSON.stringify(item)}</li>)}
                 </ul>
               </div>
               <div>
                 <span className="text-red-400 font-bold">✗ Excluded:</span>
                 <ul className="list-disc pl-3 text-slate-400 space-y-0.5 mt-0.5">
-                  {Array.isArray(data.mvpScope?.excluded) && data.mvpScope.excluded.slice(0, 3).map((item: string, i: number) => <li key={i}>{item}</li>)}
+                  {Array.isArray(excluded) && excluded.slice(0, 3).map((item: string, i: number) => <li key={i}>{typeof item === 'string' ? item : JSON.stringify(item)}</li>)}
                 </ul>
               </div>
             </div>
           </div>
         );
+      }
 
-      case 'Planner':
+      case 'Planner': {
+        const extractTech = (techVal: any) => {
+          if (!techVal) return '';
+          if (typeof techVal === 'string') return techVal;
+          if (typeof techVal === 'object') {
+            return techVal.framework || techVal.language || techVal.type || techVal.provider || Object.values(techVal)[0] || '';
+          }
+          return String(techVal);
+        };
+
+        const frontendTech = extractTech(data.recommendedTechStack?.frontend || data.technology?.frontend) || 'HTML/JS';
+        const backendTech = extractTech(data.recommendedTechStack?.backend || data.technology?.backend) || 'Node.js';
+        const dbTech = extractTech(data.recommendedTechStack?.database || data.technology?.database) || 'SQLite';
+
+        const features = Array.isArray(data.features) ? data.features : [];
+
         return (
           <div className="mt-3 p-3 bg-slate-900 border border-slate-700/80 rounded-lg text-slate-300 space-y-2 select-text w-full max-w-md">
             <div className="text-xs font-bold text-indigo-400">📋 Planner Implementation Plan</div>
             <div className="text-[11px] border-b border-slate-855 pb-2">
-              <strong>Recommended Tech Stack:</strong> {data.recommendedTechStack?.frontend} / {data.recommendedTechStack?.backend} / {data.recommendedTechStack?.database}
+              <strong>Recommended Tech Stack:</strong> {frontendTech} / {backendTech} / {dbTech}
             </div>
             <div className="text-[11px] space-y-1">
-              <strong>Planned Features list:</strong>
+              <strong>Planned Features list:</strong> ({features.length})
               <div className="space-y-1 mt-1 max-h-32 overflow-y-auto">
-                {Array.isArray(data.features) && data.features.map((f: any, i: number) => (
-                  <div key={i} className="flex justify-between items-center text-[10px] bg-slate-950 p-1.5 rounded border border-slate-800">
-                    <span>{f.name}</span>
-                    <span className="px-1.5 py-0.2 bg-indigo-955 text-indigo-300 border border-indigo-800 rounded text-[8px] font-bold">{f.priority}</span>
-                  </div>
-                ))}
+                {features.map((f: any, i: number) => {
+                  const featName = f.name || f.title || f.description || f.id || `Feature ${i + 1}`;
+                  const featPriority = f.priority || 'MEDIUM';
+                  return (
+                    <div key={i} className="flex justify-between items-center text-[10px] bg-slate-955 p-1.5 rounded border border-slate-800">
+                      <span className="truncate max-w-[260px]">{featName}</span>
+                      <span className="px-1.5 py-0.2 bg-indigo-955 text-indigo-300 border border-indigo-800 rounded text-[8px] font-bold">{featPriority}</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
         );
+      }
 
-      case 'Architect':
+      case 'Architect': {
+        const style = data.architecture?.style || data.architectureStyle || 'Layered Architecture';
+        const conventions = data.projectConventions?.namingConvention || 'Standard';
+        const modules = Array.isArray(data.modules) ? data.modules : [];
+
         return (
           <div className="mt-3 p-3 bg-slate-900 border border-slate-700/80 rounded-lg text-slate-300 space-y-2 select-text w-full max-w-md">
             <div className="text-xs font-bold text-blue-400">🏗 Architect Blueprint</div>
             <div className="text-[11px] grid grid-cols-2 gap-1 border-b border-slate-855 pb-2">
-              <div><strong>Style:</strong> {data.architectureStyle}</div>
-              <div><strong>Conventions:</strong> {data.projectConventions?.namingConvention}</div>
+              <div><strong>Style:</strong> {style}</div>
+              <div><strong>Conventions:</strong> {conventions}</div>
             </div>
             <div className="text-[11px] space-y-1">
-              <strong>Modules Map:</strong>
+              <strong>Modules Map:</strong> ({modules.length})
               <div className="space-y-1 mt-1 max-h-32 overflow-y-auto">
-                {Array.isArray(data.modules) && data.modules.map((m: any, i: number) => (
-                  <div key={i} className="text-[10px] bg-slate-950 p-1.5 rounded border border-slate-800">
-                    <div className="font-bold text-blue-300">{m.name}</div>
-                    <div className="text-slate-500 mt-0.5 text-[9px]">{m.purpose}</div>
-                    <div className="text-slate-400 mt-1 flex flex-wrap gap-1">
-                      {Array.isArray(m.files) && m.files.map((f: string, j: number) => (
-                        <span key={j} className="px-1 bg-slate-900 border border-slate-850 rounded text-[8px] font-mono">{getFileBasename(f)}</span>
-                      ))}
+                {modules.map((m: any, i: number) => {
+                  const modName = m.name || m.id || `Module ${i + 1}`;
+                  const modPurpose = m.description || m.purpose || '';
+                  const files = m.ownedFiles || m.files || [];
+                  return (
+                    <div key={i} className="text-[10px] bg-slate-955 p-1.5 rounded border border-slate-800">
+                      <div className="font-bold text-blue-300">{modName}</div>
+                      {modPurpose && <div className="text-slate-500 mt-0.5 text-[9px]">{modPurpose}</div>}
+                      {Array.isArray(files) && files.length > 0 && (
+                        <div className="text-slate-400 mt-1 flex flex-wrap gap-1">
+                          {files.map((f: any, j: number) => {
+                            const pathStr = typeof f === 'string' ? f : f.path || f.name || '';
+                            return <span key={j} className="px-1 bg-slate-900 border border-slate-850 rounded text-[8px] font-mono">{getFileBasename(pathStr)}</span>;
+                          })}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </div>
         );
+      }
 
-      case 'System':
+      case 'System': {
+        const dbType = data.database?.type || data.database?.provider || 'JSON / Memory';
+        const apis = Array.isArray(data.apis) ? data.apis : [];
+
         return (
           <div className="mt-3 p-3 bg-slate-900 border border-slate-700/80 rounded-lg text-slate-300 space-y-2 select-text w-full max-w-md">
             <div className="text-xs font-bold text-purple-400">⚙ System Backend Blueprint</div>
             <div className="text-[11px] border-b border-slate-855 pb-1.5">
-              <strong>Database Type:</strong> {data.database?.type}
+              <strong>Database Type:</strong> {dbType}
             </div>
             <div className="text-[10px] space-y-1">
-              <div className="text-slate-400 font-bold">API Routes Designed:</div>
+              <div className="text-slate-400 font-bold">API Routes Designed: ({apis.length})</div>
               <div className="space-y-1 max-h-32 overflow-y-auto">
-                {Array.isArray(data.apis) && data.apis.map((api: any, i: number) => (
-                  <div key={i} className="flex gap-2 items-center bg-slate-950 p-1.5 rounded border border-slate-800 font-mono">
-                    <span className={`px-1 rounded text-[8px] font-bold ${
-                      api.method === 'GET' ? 'bg-blue-955 text-blue-300 border border-blue-800' : 'bg-green-955 text-green-300 border border-green-800'
-                    }`}>{api.method}</span>
-                    <span className="text-slate-300">{api.route}</span>
-                  </div>
-                ))}
+                {apis.map((api: any, i: number) => {
+                  const method = api.method || 'GET';
+                  const route = api.route || api.path || api.name || '';
+                  return (
+                    <div key={i} className="flex gap-2 items-center bg-slate-955 p-1.5 rounded border border-slate-800 font-mono">
+                      <span className={`px-1 rounded text-[8px] font-bold ${
+                        method === 'GET' ? 'bg-blue-955 text-blue-300 border border-blue-800' : 'bg-green-955 text-green-300 border border-green-800'
+                      }`}>{method}</span>
+                      <span className="text-slate-300">{route}</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
         );
+      }
 
-      case 'Designer':
+      case 'Designer': {
+        const theme = data.designSystem?.theme || data.designSystem?.designStyle || data.designPhilosophy?.theme || 'Modern UI';
+        const pages = Array.isArray(data.pages) ? data.pages : [];
+
         return (
           <div className="mt-3 p-3 bg-slate-900 border border-slate-700/80 rounded-lg text-slate-300 space-y-2 select-text w-full max-w-md">
             <div className="text-xs font-bold text-pink-400">🎨 Designer UI/UX System</div>
             <div className="text-[11px] grid grid-cols-2 gap-1 border-b border-slate-855 pb-1.5">
-              <div><strong>Theme:</strong> {data.designPhilosophy?.theme}</div>
-              <div><strong>Pages Designed:</strong> {data.pages?.length}</div>
+              <div><strong>Theme:</strong> {theme}</div>
+              <div><strong>Pages Designed:</strong> {pages.length}</div>
             </div>
             <div className="text-[10px] space-y-1">
               <div className="text-slate-400 font-bold">Pages & Reusable Components:</div>
               <div className="space-y-1 max-h-32 overflow-y-auto">
-                {Array.isArray(data.pages) && data.pages.map((p: any, i: number) => (
-                  <div key={i} className="bg-slate-955 p-1.5 rounded border border-slate-850">
-                    <span className="text-pink-300 font-bold">{p.name}</span>
-                    <span className="text-slate-500 text-[9px] ml-2">({p.purpose})</span>
-                  </div>
-                ))}
+                {pages.map((p: any, i: number) => {
+                  const pageName = p.name || p.route || p.id || `Page ${i + 1}`;
+                  const pagePurpose = p.purpose || p.description || '';
+                  return (
+                    <div key={i} className="bg-slate-955 p-1.5 rounded border border-slate-850">
+                      <span className="text-pink-300 font-bold">{pageName}</span>
+                      {pagePurpose && <span className="text-slate-500 text-[9px] ml-2">({pagePurpose})</span>}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
         );
+      }
 
-      case 'Coder':
+      case 'Coder': {
+        const generatedFiles = Array.isArray(data.generatedFiles) ? data.generatedFiles : (data.file ? [data.file] : []);
+        const filesCount = data.generationSummary?.filesGenerated || generatedFiles.length;
+        const status = data.generationSummary?.status || data.implementation?.status || 'SUCCESS';
+
         return (
           <div className="mt-3 p-3 bg-slate-900 border border-slate-700/80 rounded-lg text-slate-300 space-y-2 select-text w-full max-w-md font-mono">
             <div className="text-xs font-bold text-amber-400 font-sans">💻 Coder Synthesized Files</div>
             <div className="text-[11px] grid grid-cols-2 gap-1 border-b border-slate-855 pb-1.5 font-sans">
-              <div><strong>Files Generated:</strong> {data.generationSummary?.filesGenerated}</div>
-              <div><strong>Status:</strong> <span className="text-emerald-400 font-bold">{data.generationSummary?.status}</span></div>
+              <div><strong>Files Generated:</strong> {filesCount}</div>
+              <div><strong>Status:</strong> <span className="text-emerald-400 font-bold">{status}</span></div>
             </div>
             <div className="text-[10px] space-y-1">
               <div className="text-slate-400 font-bold font-sans">Compiled File Tree:</div>
               <div className="space-y-1 max-h-32 overflow-y-auto">
-                {Array.isArray(data.generatedFiles) && data.generatedFiles.map((f: any, i: number) => (
-                  <div key={i} className="flex justify-between items-center bg-slate-955 p-1.5 rounded border border-slate-850">
-                    <span className="text-slate-300 text-[9px]">{f.path}</span>
-                    <span className="px-1 bg-slate-900 border border-slate-800 rounded text-[8px] text-slate-550">{f.language}</span>
-                  </div>
-                ))}
+                {generatedFiles.map((f: any, i: number) => {
+                  const filePath = f.path || (typeof f === 'string' ? f : '');
+                  const fileLang = f.language || f.type || 'js';
+                  return (
+                    <div key={i} className="flex justify-between items-center bg-slate-955 p-1.5 rounded border border-slate-850">
+                      <span className="text-slate-300 text-[9px]">{filePath}</span>
+                      <span className="px-1 bg-slate-900 border border-slate-800 rounded text-[8px] text-slate-550">{fileLang}</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
         );
+      }
 
-      case 'Tester':
+      case 'Tester': {
+        const summary = data.summary || data.testReport?.summary || {};
+        const passed = summary.passedTests ?? summary.passed ?? 0;
+        const failed = summary.failedTests ?? summary.failed ?? 0;
+        const total = summary.totalTests ?? (passed + failed);
+        const defects = Array.isArray(data.defects) ? data.defects : (Array.isArray(data.testReport?.defects) ? data.testReport.defects : []);
+
         return (
           <div className="mt-3 p-3 bg-slate-900 border border-slate-700/80 rounded-lg text-slate-300 space-y-2 select-text w-full max-w-md">
             <div className="text-xs font-bold text-emerald-400">🧪 Tester Quality Report</div>
             <div className="text-[11px] grid grid-cols-3 gap-1 border-b border-slate-850 pb-1.5">
-              <div><strong>Passed:</strong> <span className="text-emerald-400 font-bold">{data.testReport?.summary?.passed}</span></div>
-              <div><strong>Failed:</strong> <span className="text-red-400 font-bold">{data.testReport?.summary?.failed}</span></div>
-              <div><strong>Coverage:</strong> <span className="text-blue-400">{data.testReport?.summary?.coverage}</span></div>
+              <div><strong>Passed:</strong> <span className="text-emerald-400 font-bold">{passed}</span></div>
+              <div><strong>Failed:</strong> <span className="text-red-400 font-bold">{failed}</span></div>
+              <div><strong>Total:</strong> <span className="text-blue-400 font-bold">{total}</span></div>
             </div>
-            {data.testReport?.defects?.length > 0 ? (
+            {defects.length > 0 ? (
               <div className="text-[10px] space-y-1 mt-1">
-                <div className="text-red-400 font-bold">Defects Identified:</div>
+                <div className="text-red-400 font-bold">Defects Identified: ({defects.length})</div>
                 <div className="space-y-1 max-h-32 overflow-y-auto">
-                  {data.testReport?.defects?.map((def: any, i: number) => (
-                    <div key={i} className="bg-slate-950 p-1.5 rounded border border-red-950 text-red-300">
-                      <strong>{def.id}:</strong> {def.description}
+                  {defects.map((def: any, i: number) => (
+                    <div key={i} className="bg-slate-955 p-1.5 rounded border border-red-950 text-red-300">
+                      <strong>{def.id || `DEF-${i + 1}`}:</strong> {def.title || def.description}
                     </div>
                   ))}
                 </div>
               </div>
             ) : (
               <div className="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
-                ✓ All tests parsed and compiled cleanly with 0 syntax errors.
+                ✓ All tests parsed and compiled cleanly with 0 defects.
               </div>
             )}
           </div>
         );
+      }
 
-      case 'Debugger':
+      case 'Debugger': {
+        const summary = data.summary || data.debugReport?.summary || {};
+        const resolved = summary.resolvedDefects ?? summary.issuesResolved ?? 0;
+        const remaining = summary.remainingDefects ?? summary.remainingIssues ?? 0;
+        const fixes = Array.isArray(data.fixes) ? data.fixes : (Array.isArray(data.debugReport?.issues) ? data.debugReport.issues : []);
+
         return (
           <div className="mt-3 p-3 bg-slate-900 border border-slate-700/80 rounded-lg text-slate-300 space-y-2 select-text w-full max-w-md">
             <div className="text-xs font-bold text-rose-400">🔧 Debugger Repair Report</div>
-            <div className="text-[11px] grid grid-cols-3 gap-1 border-b border-slate-850 pb-1.5 font-bold">
-              <div>Issues: {data.debugReport?.summary?.issuesDetected}</div>
-              <div>Resolved: {data.debugReport?.summary?.issuesResolved}</div>
-              <div>Remaining: {data.debugReport?.summary?.remainingIssues}</div>
+            <div className="text-[11px] grid grid-cols-2 gap-1 border-b border-slate-855 pb-1.5 font-bold">
+              <div>Resolved: <span className="text-emerald-400">{resolved}</span></div>
+              <div>Remaining: <span className="text-rose-400">{remaining}</span></div>
             </div>
-            {data.debugReport?.issues?.length > 0 && (
+            {fixes.length > 0 && (
               <div className="text-[10px] space-y-1 max-h-32 overflow-y-auto mt-1">
-                {data.debugReport?.issues?.map((iss: any, i: number) => (
-                  <div key={i} className="bg-slate-950 p-1.5 rounded border border-slate-800">
-                    <div className="text-rose-300 font-bold">Fix for {iss.testerDefectId}:</div>
-                    <div className="text-slate-400 mt-0.5">{iss.rootCause}</div>
+                {fixes.map((fix: any, i: number) => (
+                  <div key={i} className="bg-slate-955 p-1.5 rounded border border-slate-800">
+                    <div className="text-rose-300 font-bold">Fix for {fix.defectId || fix.testerDefectId || `Fix ${i + 1}`}:</div>
+                    <div className="text-slate-400 mt-0.5">{fix.resolution || fix.rootCause || 'Applied code repair'}</div>
                   </div>
                 ))}
               </div>
             )}
           </div>
         );
+      }
 
-      case 'Security':
+      case 'Security': {
+        const summary = data.summary || data.securityReport?.summary || {};
+        const overallStatus = summary.overallSecurityStatus || 'SECURE';
+        const score = summary.securityScore ?? 100;
+        const vulns = Array.isArray(data.vulnerabilities) ? data.vulnerabilities : (Array.isArray(data.securityReport?.issues) ? data.securityReport.issues : []);
+
         return (
           <div className="mt-3 p-3 bg-slate-900 border border-slate-700/80 rounded-lg text-slate-300 space-y-2 select-text w-full max-w-md">
-            <div className="text-xs font-bold text-teal-400">🛡 Security Audit Report</div>
-            <div className="text-[10px] grid grid-cols-5 gap-1 text-center border-b border-slate-850 pb-1.5 font-bold">
-              <div className="bg-red-955 text-red-400 p-0.5 rounded border border-red-950 text-[9px]">Crit: {data.securityReport?.summary?.critical}</div>
-              <div className="bg-orange-955 text-orange-400 p-0.5 rounded border border-orange-950 text-[9px]">High: {data.securityReport?.summary?.high}</div>
-              <div className="bg-yellow-955 text-yellow-400 p-0.5 rounded border border-yellow-950 text-[9px]">Med: {data.securityReport?.summary?.medium}</div>
-              <div className="bg-slate-955 text-slate-400 p-0.5 rounded border border-slate-800 text-[9px]">Low: {data.securityReport?.summary?.low}</div>
-              <div className="bg-blue-955 text-blue-400 p-0.5 rounded border border-blue-950 text-[9px]">Info: {data.securityReport?.summary?.informational}</div>
+            <div className="text-xs font-bold text-teal-400 flex justify-between items-center">
+              <span>🛡 Security Audit Report</span>
+              <span className="text-[10px] font-mono px-1.5 py-0.5 bg-teal-955 border border-teal-800 rounded text-teal-300">{overallStatus} ({score}/100)</span>
             </div>
-            {data.securityReport?.issues?.length > 0 ? (
+            {vulns.length > 0 ? (
               <div className="text-[10px] space-y-1 mt-1 max-h-32 overflow-y-auto">
-                {data.securityReport?.issues?.map((iss: any, i: number) => (
+                {vulns.map((v: any, i: number) => (
                   <div key={i} className="bg-slate-955 p-1.5 rounded border border-slate-800">
-                    <span className="text-teal-300 font-bold">{iss.category}</span> - <span className="text-slate-400">{iss.description}</span>
+                    <span className="text-teal-300 font-bold">{v.category || v.severity || 'Vulnerability'}</span> - <span className="text-slate-400">{v.title || v.description}</span>
                   </div>
                 ))}
               </div>
             ) : (
               <div className="text-[10px] text-teal-400 font-bold">
-                ✓ 0 vulnerabilities detected in code review scan.
+                ✓ 0 vulnerabilities detected in security audit scan.
               </div>
             )}
           </div>
         );
+      }
 
-      case 'Reviewer':
+      case 'Reviewer': {
+        const summary = data.summary || {};
+        const qualityScore = data.qualityScore ?? 100;
+        const annotations = Array.isArray(data.annotations) ? data.annotations : (Array.isArray(data.findings) ? data.findings : []);
+
         return (
           <div className="mt-3 p-3 bg-slate-900 border border-slate-700/80 rounded-lg text-slate-300 space-y-2 select-text w-full max-w-md">
-            <div className="text-xs font-bold text-emerald-400">🔍 Code Quality Reviewer</div>
-            <div className="text-[11px] border-b border-slate-850 pb-1.5 flex justify-between items-center">
-              <span><strong>Final Quality Score:</strong></span>
-              <span className="px-2 py-0.5 bg-emerald-955 border border-emerald-800 rounded font-bold text-emerald-400 text-xs">{data.qualityScore} / 100</span>
+            <div className="text-xs font-bold text-emerald-400 flex justify-between items-center">
+              <span>🔍 Code Quality Reviewer</span>
+              <span className="px-2 py-0.5 bg-emerald-955 border border-emerald-800 rounded font-bold text-emerald-400 text-xs">{qualityScore} / 100</span>
             </div>
-            {data.annotations?.length > 0 && (
+            {annotations.length > 0 && (
               <div className="text-[10px] space-y-1 mt-1 max-h-32 overflow-y-auto">
-                {data.annotations?.map((ann: any, i: number) => (
-                  <div key={i} className="bg-slate-950 p-1.5 rounded border border-slate-800">
+                {annotations.map((ann: any, i: number) => (
+                  <div key={i} className="bg-slate-955 p-1.5 rounded border border-slate-800">
                     <span className={`font-bold uppercase text-[7px] px-1 rounded mr-1 ${
-                      ann.severity === 'error' ? 'bg-red-950 text-red-400 border border-red-900' :
-                      ann.severity === 'warn' ? 'bg-yellow-950 text-yellow-400 border border-yellow-900' :
+                      ann.severity === 'error' || ann.severity === 'HIGH' ? 'bg-red-950 text-red-400 border border-red-900' :
+                      ann.severity === 'warn' || ann.severity === 'MEDIUM' ? 'bg-yellow-950 text-yellow-400 border border-yellow-900' :
                       'bg-blue-950 text-blue-400 border border-blue-900'
-                    }`}>{ann.severity}</span>
-                    <span className="text-slate-300">{ann.note}</span>
+                    }`}>{ann.severity || 'INFO'}</span>
+                    <span className="text-slate-300">{ann.note || ann.description || ann.title}</span>
                   </div>
                 ))}
               </div>
             )}
           </div>
         );
+      }
 
       default:
         return null;
