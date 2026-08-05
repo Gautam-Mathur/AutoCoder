@@ -9,6 +9,7 @@ export class KnowledgeResolver {
   };
 
   public conventions(language: string): string {
+    if (!language) return 'Follow standard styling guidelines.';
     return language.toLowerCase() === 'typescript'
       ? 'Always declare explicit interface types. Enforce strict null checks.'
       : 'Follow standard styling guidelines.';

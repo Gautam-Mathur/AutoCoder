@@ -1,10 +1,16 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import fs from 'fs';
 import path from 'path';
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
+    if (process.env.NODE_ENV === 'production') {
+      const authHeader = request.headers.get('x-admin-secret');
+      if (!authHeader || authHeader !== process.env.ADMIN_SECRET) {
+        return NextResponse.json({ error: 'Unauthorized clear operation' }, { status: 401 });
+      }
+    }
     // 1. Delete all conversations from SQLite database (will cascade delete history & outputs)
     await prisma.conversation.deleteMany();
 

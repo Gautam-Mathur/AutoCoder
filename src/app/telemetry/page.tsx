@@ -172,7 +172,7 @@ export default function TelemetryDashboard() {
           setCurrentStage(data.currentStage);
 
           if (data.status === 'Active') {
-            nextDelay = 1500; // fast 1.5s delay if compiling
+            nextDelay = 4000; // balanced 4s delay if compiling
           }
         }
 

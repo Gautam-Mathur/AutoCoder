@@ -89,7 +89,13 @@ export async function queryAgentOutput(
 // ----------------------------------------------------
 
 export async function getVocabulary(conversationId: string): Promise<string[]> {
-  return (await queryAgentOutput(conversationId, 'Planner', 'vocabulary')) || [];
+  const tech = await queryAgentOutput(conversationId, 'Planner', 'technology');
+  if (!tech) return [];
+  const terms: string[] = [];
+  if (tech.frontend?.framework) terms.push(tech.frontend.framework);
+  if (tech.backend?.framework) terms.push(tech.backend.framework);
+  if (tech.database?.type) terms.push(tech.database.type);
+  return terms;
 }
 
 export async function getFeatures(conversationId: string): Promise<any[]> {
@@ -97,7 +103,7 @@ export async function getFeatures(conversationId: string): Promise<any[]> {
 }
 
 export async function getRequirements(conversationId: string): Promise<any | null> {
-  return await queryAgentOutput(conversationId, 'Planner', 'requirements');
+  return await queryAgentOutput(conversationId, 'Planner', 'functionalRequirements');
 }
 
 export async function getModules(conversationId: string): Promise<any[]> {
@@ -105,7 +111,8 @@ export async function getModules(conversationId: string): Promise<any[]> {
 }
 
 export async function getEntities(conversationId: string): Promise<any[]> {
-  return (await queryAgentOutput(conversationId, 'System', 'entities')) || [];
+  const db = await queryAgentOutput(conversationId, 'System', 'database');
+  return db?.entities || [];
 }
 
 export async function getBusinessRules(conversationId: string): Promise<string[]> {
@@ -113,11 +120,11 @@ export async function getBusinessRules(conversationId: string): Promise<string[]
 }
 
 export async function getEndpoints(conversationId: string): Promise<string[]> {
-  return (await queryAgentOutput(conversationId, 'System', 'endpoints')) || [];
+  return (await queryAgentOutput(conversationId, 'System', 'apis')) || [];
 }
 
 export async function getNavigation(conversationId: string): Promise<string[]> {
-  return (await queryAgentOutput(conversationId, 'Designer', 'navigationMap')) || [];
+  return (await queryAgentOutput(conversationId, 'Designer', 'navigation')) || [];
 }
 
 export async function getComponents(conversationId: string): Promise<any[]> {
@@ -130,12 +137,11 @@ export async function getBlueprint(conversationId: string, file: string): Promis
 }
 
 export async function getSecurityIssues(conversationId: string): Promise<any[]> {
-  const report = await queryAgentOutput(conversationId, 'Security', 'securityReport');
-  return report?.issues || [];
+  return (await queryAgentOutput(conversationId, 'Security', 'vulnerabilities')) || [];
 }
 
 export async function getFailures(conversationId: string): Promise<any[]> {
-  return (await queryAgentOutput(conversationId, 'Tester', 'failureReport')) || [];
+  return (await queryAgentOutput(conversationId, 'Tester', 'defects')) || [];
 }
 
 export async function getQualityAnnotations(conversationId: string): Promise<any[]> {

@@ -31,10 +31,25 @@ export async function resolveContext(
   const decisions = ledger.read('decisions') || [];
 
   const projectName = planner.projectName || taskSpec.projectName || 'Generated App';
-  const techStack = planner.techStack || [];
-  const features = planner.features || [];
-  const constraints = taskSpec.constraints || [];
+  let techStack: string[] = [];
+  if (Array.isArray(planner.techStack)) {
+    techStack = planner.techStack;
+  } else if (planner.techStack && typeof planner.techStack === 'object') {
+    techStack = Object.values(planner.techStack).flatMap((val: any) =>
+      typeof val === 'string' ? [val] : Array.isArray(val) ? val : []
+    ).filter((v): v is string => typeof v === 'string');
+  }
 
+  let constraints: string[] = [];
+  if (Array.isArray(taskSpec.constraints)) {
+    constraints = taskSpec.constraints;
+  } else if (taskSpec.constraints && typeof taskSpec.constraints === 'object') {
+    constraints = Object.values(taskSpec.constraints).flatMap((val: any) =>
+      typeof val === 'string' ? [val] : Array.isArray(val) ? val : []
+    ).filter((v): v is string => typeof v === 'string');
+  }
+
+  const features = planner.features || [];
   const conflicts: ConflictData[] = [];
 
   const hasDecision = (desc: string) => {

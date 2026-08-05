@@ -23,6 +23,7 @@ export interface MemoryState {
   // Metadata / State Tracking
   invalidated: string[];      // Invalidated agent stages needing re-run
   hashes: Record<string, string>; // Filepath -> MD5 hash mapping
+  fileStateHistory: Record<string, string[]>; // Filepath -> MD5 hashes history list
   decisions: any[];           // Historical LLM decisions log
   qualityGateOverride?: boolean; // Override flag for quality gate
 }
@@ -52,7 +53,11 @@ export async function loadExecutiveMemory(conversationId: string): Promise<Memor
   });
 
   if (record) {
-    return JSON.parse(record.state);
+    const parsed = JSON.parse(record.state);
+    return {
+      ...parsed,
+      fileStateHistory: parsed.fileStateHistory || {},
+    };
   }
 
   // Initial skeleton
@@ -71,6 +76,7 @@ export async function loadExecutiveMemory(conversationId: string): Promise<Memor
     tester: null,
     invalidated: [],
     hashes: {},
+    fileStateHistory: {},
     decisions: [],
   };
 }
@@ -97,15 +103,29 @@ function getNestedValue(obj: any, path: string): any {
   return curr;
 }
 
+function setNestedValue(obj: any, path: string, value: any): void {
+  const parts = path.split('.');
+  let curr = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const part = parts[i];
+    if (!curr[part] || typeof curr[part] !== 'object') {
+      curr[part] = {};
+    }
+    curr = curr[part];
+  }
+  curr[parts[parts.length - 1]] = value;
+}
+
 export class StageLedger {
   private conversationId: string;
   private state: MemoryState;
-  private fileStateHistory: Record<string, string[]>; // filepath -> MD5 hashes history list
 
   constructor(conversationId: string, initialState: MemoryState) {
     this.conversationId = conversationId;
     this.state = initialState;
-    this.fileStateHistory = {};
+    if (!this.state.fileStateHistory) {
+      this.state.fileStateHistory = {};
+    }
   }
 
   getState(): MemoryState {
@@ -136,7 +156,7 @@ export class StageLedger {
       } else if (key.includes('.')) {
         const val = getNestedValue(data, key);
         if (val !== undefined) {
-          result[key] = val;
+          setNestedValue(result, key, val);
         }
       }
     }
@@ -157,6 +177,9 @@ export class StageLedger {
 
     // 3. Oscillation check (prevent loops on coder / debugger file outputs)
     if (field === 'coder' && value && typeof value === 'object') {
+      if (!this.state.fileStateHistory) {
+        this.state.fileStateHistory = {};
+      }
       for (const filepath of Object.keys(value)) {
         const content = value[filepath];
         const hash = crypto.createHash('md5').update(content).digest('hex');
@@ -166,11 +189,11 @@ export class StageLedger {
           continue;
         }
 
-        if (!this.fileStateHistory[filepath]) {
-          this.fileStateHistory[filepath] = [];
+        if (!this.state.fileStateHistory[filepath]) {
+          this.state.fileStateHistory[filepath] = [];
         }
 
-        const history = this.fileStateHistory[filepath];
+        const history = this.state.fileStateHistory[filepath];
         if (history.includes(hash)) {
           throw new Error(
             `Oscillation detected: File "${filepath}" has returned to an identical state. Aborting compilation to prevent infinite loops.`

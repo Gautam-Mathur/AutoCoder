@@ -456,14 +456,10 @@ export async function runInference(
   const temp = options.temperature ?? 0.2;
   const isJson = options.format === 'json';
 
-  // Combine client abort signal with timeout signal
-  let combinedSignal: AbortSignal | undefined = undefined;
-  if (options.timeoutMs) {
-    const timeoutSignal = AbortSignal.timeout(options.timeoutMs);
-    combinedSignal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
-  } else if (options.signal) {
-    combinedSignal = options.signal;
-  }
+  // Combine client abort signal with timeout signal (default fallback timeout 180s)
+  const effectiveTimeout = options.timeoutMs || 180000;
+  const timeoutSignal = AbortSignal.timeout(effectiveTimeout);
+  const combinedSignal: AbortSignal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
 
   if (config.provider === 'ollama') {
     const host = config.ollamaHost;

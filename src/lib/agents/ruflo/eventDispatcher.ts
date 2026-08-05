@@ -135,6 +135,9 @@ Provide a targeted patch code to fix the defect. Output only JSON: {"file": "${f
     });
 
     const parsed = JSON.parse(responseText.trim());
+    if (!parsed || typeof parsed !== 'object') {
+      throw new Error('Specialist recovery output is not a valid object');
+    }
     const durationMs = Date.now() - startTime;
 
     if (ledger) {

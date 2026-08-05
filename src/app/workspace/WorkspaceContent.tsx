@@ -137,6 +137,16 @@ export default function WorkspaceContent() {
     }
   }, [conversationId]);
 
+  // Unmount cleanup for EventSource stream
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+    };
+  }, []);
+
   // Auto-start or auto-resume pipeline if loaded and status is Active (or Idle with initial prompt)
   useEffect(() => {
     if (detailsLoaded && ollamaConnected && !didConnectRef.current) {
@@ -339,6 +349,12 @@ export default function WorkspaceContent() {
       window.history.replaceState({}, '', cleanUrl);
     }
 
+    // Close existing EventSource if active
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+
     // Establish SSE stream
     const url = `/api/pipeline/stream?conversationId=${conversationId}&prompt=${encodeURIComponent(promptText)}`;
     const eventSource = new EventSource(url);
@@ -346,6 +362,8 @@ export default function WorkspaceContent() {
 
     eventSource.onmessage = (event) => {
       const data = JSON.parse(event.data);
+
+      if (data.type === 'PING') return;
 
       if (data.type === 'AGENT_STREAM_PROGRESS') {
         setStreamProgress(data.data);

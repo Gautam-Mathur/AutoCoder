@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 
-const execPromise = promisify(exec);
+const execFilePromise = promisify(execFile);
 
 export async function GET(
   request: NextRequest,
@@ -24,8 +24,8 @@ export async function GET(
       fs.unlinkSync(tempZipPath);
     }
 
-    // Run system zip natively inside the directory
-    await execPromise(`zip -r "${tempZipPath}" .`, { cwd: projectDir });
+    // Run system zip safely via execFile without shell interpretation
+    await execFilePromise('zip', ['-r', tempZipPath, '.'], { cwd: projectDir });
 
     if (!fs.existsSync(tempZipPath)) {
       return NextResponse.json({ error: 'Failed to package files' }, { status: 500 });

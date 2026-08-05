@@ -191,8 +191,16 @@ function validateSchema(obj: any, schema: any): string | null {
   }
   if (schema.required) {
     for (const field of schema.required) {
-      if (!(field in obj)) {
+      if (!(field in obj) || obj[field] === undefined) {
         return `Missing required field: ${field}`;
+      }
+    }
+  }
+  if (schema.properties && typeof schema.properties === 'object') {
+    for (const key of Object.keys(schema.properties)) {
+      if (key in obj && obj[key] !== null && typeof obj[key] === 'object' && schema.properties[key].type === 'object') {
+        const nestedErr = validateSchema(obj[key], schema.properties[key]);
+        if (nestedErr) return `Field '${key}': ${nestedErr}`;
       }
     }
   }
@@ -469,10 +477,15 @@ Original Instruction:
         message: `JSON parse failed. Attempting cleanup...`,
       });
       await writeHistoryLog(conversationId, legacyAgentName, 'Retrying', `JSON parse failed, executing regular expression fallback extraction...`);
-      const jsonMatch = cleanJsonText.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
+      let extractedJsonString = '';
+      const firstBrace = cleanJsonText.indexOf('{');
+      const lastBrace = cleanJsonText.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace > firstBrace) {
+        extractedJsonString = cleanJsonText.substring(firstBrace, lastBrace + 1);
+      }
+      if (extractedJsonString) {
         try {
-          parsedJson = JSON.parse(jsonMatch[0]);
+          parsedJson = JSON.parse(extractedJsonString);
         } catch (e) {
           await writeRichTelemetryLog({
             conversationId,
@@ -1149,7 +1162,7 @@ Ensure you write complete source code matching these specs. Do not truncate.`;
             }
 
             // Simple Dependency check
-            const importRegex = /(?:import|from|require)\s*\(\s*['"]\.\/([^'"]+)['"]\s*\)/g;
+            const importRegex = /(?:import\s+.*?\s+from\s+|require\s*\(\s*|import\s*\(\s*)['"]\.\/([^'"]+)['"]/g;
             let match;
             while ((match = importRegex.exec(code)) !== null) {
               const targetRel = match[1];
@@ -1269,6 +1282,7 @@ Ensure you write complete source code matching these specs. Do not truncate.`;
 
           child.stdout.on('data', (data: any) => { stdoutBuffer += data.toString(); });
           child.stderr.on('data', (data: any) => { stderrBuffer += data.toString(); });
+          child.on('error', (err: any) => { stderrBuffer += `Spawn error: ${err.message}\n`; });
 
           await new Promise((resolve) => setTimeout(resolve, 4000));
           child.kill('SIGTERM');
@@ -1508,7 +1522,7 @@ Ensure you write complete source code matching these specs. Do not truncate.`;
         }
       }
 
-    } else if (stage === 'Security') {
+    } else if (stage === 'Security' || stage === 'SecurityAuditor') {
       // ----------------------------------------------------
       // SPECIAL STAGE: Security Scanner (Map-Reduce)
       // ----------------------------------------------------
@@ -1704,7 +1718,7 @@ Perform a security review strictly for this file. Identify potential vulnerabili
         await writeHistoryLog(conversationId, 'Security', 'Success', `SecurityAuditor completed full map-reduce audit and security scan.`);
       }
 
-    } else if (stage === 'Reviewer') {
+    } else if (stage === 'Reviewer' || stage === 'VerificationAgent') {
       // ----------------------------------------------------
       // SPECIAL STAGE: Reviewer Scanner (Map-Reduce)
       // ----------------------------------------------------
@@ -1978,7 +1992,7 @@ Review this file for quality, completeness, spec alignment, and bugs. Assign a q
     if (stage === 'SystemsArchitect') {
       await prisma.conversation.update({
         where: { id: conversationId },
-        data: { status: 'Paused' },
+        data: { status: 'Paused', currentStage: 'BackendArchitect' },
       });
       onEvent({
         type: 'PAUSE_APPROVAL_GATE',

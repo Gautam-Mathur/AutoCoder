@@ -19,7 +19,7 @@ export async function GET(
     const safePath = path.resolve(projectDir, file);
 
     // Prevent directory traversal attacks
-    if (!safePath.startsWith(projectDir)) {
+    if (!safePath.startsWith(projectDir + path.sep) && safePath !== projectDir) {
       return NextResponse.json({ error: 'Forbidden path access' }, { status: 403 });
     }
 

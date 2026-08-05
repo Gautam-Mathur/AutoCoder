@@ -146,7 +146,9 @@ export async function runDeterministic(ledger: StageLedger): Promise<any> {
     const implementedApis: string[] = [];
     const consumedApis: string[] = [];
     apis.forEach((api: any) => {
-      if (featureIds.includes(api.featureId)) {
+      const matchesFeature = featureIds.includes(api.featureId) ||
+        (Array.isArray(api.supportsFeatures) && api.supportsFeatures.some((fId: string) => featureIds.includes(fId)));
+      if (matchesFeature) {
         implementedApis.push(api.id);
       }
     });

@@ -220,7 +220,7 @@ export default function SettingsPage() {
                   <input
                     type="password"
                     value={anthropicApiKey}
-                    onChange={(e) => setOpenaiApiKey(e.target.value)} // Safe set
+                    onChange={(e) => setAnthropicApiKey(e.target.value)}
                     className="bg-slate-950 border border-slate-700 rounded p-2 text-xs font-mono text-on-surface focus:border-electric-indigo outline-none"
                     placeholder="sk-ant-..."
                   />
