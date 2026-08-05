@@ -100,7 +100,7 @@ export const schema = {
       }
     }
   },
-  required: ['projectName', 'problemStatement', 'projectDescription', 'projectGoal', 'mvpScope', 'constraints']
+  required: ['projectName', 'problemStatement', 'projectDescription', 'projectGoal', 'mvpScope', 'constraints', 'assumptions', 'risks']
 };
 
 export async function getContext(ledger: StageLedger): Promise<string> {

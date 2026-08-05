@@ -1293,7 +1293,19 @@ Ensure you write complete source code matching these specs. Do not truncate.`;
       // ─── Constraint Compliance Audit (Fix 3) ───
       try {
         const queenData = ledger.read('taskSpec') || {};
-        const constraints: string[] = queenData.constraints || [];
+        const rawConstraints = queenData.constraints || {};
+        const constraints: string[] = [];
+        if (Array.isArray(rawConstraints)) {
+          constraints.push(...rawConstraints);
+        } else if (typeof rawConstraints === 'object' && rawConstraints !== null) {
+          for (const category of Object.values(rawConstraints)) {
+            if (Array.isArray(category)) {
+              constraints.push(...category);
+            } else if (typeof category === 'string') {
+              constraints.push(category);
+            }
+          }
+        }
         
         const CONSTRAINT_API_MAP: Array<{
           keywords: string[];
@@ -1359,23 +1371,19 @@ Ensure you write complete source code matching these specs. Do not truncate.`;
       // Compile Tester Output JSON
       const passed = defects.length === 0;
       output = {
-        contextType: 'canonical',
-        projectName: 'Target Project',
-        mvpReference: 'MVP-001',
-        generatedTestFiles: [],
-        testReport: {
-          summary: {
-            totalTests: 1,
-            passed: passed ? 1 : 0,
-            failed: passed ? 0 : 1,
-            skipped: 0,
-            coverage: passed ? 'Ready for running' : '0%',
-            coveredFeatures: [],
-            missingFeatures: []
-          },
-          defects,
-          warnings,
-          status: passed ? 'Success' : 'Failed'
+        summary: {
+          overallStatus: passed ? 'PASSED' : 'FAILED',
+          totalTests: 1,
+          passedTests: passed ? 1 : 0,
+          failedTests: passed ? 0 : 1,
+          skippedTests: 0
+        },
+        defects,
+        generatedTests: [],
+        metadata: {
+          version: '1.0',
+          generatedAt: new Date().toISOString(),
+          status: 'COMPLETE'
         }
       };
 
@@ -1514,20 +1522,16 @@ Ensure you write complete source code matching these specs. Do not truncate.`;
       const filesToAudit = Object.keys(coderData);
 
       let finalReport: any = {
-        contextType: 'canonical',
-        projectName: 'Fitness Tracker App',
-        mvpReference: 'MVP-001',
-        securityReport: {
-          issues: [],
-          summary: {
-            critical: 0,
-            high: 0,
-            medium: 0,
-            low: 0,
-            informational: 0
-          },
-          warnings: [],
-          status: 'Success'
+        summary: {
+          overallSecurityStatus: 'SECURE',
+          securityScore: 100,
+          overallRisk: 'LOW'
+        },
+        vulnerabilities: [],
+        metadata: {
+          version: '1.0',
+          generatedAt: new Date().toISOString(),
+          status: 'COMPLETE'
         }
       };
 
@@ -1578,15 +1582,9 @@ Perform a security review strictly for this file. Identify potential vulnerabili
           }
 
           // Reduce Phase for this file
-          if (fileSuccess && fileReport && fileReport.securityReport) {
-            if (fileReport.projectName) finalReport.projectName = fileReport.projectName;
-            if (fileReport.mvpReference) finalReport.mvpReference = fileReport.mvpReference;
-
-            const issues = fileReport.securityReport.issues || [];
-            finalReport.securityReport.issues.push(...issues);
-            
-            const warnings = fileReport.securityReport.warnings || [];
-            finalReport.securityReport.warnings.push(...warnings);
+          if (fileSuccess && fileReport) {
+            const vulns = fileReport.vulnerabilities || fileReport.securityReport?.issues || [];
+            finalReport.vulnerabilities.push(...vulns);
           }
         }
 
@@ -1612,17 +1610,15 @@ Perform a security review strictly for this file. Identify potential vulnerabili
               if (/\beval\s*\(|\bnew\s+Function\s*\(/.test(code)) {
                 scannerIssues.push({
                   id: `SEC-STATIC-EVAL-${relPath.replace(/\//g, '-')}`,
-                  severity: 'Critical',
-                  category: 'Injection',
+                  severity: 'CRITICAL',
+                  category: 'AUTHENTICATION',
                   file: relPath,
-                  location: 'N/A',
+                  title: 'Arbitrary Code Execution Risk',
                   description: 'Use of eval() or Function() constructor introduces arbitrary code execution risks.',
-                  risk: 'High risk of remote code execution if user inputs can flow here.',
-                  recommendation: 'Refactor using safe alternative JS patterns.',
-                  affectedFeature: 'N/A',
-                  owaspTop10: 'A03:2021-Injection',
-                  cweReference: 'CWE-95',
-                  confidence: 'High'
+                  attackSurface: 'High risk of remote code execution if user inputs can flow here.',
+                  businessImpact: 'Complete system compromise',
+                  evidence: 'eval / new Function call found in source code',
+                  recommendation: 'Refactor using safe alternative JS patterns.'
                 });
               }
 
@@ -1631,17 +1627,15 @@ Perform a security review strictly for this file. Identify potential vulnerabili
               if (keyRegex.test(code) && !code.includes('process.env')) {
                 scannerIssues.push({
                   id: `SEC-STATIC-SECRET-${relPath.replace(/\//g, '-')}`,
-                  severity: 'High',
-                  category: 'Secrets',
+                  severity: 'HIGH',
+                  category: 'SECRET_MANAGEMENT',
                   file: relPath,
-                  location: 'N/A',
+                  title: 'Hardcoded API Key or Secret',
                   description: 'Potential hardcoded API key, token, or credential exposed in code.',
-                  risk: 'Leaked credentials can be extracted and abused.',
-                  recommendation: 'Use environment variables (process.env) for secrets.',
-                  affectedFeature: 'N/A',
-                  owaspTop10: 'A05:2021-Security Misconfiguration',
-                  cweReference: 'CWE-798',
-                  confidence: 'High'
+                  attackSurface: 'Leaked credentials can be extracted and abused.',
+                  businessImpact: 'Unauthorized API access and credential theft',
+                  evidence: 'Hardcoded secret pattern matched',
+                  recommendation: 'Use environment variables (process.env) for secrets.'
                 });
               }
             }
@@ -1661,17 +1655,36 @@ Perform a security review strictly for this file. Identify potential vulnerabili
             agent: 'Security',
             message: `Static regex scan identified ${scannerIssues.length} alerts. Adding to Security report.`,
           });
-          finalReport.securityReport.issues.push(...scannerIssues);
+          finalReport.vulnerabilities.push(...scannerIssues);
         }
 
         // Calculate unified Summary statistics
-        for (const issue of finalReport.securityReport.issues) {
-          const sev = (issue.severity || '').toLowerCase();
-          if (sev === 'critical') finalReport.securityReport.summary.critical++;
-          else if (sev === 'high') finalReport.securityReport.summary.high++;
-          else if (sev === 'medium') finalReport.securityReport.summary.medium++;
-          else if (sev === 'low') finalReport.securityReport.summary.low++;
-          else if (sev === 'informational') finalReport.securityReport.summary.informational++;
+        let hasCritical = false;
+        let hasHigh = false;
+        let hasMedium = false;
+        for (const vuln of finalReport.vulnerabilities) {
+          const sev = (vuln.severity || '').toUpperCase();
+          if (sev === 'CRITICAL') hasCritical = true;
+          else if (sev === 'HIGH') hasHigh = true;
+          else if (sev === 'MEDIUM') hasMedium = true;
+        }
+
+        if (hasCritical) {
+          finalReport.summary.overallSecurityStatus = 'CRITICAL';
+          finalReport.summary.overallRisk = 'CRITICAL';
+          finalReport.summary.securityScore = 40;
+        } else if (hasHigh) {
+          finalReport.summary.overallSecurityStatus = 'VULNERABLE';
+          finalReport.summary.overallRisk = 'HIGH';
+          finalReport.summary.securityScore = 65;
+        } else if (hasMedium) {
+          finalReport.summary.overallSecurityStatus = 'SECURE_WITH_WARNINGS';
+          finalReport.summary.overallRisk = 'MEDIUM';
+          finalReport.summary.securityScore = 85;
+        } else {
+          finalReport.summary.overallSecurityStatus = 'SECURE';
+          finalReport.summary.overallRisk = 'LOW';
+          finalReport.summary.securityScore = 100;
         }
 
         // Save output to database & ledger
@@ -1705,8 +1718,19 @@ Perform a security review strictly for this file. Identify potential vulnerabili
       const filesToAudit = Object.keys(coderData);
 
       let finalReport: any = {
+        summary: {
+          overallAssessment: 'APPROVED',
+          engineeringQuality: 'GOOD',
+          releaseReadiness: 'READY'
+        },
+        findings: [],
         qualityScore: 100,
-        annotations: []
+        annotations: [],
+        metadata: {
+          version: '1.0',
+          generatedAt: new Date().toISOString(),
+          status: 'COMPLETE'
+        }
       };
 
       if (filesToAudit.length === 0) {
@@ -1766,12 +1790,28 @@ Review this file for quality, completeness, spec alignment, and bugs. Assign a q
 
             const annotations = fileReport.annotations || [];
             finalReport.annotations.push(...annotations);
+
+            const findings = fileReport.findings || [];
+            finalReport.findings.push(...findings);
           }
         }
 
         // Calculate average quality score
         if (successfulAudits > 0) {
           finalReport.qualityScore = Math.round(totalScore / successfulAudits);
+          if (finalReport.qualityScore < 70) {
+            finalReport.summary.overallAssessment = 'REQUIRES_REWORK';
+            finalReport.summary.engineeringQuality = 'POOR';
+            finalReport.summary.releaseReadiness = 'NOT_READY';
+          } else if (finalReport.qualityScore < 85) {
+            finalReport.summary.overallAssessment = 'APPROVED_WITH_RECOMMENDATIONS';
+            finalReport.summary.engineeringQuality = 'FAIR';
+            finalReport.summary.releaseReadiness = 'READY_WITH_MINOR_IMPROVEMENTS';
+          } else {
+            finalReport.summary.overallAssessment = 'APPROVED';
+            finalReport.summary.engineeringQuality = 'EXCELLENT';
+            finalReport.summary.releaseReadiness = 'READY';
+          }
         }
 
         // Save output to database & ledger
