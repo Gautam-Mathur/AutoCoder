@@ -4,7 +4,8 @@ import os from 'os';
 let lastCpuSample = { idle: 0, total: 0 };
 
 function getCpuAverage() {
-  const cpus = os.cpus();
+  const cpus = os.cpus() || [];
+  if (cpus.length === 0) return { idle: 0, total: 0 };
   let idleMs = 0;
   let totalMs = 0;
   

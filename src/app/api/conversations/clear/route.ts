@@ -20,7 +20,11 @@ export async function POST(request: NextRequest) {
       const list = fs.readdirSync(projectsDir);
       list.forEach((item) => {
         const itemPath = path.join(projectsDir, item);
-        fs.rmSync(itemPath, { recursive: true, force: true });
+        try {
+          fs.rmSync(itemPath, { recursive: true, force: true });
+        } catch (fileErr) {
+          console.warn(`Could not delete item ${itemPath}:`, fileErr);
+        }
       });
     }
 

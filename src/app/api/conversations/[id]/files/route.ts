@@ -6,7 +6,9 @@ function getFilesRecursively(dir: string, baseDir: string = dir): string[] {
   let results: string[] = [];
   if (!fs.existsSync(dir)) return [];
   const list = fs.readdirSync(dir);
+  const ignoredDirs = new Set(['node_modules', '.git', '.next', 'dist', 'build', '.vscode']);
   list.forEach((file) => {
+    if (ignoredDirs.has(file)) return;
     const filePath = path.join(dir, file);
     const stat = fs.statSync(filePath);
     if (stat && stat.isDirectory()) {

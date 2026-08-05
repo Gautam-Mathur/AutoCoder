@@ -52,7 +52,7 @@ export async function GET(
         }
       }
 
-      const match = h.logs.match(/(?:Estimated tokens:|Tokens generated: ~)\s*(\d+)/i);
+      const match = logMsg.match(/(?:Estimated tokens:|Tokens generated: ~)\s*(\d+)/i);
       if (match) {
         const val = parseInt(match[1]);
         if (h.stage !== 'System' && h.stage !== 'Unknown') {
@@ -60,7 +60,7 @@ export async function GET(
         }
       }
 
-      const lMatch = h.logs.match(/in (\d+)ms/i);
+      const lMatch = logMsg.match(/in (\d+)ms/i);
       if (lMatch) {
         latencyHistory.push({
           stage: h.stage,
@@ -68,7 +68,7 @@ export async function GET(
         });
       }
 
-      if (h.logs.includes('started (Attempt') || h.logs.includes('loop started')) {
+      if (logMsg.includes('started (Attempt') || logMsg.includes('loop started')) {
         frequencyMap[h.stage] = (frequencyMap[h.stage] || 0) + 1;
       }
     });

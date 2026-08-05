@@ -30,6 +30,11 @@ export async function GET(request: NextRequest) {
         sendEvent({ type: 'PING', message: 'keep-alive' });
       }, 15000);
 
+      const abortHandler = () => {
+        clearInterval(pingInterval);
+      };
+      request.signal.addEventListener('abort', abortHandler);
+
       try {
         await runOrchestrator(conversationId, userPrompt, (event) => {
           sendEvent(event);
@@ -41,6 +46,7 @@ export async function GET(request: NextRequest) {
         });
       } finally {
         clearInterval(pingInterval);
+        request.signal.removeEventListener('abort', abortHandler);
         try {
           controller.close();
         } catch (e) {

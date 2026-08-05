@@ -1992,7 +1992,7 @@ Review this file for quality, completeness, spec alignment, and bugs. Assign a q
     if (stage === 'SystemsArchitect') {
       await prisma.conversation.update({
         where: { id: conversationId },
-        data: { status: 'Paused', currentStage: 'BackendArchitect' },
+        data: { status: 'Paused', currentStage: 'SystemsArchitect' },
       });
       onEvent({
         type: 'PAUSE_APPROVAL_GATE',

@@ -27,6 +27,10 @@ export async function GET(
       return NextResponse.json({ error: 'File not found' }, { status: 404 });
     }
 
+    if (fs.statSync(safePath).isDirectory()) {
+      return NextResponse.json({ error: 'Requested path is a directory, not a file' }, { status: 400 });
+    }
+
     const content = fs.readFileSync(safePath, 'utf8');
     return NextResponse.json({ content });
   } catch (err: any) {

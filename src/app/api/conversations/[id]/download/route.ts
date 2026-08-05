@@ -41,6 +41,9 @@ export async function GET(
       },
     });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    const errorMsg = err.code === 'ENOENT'
+      ? 'System "zip" utility is not installed on the host environment. Please install zip to download projects as archives.'
+      : err.message;
+    return NextResponse.json({ error: errorMsg }, { status: 500 });
   }
 }
