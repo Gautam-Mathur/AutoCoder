@@ -203,7 +203,7 @@ export default function WorkspaceContent() {
                   agent: step,
                   message: summaryMsg,
                   timestamp: new Date(h.createdAt).toLocaleTimeString(),
-                  data: parsed.parsedJson || parsed
+                  data: parsed.outflow || parsed.parsedJson || parsed
                 };
               } catch (e) {
                 // fallback
@@ -717,7 +717,9 @@ export default function WorkspaceContent() {
     let data = safeParseJson(rawData);
     if (!data) return null;
 
-    if (data.parsedJson && typeof data.parsedJson === 'object') {
+    if (data.outflow && typeof data.outflow === 'object') {
+      data = data.outflow;
+    } else if (data.parsedJson && typeof data.parsedJson === 'object') {
       data = data.parsedJson;
     }
 
