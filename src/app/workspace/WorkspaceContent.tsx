@@ -203,7 +203,7 @@ export default function WorkspaceContent() {
                   agent: step,
                   message: summaryMsg,
                   timestamp: new Date(h.createdAt).toLocaleTimeString(),
-                  data: parsed
+                  data: parsed.parsedJson || parsed
                 };
               } catch (e) {
                 // fallback
@@ -257,70 +257,92 @@ export default function WorkspaceContent() {
     }
   };
 
+  const safeParseJson = (val: any) => {
+    if (!val) return null;
+    if (typeof val === 'object') return val;
+    if (typeof val === 'string') {
+      try {
+        return JSON.parse(val);
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  };
+
   const loadSMLData = (outputs: any[]) => {
     // Populate agent outputs map
     const outputsMap: Record<string, any> = {};
     outputs.forEach((o) => {
-      try {
-        outputsMap[o.agentName] = JSON.parse(o.validatedJson);
-      } catch (e) {
-        console.error(e);
+      const parsed = safeParseJson(o.validatedJson);
+      if (parsed) {
+        outputsMap[o.agentName] = parsed;
+        if (o.agentName === 'SystemsArchitect') outputsMap['Architect'] = parsed;
+        if (o.agentName === 'BackendArchitect') outputsMap['System'] = parsed;
+        if (o.agentName === 'UIUXArchitect') outputsMap['Designer'] = parsed;
+        if (o.agentName === 'VerificationAgent') outputsMap['Reviewer'] = parsed;
+        if (o.agentName === 'SecurityAuditor') outputsMap['Security'] = parsed;
       }
     });
-    setAgentOutputs(outputsMap);
+    setAgentOutputs((prev) => ({ ...prev, ...outputsMap }));
 
     // Extrapolate outputs
     const plannerOut = outputs.find((o) => o.agentName === 'Planner');
-    const archOut = outputs.find((o) => o.agentName === 'Architect');
-    const sysOut = outputs.find((o) => o.agentName === 'System');
-    const designerOut = outputs.find((o) => o.agentName === 'Designer');
+    const archOut = outputs.find((o) => o.agentName === 'Architect' || o.agentName === 'SystemsArchitect');
+    const sysOut = outputs.find((o) => o.agentName === 'System' || o.agentName === 'BackendArchitect');
+    const designerOut = outputs.find((o) => o.agentName === 'Designer' || o.agentName === 'UIUXArchitect');
     const coderOutputs = outputs.filter((o) => o.agentName === 'Coder');
 
     if (plannerOut) {
-      const json = JSON.parse(plannerOut.validatedJson);
+      const json = safeParseJson(plannerOut.validatedJson);
     }
 
     if (archOut) {
-      const json = JSON.parse(archOut.validatedJson);
-      const modulesList = Array.isArray(json.modules) ? json.modules : [];
-      setModules(modulesList);
-      // Collate files list
-      const filePaths: string[] = [];
-      modulesList.forEach((mod: any) => {
-        const collect = (arr: any) => {
-          if (Array.isArray(arr)) {
-            arr.forEach((f: any) => {
-              const norm = normalizeFilePath(f);
-              if (norm) filePaths.push(norm);
-            });
-          }
-        };
-        collect(mod.files);
-        collect(mod.pages);
-        collect(mod.components);
-        collect(mod.services);
-        collect(mod.apis);
-      });
-      setFiles([...new Set(filePaths)]);
+      const json = safeParseJson(archOut.validatedJson);
+      if (json) {
+        const modulesList = Array.isArray(json.modules) ? json.modules : [];
+        setModules(modulesList);
+        // Collate files list
+        const filePaths: string[] = [];
+        modulesList.forEach((mod: any) => {
+          const collect = (arr: any) => {
+            if (Array.isArray(arr)) {
+              arr.forEach((f: any) => {
+                const norm = normalizeFilePath(f);
+                if (norm) filePaths.push(norm);
+              });
+            }
+          };
+          collect(mod.files);
+          collect(mod.ownedFiles);
+          collect(mod.pages);
+          collect(mod.components);
+          collect(mod.services);
+          collect(mod.apis);
+        });
+        setFiles([...new Set(filePaths)]);
+      }
     }
 
     if (sysOut) {
-      const json = JSON.parse(sysOut.validatedJson);
-      setEntities(json.entities || []);
+      const json = safeParseJson(sysOut.validatedJson);
+      if (json) {
+        setEntities(json.entities || []);
+      }
     }
 
     if (designerOut) {
-      const json = JSON.parse(designerOut.validatedJson);
-      setNavigation(json.navigationMap || []);
-      setComponentsList(json.components || []);
+      const json = safeParseJson(designerOut.validatedJson);
+      if (json) {
+        setNavigation(json.navigationMap || []);
+        setComponentsList(json.components || []);
+      }
     }
 
     // Load file contents
     if (coderOutputs.length > 0) {
-      // Find files dynamically
       coderOutputs.forEach((out) => {
-        const json = JSON.parse(out.validatedJson);
-        // Coder outputs contain code for files
+        const json = safeParseJson(out.validatedJson);
       });
     }
   };
@@ -690,8 +712,14 @@ export default function WorkspaceContent() {
     }
   };
 
-  const renderAgentOutputCard = (agentName: string, data: any) => {
+  const renderAgentOutputCard = (agentName: string, rawData: any) => {
+    if (!rawData) return null;
+    let data = safeParseJson(rawData);
     if (!data) return null;
+
+    if (data.parsedJson && typeof data.parsedJson === 'object') {
+      data = data.parsedJson;
+    }
 
     const normalizedAgent = agentName === 'SystemsArchitect' ? 'Architect' :
       agentName === 'BackendArchitect' ? 'System' :
