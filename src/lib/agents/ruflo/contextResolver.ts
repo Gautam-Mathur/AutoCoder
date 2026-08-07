@@ -1,5 +1,4 @@
 import { StageLedger } from './memory';
-import path from 'path';
 
 export interface ConflictData {
   description: string;

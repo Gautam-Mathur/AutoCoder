@@ -1,0 +1,17 @@
+{
+  "id": "rest_api",
+  "category": "ARCHITECTURAL_PATTERNS",
+  "title": "RESTful API Design Conventions & Standards",
+  "keyTechniques": [
+    "Use plural nouns for resource endpoints (e.g., /api/users, /api/tasks) rather than verbs (/api/getUsers)",
+    "Map HTTP verbs cleanly to CRUD actions: GET (read), POST (create), PUT/PATCH (update), DELETE (remove)",
+    "Return standard HTTP status codes: 200 (OK), 201 (Created), 400 (Bad Request), 401 (Unauthorized), 404 (Not Found), 500 (Internal Error)",
+    "Use consistent JSON response envelope structures across all endpoints (e.g. { status: 'success'|'error', data, message })"
+  ],
+  "avoid": [
+    "Do not use GET requests to perform data mutation actions",
+    "Do not return status 200 OK when an internal server error or validation failure occurs",
+    "Do not mix inconsistent casing in JSON keys (prefer camelCase for keys across all endpoints)"
+  ],
+  "referenceExample": "// GET /api/tasks/123\n{\n  \"status\": \"success\",\n  \"data\": {\n    \"id\": \"123\",\n    \"title\": \"Complete project architecture\",\n    \"status\": \"completed\"\n  }\n}\n\n// Error response format\n{\n  \"status\": \"error\",\n  \"message\": \"Task not found\",\n  \"code\": 404\n}"
+}

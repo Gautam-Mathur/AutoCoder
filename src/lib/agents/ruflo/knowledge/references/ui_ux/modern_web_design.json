@@ -1,0 +1,18 @@
+{
+  "id": "modern_web_design",
+  "category": "UI_UX",
+  "title": "Modern Web Design System & UX Best Practices",
+  "keyTechniques": [
+    "Use HSL or CSS variable color palettes with curated primary, accent, surface, and semantic colors",
+    "Establish clear typography scale using modern web fonts (e.g., Inter, Outfit, Roboto) with defined font-weights and line-heights",
+    "Implement fluid responsive layouts using CSS Grid for 2D page regions and Flexbox for 1D component alignement",
+    "Add subtle micro-animations (transition: all 0.2s ease-in-out) on interactive elements (buttons, cards, links) to enhance tactile feel",
+    "Maintain consistent spacing using an 8px grid system (margin/padding in multiples of 4px or 8px)"
+  ],
+  "avoid": [
+    "Do not use browser default fonts or un-styled HTML buttons",
+    "Do not use harsh 100% black (#000000) or plain un-curated primary colors like pure #ff0000 / #0000ff",
+    "Do not use fixed pixel widths on container elements that break mobile responsiveness"
+  ],
+  "referenceExample": ":root {\n  --primary: hsl(238, 83%, 66%);\n  --surface: hsl(222, 47%, 11%);\n  --surface-border: rgba(255, 255, 255, 0.08);\n  --text-main: hsl(210, 40%, 98%);\n  --text-muted: hsl(215, 20%, 65%);\n  --radius: 12px;\n}\n\n.card {\n  background-color: var(--surface);\n  border: 1px solid var(--surface-border);\n  border-radius: var(--radius);\n  padding: 1.5rem;\n  transition: transform 0.2s ease, box-shadow 0.2s ease;\n}\n.card:hover {\n  transform: translateY(-2px);\n  box-shadow: 0 12px 24px -10px rgba(0, 0, 0, 0.5);\n}"
+}

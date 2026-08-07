@@ -1,0 +1,16 @@
+{
+  "id": "svg_charts",
+  "category": "UI_PATTERNS",
+  "title": "Interactive SVG Charts & Sparklines Guidelines",
+  "keyTechniques": [
+    "Use inline responsive <svg viewBox=\"0 0 500 200\" preserveAspectRatio=\"xMidYMid meet\"> elements for auto-scaling",
+    "Use smooth bezier curve paths using <path d=\"M ... C ...\" fill=\"url(#chartGradient)\" stroke=\"#6366f1\" stroke-width=\"3\" />",
+    "Define SVG linearGradients in <defs> with top-to-bottom opacity falloffs for fill areas",
+    "Add interactive <circle r=\"5\" class=\"chart-point\"> elements with CSS hover transitions for data tooltips"
+  ],
+  "avoid": [
+    "Do not use fixed width and height attributes without viewBox",
+    "Do not use heavy external canvas chart libraries when native SVG lines/paths suffice"
+  ],
+  "referenceExample": "<svg viewBox=\"0 0 400 150\" class=\"w-full h-40\">\n  <defs>\n    <linearGradient id=\"grad\" x1=\"0%\" y1=\"0%\" x2=\"0%\" y2=\"100%\">\n      <stop offset=\"0%\" stop-color=\"#6366f1\" stop-opacity=\"0.4\" />\n      <stop offset=\"100%\" stop-color=\"#6366f1\" stop-opacity=\"0.0\" />\n    </linearGradient>\n  </defs>\n  <path d=\"M0,100 Q100,20 200,80 T400,30 L400,150 L0,150 Z\" fill=\"url(#grad)\" />\n  <path d=\"M0,100 Q100,20 200,80 T400,30\" fill=\"none\" stroke=\"#6366f1\" stroke-width=\"3\" />\n</svg>"
+}

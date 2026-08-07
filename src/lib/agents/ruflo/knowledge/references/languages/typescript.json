@@ -1,0 +1,16 @@
+{
+  "id": "typescript",
+  "category": "LANGUAGES",
+  "title": "TypeScript Strict Typing & Interface Conventions",
+  "keyTechniques": [
+    "Define explicit interface or type declarations for all object schemas, props, and API response payloads",
+    "Use strict null checks and optional chaining (?.) for potentially undefined properties",
+    "Prefer interface over type for extendable object models",
+    "Use union types ('active' | 'completed' | 'paused') for status fields rather than raw string primitives"
+  ],
+  "avoid": [
+    "Do not use 'any' as a catch-all type escape hatch; use 'unknown' with type narrowing if type is dynamic",
+    "Do not use non-null assertion operator (!) unless value is guaranteed by prior control flow check"
+  ],
+  "referenceExample": "export interface Task {\n  id: string;\n  title: string;\n  status: 'pending' | 'in_progress' | 'completed';\n  createdAt: string;\n  description?: string;\n}\n\nexport interface ApiResponse<T> {\n  status: 'success' | 'error';\n  data?: T;\n  message?: string;\n}"
+}

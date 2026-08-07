@@ -8,7 +8,7 @@ export interface MinimalContextResult {
   injectedKeys: string[];
 }
 
-export async function buildMinimalContext(ledger: StageLedger, agentName: string): Promise<MinimalContextResult> {
+export async function buildMinimalContext(ledger: StageLedger, agentName: string, targetFile?: string): Promise<MinimalContextResult> {
   const fullMemoryState = ledger.getState();
   const rawMemoryString = JSON.stringify(fullMemoryState, null, 2);
   const rawBytes = rawMemoryString.length;
@@ -16,7 +16,7 @@ export async function buildMinimalContext(ledger: StageLedger, agentName: string
   const agentDef = AGENT_DEFS[agentName];
   let contextText = '';
   if (agentDef && typeof agentDef.getContext === 'function') {
-    contextText = await agentDef.getContext(ledger);
+    contextText = await agentDef.getContext(ledger, targetFile);
   } else {
     contextText = rawMemoryString;
   }

@@ -1,0 +1,16 @@
+{
+  "id": "fetch_client",
+  "category": "CAPABILITIES",
+  "title": "API Fetch Client & HTTP Request Wrapper Guidelines",
+  "keyTechniques": [
+    "Check res.ok (status in 200-299 range) explicitly before attempting to parse response body data",
+    "Pass AbortSignal with a reasonable timeout to prevent network requests from hanging indefinitely",
+    "Set default headers ('Content-Type': 'application/json', 'Accept': 'application/json') on API client requests",
+    "Parse and format error JSON payloads into human-readable error messages for UI notifications"
+  ],
+  "avoid": [
+    "Do not assume fetch() throws an error on 404 or 500 status codes (fetch only rejects on network failure)",
+    "Do not duplicate fetch options across multiple component files; use a centralized apiService wrapper"
+  ],
+  "referenceExample": "export const apiRequest = async (url, options = {}) => {\n  const controller = new AbortController();\n  const id = setTimeout(() => controller.abort(), 10000);\n\n  try {\n    const response = await fetch(url, {\n      ...options,\n      headers: { 'Content-Type': 'application/json', ...options.headers },\n      signal: controller.signal,\n    });\n    clearTimeout(id);\n\n    const data = await response.json().catch(() => ({}));\n    if (!response.ok) {\n      throw new Error(data.message || `HTTP Error ${response.status}`);\n    }\n    return data;\n  } catch (err) {\n    clearTimeout(id);\n    throw err;\n  }\n};"
+}

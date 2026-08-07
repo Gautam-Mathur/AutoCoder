@@ -1,0 +1,17 @@
+{
+  "id": "react",
+  "category": "FRAMEWORKS",
+  "title": "React Architecture & Component Best Practices",
+  "keyTechniques": [
+    "Keep components focused, modular, and single-purpose",
+    "Extract state management and side effects into custom hooks (e.g., useTasks, useAuth) to separate logic from UI rendering",
+    "Treat state as immutable; always use updater functions or spread operators when mutating objects or arrays",
+    "Use proper keys when rendering lists (prefer unique IDs over array indices)"
+  ],
+  "avoid": [
+    "Do not mutate state directly (e.g., state.push(newItem) or state.value = x)",
+    "Do not perform side effects or data fetching directly in component render bodies; use useEffect or custom hooks",
+    "Do not nest component function definitions inside another component's render body"
+  ],
+  "referenceExample": "import { useState, useCallback } from 'react';\n\nexport const useTasks = (initialTasks = []) => {\n  const [tasks, setTasks] = useState(initialTasks);\n\n  const addTask = useCallback((title) => {\n    if (!title.trim()) return;\n    const newTask = { id: crypto.randomUUID(), title, completed: false };\n    setTasks((prev) => [...prev, newTask]);\n  }, []);\n\n  return { tasks, addTask };\n};"
+}

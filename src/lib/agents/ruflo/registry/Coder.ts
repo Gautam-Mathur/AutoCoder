@@ -129,7 +129,7 @@ export const schema = {
   required: ['file', 'code']
 };
 
-export async function getContext(ledger: StageLedger): Promise<string> {
+export async function getContext(ledger: StageLedger, targetFile?: string): Promise<string> {
   const plannerData = ledger.query('Coder', {
     fromAgent: 'Planner',
     select: ['features', 'recommendedTechStack']
@@ -148,13 +148,104 @@ export async function getContext(ledger: StageLedger): Promise<string> {
   });
 
   // Read previously generated code files from the ledger
-  const generatedCode = ledger.read('coder') || {};
+  const generatedCode: Record<string, string> = ledger.read('coder') || {};
+  let filteredGeneratedCode: Record<string, string> = {};
+
+  if (!targetFile) {
+    filteredGeneratedCode = generatedCode;
+  } else {
+    const normalizedTarget = targetFile.toLowerCase();
+    const isFrontendTarget =
+      /^(index|main|app)\.(html|htm)$/i.test(normalizedTarget) ||
+      /\.(html|htm|css|scss|jsx|tsx)$/i.test(normalizedTarget) ||
+      normalizedTarget.includes('/components/') ||
+      normalizedTarget.includes('/pages/') ||
+      normalizedTarget.includes('/views/') ||
+      normalizedTarget.includes('/frontend/');
+
+    const isBackendTarget =
+      /\.(py|sql)$/i.test(normalizedTarget) ||
+      normalizedTarget.includes('/backend/') ||
+      normalizedTarget.includes('/routes/') ||
+      normalizedTarget.includes('/controllers/') ||
+      normalizedTarget.includes('/models/') ||
+      normalizedTarget.includes('/middleware/') ||
+      normalizedTarget.includes('/database/') ||
+      normalizedTarget.includes('/config/');
+
+    const blueprintsData = ledger.read('blueprinter');
+    const blueprints: any[] = Array.isArray(blueprintsData)
+      ? blueprintsData
+      : blueprintsData?.blueprints || [];
+    const targetBp = blueprints.find(
+      (bp: any) => bp.file === targetFile || bp.file?.toLowerCase() === normalizedTarget
+    );
+
+    const explicitDependencies = new Set<string>();
+    if (targetBp) {
+      (targetBp.dependencies || []).forEach((d: string) => explicitDependencies.add(d.toLowerCase()));
+      (targetBp.imports || []).forEach((imp: string) => explicitDependencies.add(imp.toLowerCase()));
+    }
+
+    for (const [filepath, code] of Object.entries(generatedCode)) {
+      const normalizedPath = filepath.toLowerCase();
+
+      // Rule 1: Always include shared linking files (API services, shared types, DTOs, contracts)
+      const isLinkingFile =
+        normalizedPath.includes('/services/') ||
+        normalizedPath.includes('/api/') ||
+        normalizedPath.includes('api') ||
+        normalizedPath.includes('service') ||
+        normalizedPath.includes('dto') ||
+        normalizedPath.includes('types') ||
+        normalizedPath.includes('contract') ||
+        normalizedPath.includes('fetch');
+
+      // Rule 2: Explicit dependency match
+      const isExplicitDependency =
+        explicitDependencies.has(filepath) || explicitDependencies.has(normalizedPath);
+
+      if (isLinkingFile || isExplicitDependency) {
+        filteredGeneratedCode[filepath] = code; // Retain 100% full, un-truncated source code
+        continue;
+      }
+
+      if (isFrontendTarget) {
+        // Exclude isolated backend infrastructure
+        const isIsolatedBackend =
+          normalizedPath.includes('/routes/') ||
+          normalizedPath.includes('/controllers/') ||
+          normalizedPath.includes('/models/') ||
+          normalizedPath.includes('/middleware/') ||
+          normalizedPath.includes('/database/') ||
+          normalizedPath.includes('/config/') ||
+          normalizedPath.endsWith('server.js') ||
+          normalizedPath.endsWith('schema.js');
+
+        if (!isIsolatedBackend) {
+          filteredGeneratedCode[filepath] = code;
+        }
+      } else if (isBackendTarget) {
+        // Exclude isolated frontend UI templates/layouts
+        const isIsolatedFrontend =
+          normalizedPath.endsWith('.html') ||
+          normalizedPath.endsWith('.css') ||
+          normalizedPath.endsWith('.scss');
+
+        if (!isIsolatedFrontend) {
+          filteredGeneratedCode[filepath] = code;
+        }
+      } else {
+        filteredGeneratedCode[filepath] = code;
+      }
+    }
+  }
 
   return JSON.stringify({
     Planner: plannerData,
     Architect: architectData,
     System: systemData,
     Designer: designerData,
-    generatedCode: generatedCode // Supply generated code so downstream files (like index.html compiled last) know their contents
+    generatedCode: filteredGeneratedCode
   }, null, 2);
 }

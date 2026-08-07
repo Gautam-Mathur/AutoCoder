@@ -1,7 +1,6 @@
 import { prisma } from '../../db';
 import { runInference, getLLMConfig } from '../inference';
 import { writeAgentOutput, queryAgentOutput } from '../sml';
-import { buildUserContext } from '../contextBuilder';
 import { AGENT_DEFS, AgentDef } from './agents';
 import { loadExecutiveMemory, saveExecutiveMemory, StageLedger } from './memory';
 import { calculateTokenBudget } from './token-budgeter';
@@ -198,6 +197,22 @@ function validateSchema(obj: any, schema: any): string | null {
   }
   if (schema.properties && typeof schema.properties === 'object') {
     for (const key of Object.keys(schema.properties)) {
+      if (key in obj && schema.properties[key] && schema.properties[key].type) {
+        const expectedType = schema.properties[key].type;
+        const actualVal = obj[key];
+        if (expectedType === 'string' && typeof actualVal !== 'string') {
+          return `Field '${key}': expected string, got ${typeof actualVal}`;
+        }
+        if (expectedType === 'number' && typeof actualVal !== 'number') {
+          return `Field '${key}': expected number, got ${typeof actualVal}`;
+        }
+        if (expectedType === 'boolean' && typeof actualVal !== 'boolean') {
+          return `Field '${key}': expected boolean, got ${typeof actualVal}`;
+        }
+        if (expectedType === 'array' && !Array.isArray(actualVal)) {
+          return `Field '${key}': expected array, got ${typeof actualVal}`;
+        }
+      }
       if (key in obj && obj[key] !== null && typeof obj[key] === 'object' && schema.properties[key].type === 'object') {
         const nestedErr = validateSchema(obj[key], schema.properties[key]);
         if (nestedErr) return `Field '${key}': ${nestedErr}`;
@@ -248,7 +263,7 @@ export async function runAgent(
   await writeHistoryLog(conversationId, legacyAgentName, 'Retrying', `Agent ${agentName} started (Attempt ${attempt}/3)...`);
 
   const startTime = Date.now();
-  const contextResult = await buildMinimalContext(ledger, agentName);
+  const contextResult = await buildMinimalContext(ledger, agentName, targetFile);
   const contextData = typeof contextResult === 'string' ? contextResult : contextResult.contextText;
   const config = await getLLMConfig();
   const contextStats = typeof contextResult === 'object' ? ` (Context Optimized: ${contextResult.bytesSaved} bytes saved, ${contextResult.reductionRatio}% reduction)` : '';
@@ -610,11 +625,13 @@ Original Instruction:
         // Polyfill code for backward compatibility
         parsedJson.code = code;
       }
-      const targetFile = customUserContent ? customUserContent.match(/filepath: "([^"]+)"/)?.[1] || 'output.js' : 'output.js';
+      const effectiveTargetFile = targetFile
+        || (customUserContent ? customUserContent.match(/filepath: "([^"]+)"/)?.[1] : undefined)
+        || 'output.js';
       const currentCoderState = ledger.read('coder') || {};
       const updatedCoderState = {
         ...currentCoderState,
-        [targetFile]: code
+        [effectiveTargetFile]: code
       };
       await ledger.write(agentName, field, updatedCoderState);
     } else {
@@ -971,12 +988,16 @@ export async function runOrchestrator(
         message: `Coder loop started. Generating individual files from blueprints...`,
       });
 
-      const blueprints = await queryAgentOutput(conversationId, 'Blueprinter', 'blueprints');
+      const smlBlueprints = await queryAgentOutput(conversationId, 'Blueprinter', 'blueprints');
+      const blueprints = (smlBlueprints && smlBlueprints.length > 0)
+        ? smlBlueprints
+        : (ledger.read('blueprinter')?.blueprints || []);
+
       if (!blueprints || blueprints.length === 0) {
         onEvent({
           type: 'AGENT_ERROR',
           agent: 'Coder',
-          message: 'No blueprints found in SML. Cannot compile files.',
+          message: 'No blueprints found in SML or StageLedger. Cannot compile files.',
         });
         return;
       }
@@ -1016,6 +1037,10 @@ export async function runOrchestrator(
 
         for (let attempt = 1; attempt <= 3; attempt++) {
           try {
+            const referencesBlock = bp.references && bp.references.length > 0
+              ? `\nReference Guidelines & Patterns to Follow:\n${JSON.stringify(bp.references, null, 2)}`
+              : '';
+
             const customUserContent = `Generate code for the target filepath: "${bp.file}"
 Language: ${bp.language || 'auto-detect'}
 Language Profile: ${bp.languageProfile || 'auto-detect'}
@@ -1033,7 +1058,7 @@ Designer Components: ${JSON.stringify(bp.designerComponentIds)}
 Acceptance criteria to fulfill: ${JSON.stringify(bp.acceptanceCriteria)}
 Allowed Constructs: ${JSON.stringify(bp.allowedConstructs)}
 Forbidden Constructs: ${JSON.stringify(bp.forbiddenConstructs)}
-Validation Rules: ${JSON.stringify(bp.validationRules)}
+Validation Rules: ${JSON.stringify(bp.validationRules)}${referencesBlock}
 
 Ensure you write complete source code matching these specs. Do not truncate.`;
 
@@ -1443,13 +1468,14 @@ Ensure you write complete source code matching these specs. Do not truncate.`;
 
         if (repairLoops < 3) {
           repairLoops++;
+          const uniqueDefectFiles = [...new Set(defects.map(d => d.file))];
+          const failedFile = uniqueDefectFiles[(repairLoops - 1) % uniqueDefectFiles.length];
+
           onEvent({
             type: 'AGENT_START',
             agent: triage.specialistAgent,
-            message: `${triage.specialistAgent} Specialist Recovery activated (Loop Run ${repairLoops}/3). Resolving defect in ${defects[0].file}...`,
+            message: `${triage.specialistAgent} Specialist Recovery activated (Loop Run ${repairLoops}/3). Resolving defect in ${failedFile}...`,
           });
-
-          const failedFile = defects[0].file;
 
           // Retrieve current code content
           const coderOut = await queryAgentOutput(conversationId, 'Coder', failedFile);
@@ -1505,6 +1531,12 @@ Ensure you write complete source code matching these specs. Do not truncate.`;
               // Loop back to Tester stage
               i--;
               continue;
+            } else {
+              onEvent({
+                type: 'AGENT_LOG',
+                agent: triage.specialistAgent,
+                message: `Specialist Recovery returned no patch for ${failedFile}. Proceeding to next stage.`,
+              });
             }
           } catch (recoveryErr: any) {
             onEvent({
@@ -1845,12 +1877,6 @@ Review this file for quality, completeness, spec alignment, and bugs. Assign a q
 
         // ─── Fix 2: Reviewer Quality Ship Gate ───
         const qualityGateOverride = memoryState.qualityGateOverride === true;
-        
-        // Reset override immediately on entry so it cannot stick across crashed/incomplete runs
-        if (qualityGateOverride) {
-          memoryState.qualityGateOverride = false;
-          await saveExecutiveMemory(conversationId, memoryState);
-        }
 
         const errorAnnotations = finalReport.annotations.filter((a: any) => a.severity === 'error');
         if (errorAnnotations.length > 0 && !qualityGateOverride) {
@@ -1879,6 +1905,10 @@ Review this file for quality, completeness, spec alignment, and bugs. Assign a q
             `Quality Gate blocked ship due to ${errorAnnotations.length} errors. Next resume will bypass.`
           );
           return;
+        } else if (qualityGateOverride) {
+          // Reset override after successfully bypassing or passing the gate
+          memoryState.qualityGateOverride = false;
+          await saveExecutiveMemory(conversationId, memoryState);
         }
       }
 

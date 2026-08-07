@@ -80,6 +80,10 @@ export function calculateTokenBudget(
     breakdown.formulaApplied = 'agent_def_max_tokens_fallback';
   }
 
+  // Clamp budget to a safe upper limit matching local LLM context window (32768)
+  const MAX_BUDGET = 32768;
+  budget = Math.min(budget, MAX_BUDGET);
+
   // 2. Timeout Scaling Math: scale timeout linearly to calculated token budget (240s to 3600s)
   const timeoutSeconds = Math.max(240, Math.min(3600, Math.round((budget / 32768) * 3360 + 240)));
   const timeoutMs = timeoutSeconds * 1000;

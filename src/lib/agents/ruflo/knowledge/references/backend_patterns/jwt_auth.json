@@ -1,0 +1,16 @@
+{
+  "id": "jwt_auth",
+  "category": "BACKEND_PATTERNS",
+  "title": "JWT Authentication & Authorization Guidelines",
+  "keyTechniques": [
+    "Verify Bearer token format in standard Authorization headers ('Authorization: Bearer <token>')",
+    "Store secret keys in process.env.JWT_SECRET with fallback for local dev",
+    "Return 401 Unauthorized for missing/invalid tokens and 403 Forbidden for insufficient permissions",
+    "Attach parsed token payload (req.user) to Express request objects for route handlers"
+  ],
+  "avoid": [
+    "Do not log JWT secrets or raw tokens in server logs",
+    "Do not ignore token expiration (exp claim) verification"
+  ],
+  "referenceExample": "const authHeader = req.headers.authorization;\nif (!authHeader || !authHeader.startsWith('Bearer ')) {\n  return res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });\n}\nconst token = authHeader.split(' ')[1];\ntry {\n  const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret');\n  req.user = decoded;\n  next();\n} catch (err) {\n  return res.status(401).json({ error: 'Unauthorized: Token verification failed' });\n}"
+}

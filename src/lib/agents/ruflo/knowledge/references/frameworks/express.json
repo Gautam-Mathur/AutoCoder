@@ -1,0 +1,17 @@
+{
+  "id": "express",
+  "category": "FRAMEWORKS",
+  "title": "Express.js REST API Server Best Practices",
+  "keyTechniques": [
+    "Separate routes, controllers, and services into modular files (router -> controller -> service)",
+    "Use expressive error handling middleware (err, req, res, next) as the centralized point for formatting API error responses",
+    "Wrap asynchronous controller route handlers with async-wrapper utilities or try-catch blocks to forward unhandled rejections to next(err)",
+    "Configure standard middleware early: helmet() for security headers, cors() for cross-origin, and express.json() for body parsing"
+  ],
+  "avoid": [
+    "Do not write monolithic app.js files with all route handlers in a single script",
+    "Do not leak internal database stack traces to the client in production error responses",
+    "Do not forget to return when sending res.status().json() to prevent headers already sent errors"
+  ],
+  "referenceExample": "const express = require('express');\nconst router = express.Router();\n\nconst asyncHandler = (fn) => (req, res, next) => {\n  Promise.resolve(fn(req, res, next)).catch(next);\n};\n\nrouter.get('/items', asyncHandler(async (req, res) => {\n  const items = await itemService.getAllItems();\n  return res.status(200).json({ status: 'success', data: items });\n}));\n\nmodule.exports = router;"
+}

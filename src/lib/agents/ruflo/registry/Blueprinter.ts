@@ -1,4 +1,5 @@
 import { StageLedger } from '../memory';
+import { resolveReferences } from '../knowledge/referenceResolver';
 import path from 'path';
 
 export const name = 'Blueprinter';
@@ -68,12 +69,6 @@ export async function runDeterministic(ledger: StageLedger): Promise<any> {
   const components = designer.components || [];
 
   const blueprints: any[] = [];
-
-  // Build Global Symbol Table to resolve dependency mappings
-  const symbolTable: Record<string, string> = {};
-  dbEntities.forEach((ent: any) => { if (ent.name) symbolTable[ent.name] = 'database'; });
-  apis.forEach((api: any) => { if (api.id) symbolTable[api.id] = 'api'; });
-  components.forEach((comp: any) => { if (comp.name) symbolTable[comp.name] = 'component'; });
 
   // Helper: Detect language/profile from file extension
   const getLanguageDetails = (filepath: string) => {
@@ -214,6 +209,68 @@ export async function runDeterministic(ledger: StageLedger): Promise<any> {
       });
     }
 
+    // Resolve targeted reference guidelines on-demand
+    const requestedRefKeys: string[] = [];
+    const designerText = JSON.stringify(designer).toLowerCase();
+    const systemText = JSON.stringify(system).toLowerCase();
+    const plannerText = JSON.stringify(planner).toLowerCase();
+    const normFile = filepath.toLowerCase();
+
+    // UI & Web Design References
+    if (langInfo.language === 'CSS' || langInfo.language === 'HTML' || normFile.includes('style') || normFile.includes('app.css') || normFile.includes('globals.css')) {
+      requestedRefKeys.push('modern_web_design');
+    }
+    if (designerText.includes('glassmorphism') || designerText.includes('frosted glass')) {
+      if (langInfo.language === 'CSS' || langInfo.language === 'HTML' || designerComponentIds.length > 0 || normFile.includes('style')) {
+        requestedRefKeys.push('glassmorphism');
+      }
+    }
+    if (designerText.includes('svg') || designerText.includes('chart') || designerText.includes('sparkline') || normFile.includes('chart')) {
+      if (langInfo.language === 'HTML' || langInfo.language === 'TSX' || langInfo.language === 'JSX' || normFile.includes('component')) {
+        requestedRefKeys.push('svg_charts');
+      }
+    }
+    if (designerText.includes('dark') || plannerText.includes('dark')) {
+      if (langInfo.language === 'CSS' || langInfo.language === 'HTML' || normFile.includes('style')) {
+        requestedRefKeys.push('dark_theme');
+      }
+    }
+
+    // Frameworks & Languages References
+    if (langInfo.language === 'TSX' || langInfo.language === 'JSX' || plannerText.includes('react') || normFile.includes('component')) {
+      requestedRefKeys.push('react');
+    }
+    if (langInfo.language === 'TypeScript' || langInfo.language === 'TSX') {
+      requestedRefKeys.push('typescript');
+    }
+    if (systemText.includes('express') || normFile.includes('server') || normFile.includes('route')) {
+      requestedRefKeys.push('express');
+    }
+
+    // Architecture & Security References
+    if (systemText.includes('rest') || normFile.includes('route') || normFile.includes('api') || normFile.includes('controller')) {
+      requestedRefKeys.push('rest_api');
+    }
+    if (normFile.includes('auth') || normFile.includes('user') || normFile.includes('form') || normFile.includes('security')) {
+      requestedRefKeys.push('owasp_web_security');
+    }
+    if (systemText.includes('jwt') || normFile.includes('auth') || normFile.includes('jwt')) {
+      requestedRefKeys.push('jwt_auth');
+    }
+
+    // Databases & Capabilities References
+    if (systemText.includes('sqlite') || normFile.includes('db') || normFile.includes('database') || normFile.includes('schema') || normFile.includes('model')) {
+      requestedRefKeys.push('sqlite_db');
+    }
+    if (plannerText.includes('local storage') || plannerText.includes('localstorage') || normFile.includes('storage') || normFile.includes('store')) {
+      requestedRefKeys.push('local_storage');
+    }
+    if (normFile.includes('service') || normFile.includes('api') || normFile.includes('client') || normFile.includes('fetch')) {
+      requestedRefKeys.push('fetch_client');
+    }
+
+    const resolvedRefDocs = resolveReferences(requestedRefKeys);
+
     blueprints.push({
       id: `BP_${String(idx + 1).padStart(3, '0')}`,
       file: filepath,
@@ -239,7 +296,8 @@ export async function runDeterministic(ledger: StageLedger): Promise<any> {
       acceptanceCriteria: owningModule.purpose ? [owningModule.purpose] : ['Must fulfill architectural constraints'],
       allowedConstructs,
       forbiddenConstructs,
-      validationRules
+      validationRules,
+      references: resolvedRefDocs
     });
   }
 

@@ -1,0 +1,17 @@
+{
+  "id": "owasp_web_security",
+  "category": "SECURITY",
+  "title": "OWASP Web Security & Vulnerability Prevention Guidelines",
+  "keyTechniques": [
+    "Sanitize all user inputs and escape HTML characters before rendering dynamic content in DOM to prevent Cross-Site Scripting (XSS)",
+    "Use parameterized SQL queries or ORMs exclusively to prevent SQL Injection (SQLi)",
+    "Set secure HTTP response headers (Content-Security-Policy, X-Frame-Options, X-Content-Type-Options) using Helmet.js or server headers",
+    "Hash passwords using strong salt algorithms (e.g., bcrypt with cost factor 10+) before persistence"
+  ],
+  "avoid": [
+    "Never use innerHTML with un-sanitized user input; use textContent or innerText instead",
+    "Never store plain-text user passwords in databases or logs",
+    "Never trust client-side data validation alone; always enforce server-side validation"
+  ],
+  "referenceExample": "// Safe DOM rendering\nconst userCommentElement = document.createElement('p');\nuserCommentElement.textContent = userInputString; // Prevents XSS script execution\n\n// Safe password hashing\nconst hashedPassword = await bcrypt.hash(rawPassword, 10);"
+}

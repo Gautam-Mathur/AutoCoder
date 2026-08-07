@@ -1,0 +1,16 @@
+{
+  "id": "local_storage",
+  "category": "CAPABILITIES",
+  "title": "Client-Side LocalStorage State Persistence Guidelines",
+  "keyTechniques": [
+    "Wrap JSON.parse() and JSON.stringify() inside try-catch blocks to safely handle corrupted data or QuotaExceededError",
+    "Provide safe default fallback values if the storage key is missing or invalid",
+    "Create dedicated helper utilities (e.g., loadState(), saveState()) to centralize storage key management",
+    "Include a namespace prefix in storage keys (e.g., app_tasks_v1) to prevent key collision with other scripts"
+  ],
+  "avoid": [
+    "Do not store sensitive user credentials, access tokens, or personal identifiable information in unencrypted localStorage",
+    "Do not assume localStorage is guaranteed to be available (e.g. inside private browsing or disabled cookies)"
+  ],
+  "referenceExample": "const STORAGE_KEY = 'autocoder_tasks_v1';\n\nexport const loadTasks = () => {\n  try {\n    const data = localStorage.getItem(STORAGE_KEY);\n    return data ? JSON.parse(data) : [];\n  } catch (e) {\n    console.warn('Failed to load tasks from localStorage:', e);\n    return [];\n  }\n};\n\nexport const saveTasks = (tasks) => {\n  try {\n    localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));\n  } catch (e) {\n    console.error('Failed to save tasks to localStorage:', e);\n  }\n};"
+}

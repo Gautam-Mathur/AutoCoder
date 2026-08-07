@@ -1,0 +1,17 @@
+{
+  "id": "glassmorphism",
+  "category": "UI_PATTERNS",
+  "title": "Glassmorphism & Frosted Glass Design Guidelines",
+  "keyTechniques": [
+    "Use translucent background colors using rgba() or hsla() with 5% to 15% opacity",
+    "Apply CSS backdrop-filter: blur(12px) to achieve the frosted glass effect, along with -webkit-backdrop-filter fallback",
+    "Include a subtle 1px semi-transparent border (e.g., rgba(255, 255, 255, 0.1)) to define component edges and create depth",
+    "Use soft drop shadows (box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37)) to elevate glass cards above background gradients"
+  ],
+  "avoid": [
+    "Do not use 100% opaque solid background colors on glass components",
+    "Do not omit vendor prefixes for backdrop-filter",
+    "Do not use dark opaque borders that break the translucent glass aesthetics"
+  ],
+  "referenceExample": "background: rgba(18, 18, 24, 0.75);\nbackdrop-filter: blur(16px);\n-webkit-backdrop-filter: blur(16px);\nborder: 1px solid rgba(255, 255, 255, 0.1);\nbox-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);"
+}

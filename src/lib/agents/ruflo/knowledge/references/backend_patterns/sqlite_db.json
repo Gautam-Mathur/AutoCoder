@@ -1,0 +1,15 @@
+{
+  "id": "sqlite_db",
+  "category": "BACKEND_PATTERNS",
+  "title": "SQLite Persistence & Parameterized Queries Guidelines",
+  "keyTechniques": [
+    "Always use parameterized queries (db.prepare('SELECT * FROM users WHERE id = ?').get(id)) to prevent SQL injection",
+    "Use SQLite WAL (Write-Ahead Logging) mode (PRAGMA journal_mode = WAL;) for higher concurrency",
+    "Wrap multi-step database mutations inside explicit transactions to maintain data integrity"
+  ],
+  "avoid": [
+    "Do not concatenate raw user input strings directly into SQL query statements",
+    "Do not keep unclosed database connections hanging in request handlers"
+  ],
+  "referenceExample": "const Database = require('better-sqlite3');\nconst db = new Database('dev.db');\ndb.pragma('journal_mode = WAL');\n\nconst getUserById = db.prepare('SELECT id, email, created_at FROM users WHERE id = ?');\nconst user = getUserById.get(userId);"
+}

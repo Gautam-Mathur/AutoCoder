@@ -16,7 +16,7 @@ export interface AgentDef {
   maxTokens: number;
   systemPrompt: string;
   schema: any;
-  getContext: (ledger: any) => Promise<string>;
+  getContext: (ledger: any, targetFile?: string) => Promise<string>;
 }
 
 export const AGENT_DEFS: Record<string, AgentDef> = {

@@ -1,0 +1,16 @@
+{
+  "id": "dark_theme",
+  "category": "UI_PATTERNS",
+  "title": "Modern Dark Theme & Elevation Elevation Guidelines",
+  "keyTechniques": [
+    "Use deep neutral background colors (e.g. #090d16 or #0f172a) instead of pure harsh pitch black #000000",
+    "Define CSS variables for primary (#6366f1), surface (#1e293b), border (rgba(255,255,255,0.08)), and text (#f8fafc)",
+    "Use elevation overlays (lighter surface backgrounds for higher z-index modals and cards) to create depth",
+    "Ensure high contrast ratio (at least 4.5:1) for secondary text using subtle silver/gray tones (#94a3b8)"
+  ],
+  "avoid": [
+    "Do not use pure black background with stark white text",
+    "Do not use saturated bright red/green backgrounds for badges; use translucent dark badges"
+  ],
+  "referenceExample": ":root {\n  --bg-main: #0b0f19;\n  --bg-surface: #111827;\n  --border-color: rgba(255, 255, 255, 0.08);\n  --text-primary: #f9fafb;\n  --text-muted: #9ca3af;\n  --accent-color: #6366f1;\n}"
+}

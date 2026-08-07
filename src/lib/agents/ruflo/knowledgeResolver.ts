@@ -16,10 +16,12 @@ export class KnowledgeResolver {
   }
 
   public capabilities(platform: string): string[] {
-    return KnowledgeResolver.CAPABILITIES_DB[platform] || [];
+    if (!platform) return [];
+    return KnowledgeResolver.CAPABILITIES_DB[platform.toLowerCase()] || [];
   }
 
   public restrictions(platform: string): string[] {
-    return KnowledgeResolver.RESTRICTIONS_DB[platform] || [];
+    if (!platform) return [];
+    return KnowledgeResolver.RESTRICTIONS_DB[platform.toLowerCase()] || [];
   }
 }
