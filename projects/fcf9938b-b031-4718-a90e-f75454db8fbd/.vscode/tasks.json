@@ -1,0 +1,22 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Auto Start Server",
+      "type": "shell",
+      "command": "npx -y serve -l 8080",
+      "options": {
+        "env": {
+          "PORT": "8080"
+        }
+      },
+      "runOptions": {
+        "runOn": "folderOpen"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      }
+    }
+  ]
+}

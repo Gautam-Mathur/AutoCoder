@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { loadExecutiveMemory, StageLedger } from '@/lib/agents/ruflo/memory';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: NextRequest) {
   try {
     const { conversationId, conflictDescription, resolvedConflictOption } = await request.json();
@@ -20,19 +22,25 @@ export async function POST(request: NextRequest) {
 
     // Handle conflict resolution log if provided
     if (conflictDescription && resolvedConflictOption) {
-      const memoryState = await loadExecutiveMemory(conversationId);
-      const ledger = new StageLedger(conversationId, memoryState);
-      await ledger.logDecision({
-        type: 'conflict_resolution',
-        description: conflictDescription,
-        resolvedOption: resolvedConflictOption,
+      await prisma.executionHistory.create({
+        data: {
+          conversationId,
+          stage: conversation.currentStage,
+          status: 'ConflictResolved',
+          logs: JSON.stringify({
+            type: 'conflict_resolution',
+            description: conflictDescription,
+            resolvedOption: resolvedConflictOption,
+            timestamp: new Date().toISOString(),
+          }),
+        },
       });
     }
 
     // Advance stage if paused there
     let nextStage = conversation.currentStage;
-    if (conversation.currentStage === 'SystemsArchitect' || conversation.currentStage === 'Architect') {
-      nextStage = 'BackendArchitect';
+    if (conversation.currentStage === 'Architect') {
+      nextStage = 'System';
     } else if (conversation.currentStage === 'Queen') {
       nextStage = 'Planner';
     }

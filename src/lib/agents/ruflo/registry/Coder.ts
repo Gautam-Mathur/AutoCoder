@@ -129,23 +129,44 @@ export const schema = {
   required: ['file', 'code']
 };
 
+import { ContextResolver } from '../contextResolver';
+
 export async function getContext(ledger: StageLedger, targetFile?: string): Promise<string> {
-  const plannerData = ledger.query('Coder', {
-    fromAgent: 'Planner',
-    select: ['features', 'recommendedTechStack']
-  });
-  const architectData = ledger.query('Coder', {
-    fromAgent: 'Architect',
-    select: ['modules', 'projectStructure', 'projectConventions']
-  });
-  const systemData = ledger.query('Coder', {
-    fromAgent: 'System',
-    select: ['database', 'apis']
-  });
-  const designerData = ledger.query('Coder', {
-    fromAgent: 'Designer',
-    select: ['pages', 'components', 'designSystem', 'navigation', 'interactionDesign']
-  });
+  const convoId = (ledger as any).conversationId;
+  let plannerData: any = {};
+  let architectData: any = {};
+  let systemData: any = {};
+  let designerData: any = {};
+
+  if (convoId) {
+    const data = await ContextResolver.resolveExactPaths(convoId, [
+      { fromAgent: 'Planner', select: ['features', 'recommendedTechStack'] },
+      { fromAgent: 'Architect', select: ['modules', 'projectStructure', 'projectConventions'] },
+      { fromAgent: 'System', select: ['database', 'apis'] },
+      { fromAgent: 'Designer', select: ['pages', 'components', 'designSystem', 'navigation', 'interactionDesign'] }
+    ]);
+    plannerData = data.Planner || {};
+    architectData = data.Architect || {};
+    systemData = data.System || {};
+    designerData = data.Designer || {};
+  } else {
+    plannerData = ledger.query('Coder', {
+      fromAgent: 'Planner',
+      select: ['features', 'recommendedTechStack']
+    });
+    architectData = ledger.query('Coder', {
+      fromAgent: 'Architect',
+      select: ['modules', 'projectStructure', 'projectConventions']
+    });
+    systemData = ledger.query('Coder', {
+      fromAgent: 'System',
+      select: ['database', 'apis']
+    });
+    designerData = ledger.query('Coder', {
+      fromAgent: 'Designer',
+      select: ['pages', 'components', 'designSystem', 'navigation', 'interactionDesign']
+    });
+  }
 
   // Read previously generated code files from the ledger
   const generatedCode: Record<string, string> = ledger.read('coder') || {};

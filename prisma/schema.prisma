@@ -7,15 +7,34 @@ generator client {
 }
 
 model Conversation {
-  id              String             @id @default(uuid())
-  title           String
-  status          String // "Active", "Completed", "Paused"
-  currentStage    String // "Queen", "Planner", etc.
-  createdAt       DateTime           @default(now())
-  updatedAt       DateTime           @updatedAt
-  outputs         AgentOutput[]
-  history         ExecutionHistory[]
-  executiveMemory ExecutiveMemory?
+  id                  String                 @id @default(uuid())
+  title               String
+  status              String                 // "Active", "Completed", "Paused"
+  currentStage        String                 // "Queen", "Planner", etc.
+  qualityGateOverride Boolean                @default(false)
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  outputs             AgentOutput[]
+  history             ExecutionHistory[]
+  executiveMemory     ExecutiveMemory?
+
+  // NEW Graph & Ledger Relations
+  nodes               GraphNode[]
+  edges               GraphEdge[]
+  stageLogs           StageExecutionLog[]
+  correlations        Correlation[]
+
+  // Dedicated Stage Output Relations
+  queenOutput         QueenStageOutput?
+  plannerOutput       PlannerStageOutput?
+  architectOutput     ArchitectStageOutput?
+  systemOutput        SystemStageOutput?
+  designerOutput      DesignerStageOutput?
+  blueprinterOutput   BlueprinterStageOutput?
+  testerOutput        TesterStageOutput?
+  debuggerOutput      DebuggerStageOutput?
+  reviewerOutput      ReviewerStageOutput?
+  securityOutput      SecurityStageOutput?
 }
 
 model AgentOutput {
@@ -26,8 +45,8 @@ model AgentOutput {
   stage          String
   schemaVersion  String
   model          String
-  validatedJson  String // Store stringified JSON
-  executionTime  Int // in ms
+  validatedJson  String       // Store stringified JSON
+  executionTime  Int          // in ms
   tokenUsage     Int
   attempt        Int
   createdAt      DateTime     @default(now())
@@ -39,8 +58,8 @@ model AgentIndex {
   conversationId String
   outputId       String
   output         AgentOutput @relation(fields: [outputId], references: [id], onDelete: Cascade)
-  path           String // e.g. "Planner.features"
-  value          String // Stringified JSON value
+  path           String      // e.g. "Planner.features"
+  value          String      // Stringified JSON value
   createdAt      DateTime    @default(now())
 }
 
@@ -49,8 +68,8 @@ model ExecutionHistory {
   conversationId String
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   stage          String
-  status         String // "Success", "Failed", "Retrying"
-  logs           String // Stringified array of logs or raw text logs
+  status         String       // "Success", "Failed", "Retrying"
+  logs           String       // Stringified array of logs or raw text logs
   createdAt      DateTime     @default(now())
 }
 
@@ -58,7 +77,313 @@ model ExecutiveMemory {
   id             String       @id @default(uuid())
   conversationId String       @unique
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  state          String // Stringified JSON state containing taskSpec, planner, etc.
+  state          String       // Stringified JSON state containing taskSpec, planner, etc.
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 }
+
+// ====================================================
+// NEW HYBRID GRAPH-DOCUMENT LEDGER TABLES
+// ====================================================
+
+model GraphNode {
+  id             String       @id // Format: "${conversationId}:${rawNodeId}"
+  conversationId String
+  type           String       // TASK_SPEC, FEATURE, MODULE, API_ENDPOINT, UI_COMPONENT, TEST_SPEC, UNSTRUCTURED_BLOB
+  title          String
+  summary        String?
+  payload        String       // Stringified JSON Document
+  version        Int          @default(1)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  outgoingEdges  GraphEdge[]  @relation("SourceEdges")
+  incomingEdges  GraphEdge[]  @relation("TargetEdges")
+
+  @@index([conversationId, type])
+}
+
+model GraphEdge {
+  id             String       @id @default(uuid())
+  conversationId String
+  sourceNodeId   String
+  targetNodeId   String
+  type           String       // IMPLEMENTS, DEPENDS_ON, EXPOSES, CALLS, TESTS, BELONGS_TO
+  metadata       String?      // Optional edge properties JSON
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sourceNode     GraphNode    @relation("SourceEdges", fields: [sourceNodeId], references: [id], onDelete: Cascade)
+  targetNode     GraphNode    @relation("TargetEdges", fields: [targetNodeId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, sourceNodeId, targetNodeId, type])
+  @@index([conversationId, sourceNodeId])
+  @@index([conversationId, targetNodeId])
+}
+
+model StageExecutionLog {
+  id             String       @id @default(uuid())
+  conversationId String
+  stageName      String       // Queen, Planner, Architect, System, Designer, Tester, Coder, etc.
+  repairLoops    Int          @default(0)
+  rawOutput      String
+  status         String       // SUCCESS, FUZZY_REPAIRED, FAILED
+  errorMessage   String?
+  sequence       Int          @default(0)
+  createdAt      DateTime     @default(now())
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+}
+
+// ====================================================
+// NEW DEDICATED PER-STAGE OUTFLOW TABLES
+// ====================================================
+
+model QueenStageOutput {
+  id                   String       @id @default(uuid())
+  conversationId       String       @unique
+  projectId            String?
+  projectName          String
+  problemStatement     String?
+  projectDescription   String?
+  goal                 String?
+  projectType          String?
+  summary              String?
+  targetUsers          String?
+  platforms            String?
+  deploymentTarget     String?
+  mvpIncludedScope     String?
+  mvpExcludedScope     String?
+  futureScope          String?
+  technicalConstraints String?
+  businessConstraints  String?
+  platformConstraints  String?
+  legalConstraints     String?
+  otherConstraints     String?
+  budget               String?
+  timeline             String?
+  assumptions          String?
+  risks                String?
+  metadata             String?
+  version              String?      @default("1.0.0")
+  status               String?      @default("APPROVED")
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  conversation         Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+}
+
+model PlannerStageOutput {
+  id                        String       @id @default(uuid())
+  conversationId       String       @unique
+  frontendFramework         String?
+  frontendLanguage          String?
+  frontendStyling           String?
+  frontendStateManagement   String?
+  frontendRouting           String?
+  frontendBuildTool         String?
+  backendFramework          String?
+  backendLanguage           String?
+  backendRuntime            String?
+  databaseType              String?
+  databaseProvider          String?
+  databaseOrm               String?
+  authRequired              Boolean?     @default(true)
+  authStrategy              String?
+  authenticationTech        String?
+  deploymentTech            String?
+  deploymentFrontend        String?
+  deploymentBackend         String?
+  deploymentDatabase        String?
+  additionalTechnologies    String?
+  features                  String?
+  functionalRequirements    String?
+  nonFunctionalRequirements String?
+  acceptanceCriteria        String?
+  metadata                  String?
+  version                   String?      @default("1.0.0")
+  status                    String?      @default("APPROVED")
+  createdAt                 DateTime     @default(now())
+  updatedAt                 DateTime     @updatedAt
+
+  conversation              Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+}
+
+model ArchitectStageOutput {
+  id                    String       @id @default(uuid())
+  conversationId       String       @unique
+  architectureStyle     String?
+  architectureReasoning String?
+  modules               String?
+  projectStructure      String?
+  sharedResources       String?
+  moduleDependencies    String?
+  projectConventions    String?
+  metadata              String?
+  version               String?      @default("1.0.0")
+  status                String?      @default("APPROVED")
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  conversation          Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+}
+
+model SystemStageOutput {
+  id                   String       @id @default(uuid())
+  conversationId       String       @unique
+  databaseType         String?
+  databaseEntities     String?
+  apis                 String?
+  services             String?
+  middleware           String?
+  configuration        String?
+  validationRules      String?
+  businessRules        String?
+  metadata             String?
+  version              String?      @default("1.0.0")
+  status               String?      @default("APPROVED")
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  conversation         Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+}
+
+model DesignerStageOutput {
+  id                   String       @id @default(uuid())
+  conversationId       String       @unique
+  designStyle          String?
+  theme                String?
+  colorPalette         String?
+  typography           String?
+  spacing              String?
+  iconography          String?
+  responsiveStrategy   String?
+  navigationType       String?
+  navigationEntryPoint String?
+  navigationFlows      String?
+  pages                String?
+  components           String?
+  interactionDesign    String?
+  accessibility        String?
+  metadata             String?
+  version              String?      @default("1.0.0")
+  status               String?      @default("APPROVED")
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  conversation         Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+}
+
+model TesterStageOutput {
+  id             String       @id @default(uuid())
+  conversationId String       @unique
+  summary        String?
+  overallStatus  String?
+  totalTests     Int?         @default(0)
+  passedTests    Int?         @default(0)
+  failedTests    Int?         @default(0)
+  skippedTests   Int?         @default(0)
+  coverage       String?
+  testCases      String?
+  defects        String?
+  generatedTests String?
+  metadata       String?
+  version        String?      @default("1.0.0")
+  status         String?      @default("COMPLETED")
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+}
+
+model BlueprinterStageOutput {
+  id             String       @id @default(uuid())
+  conversationId String       @unique
+  reasoning      String?
+  blueprints     String?      // Stringified JSON array of blueprints
+  metadata       String?      // Optional unmapped extra properties
+  version        String?      @default("1.0.0")
+  status         String?      @default("COMPLETED")
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+}
+
+model DebuggerStageOutput {
+  id             String       @id @default(uuid())
+  conversationId String       @unique
+  summary        String?      // Stringified JSON
+  fixes          String?      // Stringified JSON
+  generatedFiles String?      // Stringified JSON
+  validation     String?      // Stringified JSON
+  metadata       String?      // Stringified JSON
+  version        String?      @default("1.0.0")
+  status         String?      @default("COMPLETED")
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+}
+
+model ReviewerStageOutput {
+  id                  String       @id @default(uuid())
+  conversationId      String       @unique
+  summary             String?      // Stringified JSON
+  requirementCoverage String?      // Stringified JSON
+  architectureReview  String?      // Stringified JSON
+  codeQuality         String?      // Stringified JSON
+  findings            String?      // Stringified JSON
+  strengths           String?      // Stringified JSON
+  recommendations     String?      // Stringified JSON
+  qualityScore        Int?         @default(0)
+  annotations         String?      // Stringified JSON
+  metadata            String?      // Stringified JSON
+  version             String?      @default("1.0.0")
+  status              String?      @default("COMPLETED")
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  conversation        Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+}
+
+model SecurityStageOutput {
+  id                   String       @id @default(uuid())
+  conversationId       String       @unique
+  summary              String?      // Stringified JSON
+  securityRequirements String?      // Stringified JSON
+  securityChecks       String?      // Stringified JSON
+  vulnerabilities      String?      // Stringified JSON
+  securityStrengths    String?      // Stringified JSON
+  recommendations      String?      // Stringified JSON
+  metadata             String?      // Stringified JSON
+  version              String?      @default("1.0.0")
+  status               String?      @default("COMPLETED")
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  conversation         Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+}
+
+// ====================================================
+// CANONICAL CORRELATION INDEX TABLE
+// ====================================================
+
+model Correlation {
+  id              String       @id @default(uuid())
+  correlationCode String       @unique // e.g. Q-822ca-i0001
+  conversationId  String
+  agentCode       String       // Q, P, A, BA, UI, B, T, D, R, S
+  sequence        Int          @default(1)
+  stage           String       // Queen, Planner, Architect, System, Designer, Blueprinter, Tester, Debugger, Reviewer, Security
+  stageOutputId   String
+  schemaVersion   String       @default("1.0")
+  status          String       @default("ACTIVE") // ACTIVE, SUPERSEDED, INVALIDATED, FAILED
+  createdAt       DateTime     @default(now())
+
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, agentCode, sequence])
+  @@index([conversationId, status])
+}
+

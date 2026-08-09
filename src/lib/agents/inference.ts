@@ -1,4 +1,12 @@
 import { prisma } from '../db';
+
+// Ensure localhost bypasses any system proxies so Ollama connections aren't intercepted
+if (!process.env.no_proxy) {
+  process.env.no_proxy = 'localhost,127.0.0.1,::1';
+} else if (!process.env.no_proxy.includes('localhost')) {
+  process.env.no_proxy += ',localhost,127.0.0.1,::1';
+}
+
 const undici = typeof window === 'undefined' ? require('undici') : null;
 const undiciAgent = undici ? undici.Agent : null;
 const undiciFetch = undici ? undici.fetch : fetch;
@@ -35,7 +43,7 @@ import path from 'path';
 export async function getLLMConfig() {
   const defaults = {
     provider: process.env.LLM_PROVIDER || 'ollama', // 'ollama' | 'openai' | 'anthropic'
-    ollamaHost: process.env.OLLAMA_HOST || 'http://localhost:11434',
+    ollamaHost: process.env.OLLAMA_HOST || 'http://127.0.0.1:11434',
     ollamaModel: process.env.OLLAMA_MODEL || 'llama3:8b-instruct',
     openaiApiKey: process.env.OPENAI_API_KEY || '',
     openaiModel: process.env.OPENAI_MODEL || 'gpt-4o-mini',
@@ -56,24 +64,33 @@ export async function getLLMConfig() {
 
   // Model fallback check: verify if the configured model is installed
   if (config.provider === 'ollama') {
-    try {
-      const res = await fetch(`${config.ollamaHost}/api/tags`, {
-        method: 'GET',
-        cache: 'no-store',
-        signal: AbortSignal.timeout(2000),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data && Array.isArray(data.models) && data.models.length > 0) {
-          const installedModelNames = data.models.map((m: any) => m.name);
-          if (!installedModelNames.includes(config.ollamaModel)) {
-            // Configured model not found, fallback to the first installed model
-            config.ollamaModel = installedModelNames[0];
+    const hostsToTry = [config.ollamaHost];
+    if (config.ollamaHost.includes('localhost')) {
+      hostsToTry.push(config.ollamaHost.replace('localhost', '127.0.0.1'));
+    }
+
+    for (const h of hostsToTry) {
+      try {
+        const res = await fetch(`${h}/api/tags`, {
+          method: 'GET',
+          cache: 'no-store',
+          signal: AbortSignal.timeout(2000),
+        });
+        if (res.ok) {
+          config.ollamaHost = h;
+          const data = await res.json();
+          if (data && Array.isArray(data.models) && data.models.length > 0) {
+            const installedModelNames = data.models.map((m: any) => m.name);
+            if (!installedModelNames.includes(config.ollamaModel)) {
+              // Configured model not found, fallback to the first installed model
+              config.ollamaModel = installedModelNames[0];
+            }
           }
+          break;
         }
+      } catch (e) {
+        // Endpoint is offline on this host, try fallback
       }
-    } catch (e) {
-      // Endpoint is offline, keep default model name config
     }
   }
 
@@ -81,16 +98,24 @@ export async function getLLMConfig() {
 }
 
 export async function checkOllamaConnection(host: string): Promise<boolean> {
-  try {
-    const res = await fetch(`${host}/api/tags`, {
-      method: 'GET',
-      cache: 'no-store',
-      signal: AbortSignal.timeout(3000), // 3 second timeout
-    });
-    return res.ok;
-  } catch (e) {
-    return false;
+  const hostsToTry = [host];
+  if (host.includes('localhost')) {
+    hostsToTry.push(host.replace('localhost', '127.0.0.1'));
   }
+
+  for (const h of hostsToTry) {
+    try {
+      const res = await fetch(`${h}/api/tags`, {
+        method: 'GET',
+        cache: 'no-store',
+        signal: AbortSignal.timeout(3000), // 3 second timeout
+      });
+      if (res.ok) return true;
+    } catch (e) {
+      // Continue to next host attempt
+    }
+  }
+  return false;
 }
 
 export async function runInference(

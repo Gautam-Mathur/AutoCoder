@@ -34,14 +34,14 @@ export function calculateTokenBudget(
     breakdown.featuresCount = featuresCount;
     breakdown.formulaApplied = '16384 + (featuresCount * 1024)';
   } 
-  else if (agentName === 'Architect' || agentName === 'SystemsArchitect') {
+  else if (agentName === 'Architect') {
     const planner = ledger.read('planner');
     const featuresCount = planner?.features?.length || 0;
     budget = 16384 + (featuresCount * 1024);
     breakdown.featuresCount = featuresCount;
     breakdown.formulaApplied = '16384 + (featuresCount * 1024)';
   }
-  else if (agentName === 'System' || agentName === 'BackendArchitect' || agentName === 'Designer' || agentName === 'UIUXArchitect') {
+  else if (agentName === 'System' || agentName === 'Designer') {
     const planner = ledger.read('planner');
     const featuresCount = planner?.features?.length || 0;
     const architect = ledger.read('architect');

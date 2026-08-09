@@ -246,7 +246,18 @@ export const schema = {
   required: ['database', 'apis', 'services']
 };
 
+import { ContextResolver } from '../contextResolver';
+
 export async function getContext(ledger: StageLedger): Promise<string> {
+  const convoId = (ledger as any).conversationId;
+  if (convoId) {
+    const data = await ContextResolver.resolveExactPaths(convoId, [
+      { fromAgent: 'Queen', select: ['projectName', 'projectGoal', 'constraints'] },
+      { fromAgent: 'Planner', select: ['recommendedTechStack', 'features', 'functionalRequirements', 'nonFunctionalRequirements.security', 'nonFunctionalRequirements.reliability'] },
+      { fromAgent: 'Architect', select: ['modules', 'projectStructure.files'] }
+    ]);
+    return JSON.stringify({ Queen: data.Queen, Planner: data.Planner, Architect: data.Architect }, null, 2);
+  }
   const queenData = ledger.query('System', {
     fromAgent: 'Queen',
     select: ['projectName', 'projectGoal', 'constraints']

@@ -191,7 +191,24 @@ export const schema = {
   required: ['summary', 'fixes']
 };
 
+import { ContextResolver } from '../contextResolver';
+
 export async function getContext(ledger: StageLedger): Promise<string> {
+  const convoId = (ledger as any).conversationId;
+  if (convoId) {
+    const data = await ContextResolver.resolveExactPaths(convoId, [
+      { fromAgent: 'Queen', select: ['projectGoal', 'constraints'] },
+      { fromAgent: 'Planner', select: ['features'] },
+      { fromAgent: 'Tester', select: ['defects'] }
+    ]);
+    const coderData = ledger.read('coder') || {};
+    return JSON.stringify({
+      Queen: data.Queen,
+      Planner: data.Planner,
+      Tester: data.Tester,
+      Coder: coderData
+    }, null, 2);
+  }
   const queenData = ledger.query('Debugger', {
     fromAgent: 'Queen',
     select: ['projectGoal', 'constraints']

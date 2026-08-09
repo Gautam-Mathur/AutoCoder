@@ -222,7 +222,22 @@ export const schema = {
   required: ['summary', 'defects']
 };
 
+import { ContextResolver } from '../contextResolver';
+
 export async function getContext(ledger: StageLedger): Promise<string> {
+  const convoId = (ledger as any).conversationId;
+  if (convoId) {
+    const data = await ContextResolver.resolveExactPaths(convoId, [
+      { fromAgent: 'Queen', select: ['projectGoal', 'constraints'] },
+      { fromAgent: 'Planner', select: ['features', 'functionalRequirements', 'nonFunctionalRequirements'] }
+    ]);
+    const coderData = ledger.read('coder') || {};
+    return JSON.stringify({
+      Queen: data.Queen,
+      Planner: data.Planner,
+      Coder: coderData
+    }, null, 2);
+  }
   const queenData = ledger.query('Tester', {
     fromAgent: 'Queen',
     select: ['projectGoal', 'constraints']

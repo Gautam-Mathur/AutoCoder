@@ -114,7 +114,7 @@ export default function TopAppBar() {
         </div>
 
         {/* Global actions */}
-        {activeId && pipelineStatus === 'Paused' && (currentStage === 'Architect' || currentStage === 'SystemsArchitect') && (
+        {activeId && pipelineStatus === 'Paused' && currentStage === 'Architect' && (
           <div className="flex gap-2 border-l border-slate-700 pl-4">
             <button className="border border-slate-700 text-on-surface px-4 py-1.5 rounded text-xs font-bold hover:bg-slate-900 transition-colors flex items-center gap-1">
               <Power className="w-3.5 h-3.5 text-red-500" /> Halt Pipeline

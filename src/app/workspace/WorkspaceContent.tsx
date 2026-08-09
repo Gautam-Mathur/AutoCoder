@@ -277,20 +277,15 @@ export default function WorkspaceContent() {
       const parsed = safeParseJson(o.validatedJson);
       if (parsed) {
         outputsMap[o.agentName] = parsed;
-        if (o.agentName === 'SystemsArchitect') outputsMap['Architect'] = parsed;
-        if (o.agentName === 'BackendArchitect') outputsMap['System'] = parsed;
-        if (o.agentName === 'UIUXArchitect') outputsMap['Designer'] = parsed;
-        if (o.agentName === 'VerificationAgent') outputsMap['Reviewer'] = parsed;
-        if (o.agentName === 'SecurityAuditor') outputsMap['Security'] = parsed;
       }
     });
     setAgentOutputs((prev) => ({ ...prev, ...outputsMap }));
 
     // Extrapolate outputs
     const plannerOut = outputs.find((o) => o.agentName === 'Planner');
-    const archOut = outputs.find((o) => o.agentName === 'Architect' || o.agentName === 'SystemsArchitect');
-    const sysOut = outputs.find((o) => o.agentName === 'System' || o.agentName === 'BackendArchitect');
-    const designerOut = outputs.find((o) => o.agentName === 'Designer' || o.agentName === 'UIUXArchitect');
+    const archOut = outputs.find((o) => o.agentName === 'Architect');
+    const sysOut = outputs.find((o) => o.agentName === 'System');
+    const designerOut = outputs.find((o) => o.agentName === 'Designer');
     const coderOutputs = outputs.filter((o) => o.agentName === 'Coder');
 
     if (plannerOut) {
@@ -723,13 +718,7 @@ export default function WorkspaceContent() {
       data = data.parsedJson;
     }
 
-    const normalizedAgent = agentName === 'SystemsArchitect' ? 'Architect' :
-      agentName === 'BackendArchitect' ? 'System' :
-      agentName === 'UIUXArchitect' ? 'Designer' :
-      agentName === 'VerificationAgent' ? 'Reviewer' :
-      agentName === 'SecurityAuditor' ? 'Security' : agentName;
-
-    switch (normalizedAgent) {
+    switch (agentName) {
       case 'Queen': {
         if (data.contextType === 'validationError' || data.status === 'Rejected') {
           return (
@@ -1604,7 +1593,7 @@ export default function WorkspaceContent() {
         )}
 
         {/* Approval Gate Overlay Card */}
-        {pipelineStatus === 'Paused' && (currentStage === 'Architect' || currentStage === 'SystemsArchitect') && (
+        {pipelineStatus === 'Paused' && currentStage === 'Architect' && (
           <div className="absolute inset-x-0 bottom-36 z-50 flex justify-center px-4 pointer-events-none">
             <div className="glass-panel w-full max-w-lg p-4 rounded-xl shadow-[0_0_30px_rgba(99,102,241,0.2)] flex flex-col gap-3 pointer-events-auto animate-slide-up">
               <div className="flex items-start justify-between">

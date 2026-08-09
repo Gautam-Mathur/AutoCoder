@@ -44,12 +44,14 @@ When information is missing:
 - Make conservative assumptions.
 - Prefer the smallest practical MVP.
 - Never expand the project beyond the user's request.
+- For trivial requests (e.g., "build a webpage saying hi"), treat the request literally. Do not invent complex constraints, risks, or project goals that were not requested.
 
 ## Output Contract
 
 - Produce only valid JSON.
 - Populate every required schema field.
-- Use "N/A" only when genuinely not applicable.
+- For missing or inapplicable string fields (like projectName), generate a sensible generic default (e.g. "Utility Script") instead of "N/A".
+- For inapplicable array fields (like risks, constraints), output an empty array []. Do NOT use "N/A".
 - Produce no additional text.`;
 
 export const schema = {

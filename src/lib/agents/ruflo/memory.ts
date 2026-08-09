@@ -32,36 +32,21 @@ export const OWNERSHIP = Object.freeze({
   Queen:             ['taskSpec'],
   Planner:           ['planner'],
   Architect:         ['architect'],
-  SystemsArchitect:  ['architect'],
   System:            ['system'],
-  BackendArchitect:  ['system'],
   Designer:          ['designer'],
-  UIUXArchitect:     ['designer'],
   Blueprinter:       ['blueprinter'],
   Coder:             ['coder'],
   Debugger:          ['debugger'],
   Security:          ['security'],
-  SecurityAuditor:   ['security'],
   Reviewer:          ['reviewer'],
-  VerificationAgent: ['reviewer'],
   Tester:            ['tester'],
 });
 
+import { ContextResolver } from './contextResolver';
+import { CorrelationService } from './correlationService';
+
 export async function loadExecutiveMemory(conversationId: string): Promise<MemoryState> {
-  const record = await prisma.executiveMemory.findUnique({
-    where: { conversationId },
-  });
-
-  if (record) {
-    const parsed = JSON.parse(record.state);
-    return {
-      ...parsed,
-      fileStateHistory: parsed.fileStateHistory || {},
-    };
-  }
-
-  // Initial skeleton
-  return {
+  const skeleton: MemoryState = {
     originalPrompt: '',
     taskSpec: null,
     planner: null,
@@ -79,14 +64,41 @@ export async function loadExecutiveMemory(conversationId: string): Promise<Memor
     fileStateHistory: {},
     decisions: [],
   };
+
+  try {
+    const resolved = await ContextResolver.resolveExactPaths(conversationId, [
+      { fromAgent: 'Queen', select: ['projectName', 'problemStatement', 'projectDescription', 'projectGoal', 'mvpScope', 'constraints', 'risks'] },
+      { fromAgent: 'Planner', select: ['recommendedTechStack', 'features', 'functionalRequirements', 'nonFunctionalRequirements', 'acceptanceCriteria'] },
+      { fromAgent: 'Architect', select: ['architectureStyle', 'modules', 'projectStructure', 'sharedResources', 'moduleDependencies', 'projectConventions'] },
+      { fromAgent: 'System', select: ['database', 'apis', 'services', 'middleware', 'configuration', 'validationRules', 'businessRules'] },
+      { fromAgent: 'Designer', select: ['theme', 'colorPalette', 'typography', 'spacing', 'iconography', 'navigationFlows', 'pages', 'components', 'interactionDesign', 'accessibility'] },
+      { fromAgent: 'Blueprinter', select: ['blueprints'] },
+      { fromAgent: 'Tester', select: ['overallStatus', 'totalTests', 'passedTests', 'failedTests', 'coverage', 'testCases', 'defects'] },
+      { fromAgent: 'Debugger', select: ['summary', 'fixes', 'generatedFiles', 'validation'] },
+      { fromAgent: 'Reviewer', select: ['summary', 'requirementCoverage', 'architectureReview', 'codeQuality', 'findings', 'recommendations', 'qualityScore'] },
+      { fromAgent: 'Security', select: ['summary', 'securityRequirements', 'securityChecks', 'vulnerabilities', 'recommendations'] },
+    ]);
+
+    return {
+      ...skeleton,
+      taskSpec: resolved.Queen || null,
+      planner: resolved.Planner || null,
+      architect: resolved.Architect || null,
+      system: resolved.System || null,
+      designer: resolved.Designer || null,
+      blueprinter: resolved.Blueprinter || null,
+      tester: resolved.Tester || null,
+      debugger: resolved.Debugger || null,
+      reviewer: resolved.Reviewer || null,
+      security: resolved.Security || null,
+    };
+  } catch (err) {
+    return skeleton;
+  }
 }
 
 export async function saveExecutiveMemory(conversationId: string, state: MemoryState) {
-  await prisma.executiveMemory.upsert({
-    where: { conversationId },
-    update: { state: JSON.stringify(state) },
-    create: { conversationId, state: JSON.stringify(state) },
-  });
+  // Safe no-op: Stage outputs are persisted via StagePersistence + CorrelationService
 }
 
 function getNestedValue(obj: any, path: string): any {
@@ -114,6 +126,118 @@ function setNestedValue(obj: any, path: string, value: any): void {
     curr = curr[part];
   }
   curr[parts[parts.length - 1]] = value;
+}
+
+// In-memory node cache for active conversation runs (Flaw 9 & 23)
+const conversationNodeCache = new Map<string, Map<string, any>>();
+
+export class ExecutiveMemoryGateway {
+  static peekProjectInfo(conversationId: string, memoryState: MemoryState) {
+    const safeParse = (val: any, fallback: any) => {
+      if (!val) return fallback;
+      if (typeof val === 'object') return val;
+      try {
+        return JSON.parse(val);
+      } catch {
+        return fallback;
+      }
+    };
+
+    const taskSpec = memoryState.taskSpec || {};
+    const planner = memoryState.planner || {};
+    const architect = memoryState.architect || {};
+    const system = memoryState.system || {};
+    const designer = memoryState.designer || {};
+    const tester = memoryState.tester || {};
+
+    return {
+      projectName: taskSpec.projectName || taskSpec.project?.name || 'Project',
+      problemStatement: taskSpec.problemStatement || '',
+      techStack: {
+        frontend: planner.recommendedTechStack?.frontend || planner.frontendFramework || 'HTML5/JS',
+        backend: planner.recommendedTechStack?.backend || planner.backendFramework || 'Node.js',
+        database: planner.recommendedTechStack?.database || planner.databaseType || 'SQLite',
+      },
+      featuresCount: Array.isArray(planner.features) ? planner.features.length : 0,
+      modulesCount: Array.isArray(architect.modules) ? architect.modules.length : 0,
+      apisCount: Array.isArray(system.apis) ? system.apis.length : 0,
+      componentsCount: Array.isArray(designer.components) ? designer.components.length : 0,
+      testerStatus: tester.overallStatus || 'PENDING',
+    };
+  }
+
+  static async getSubgraph(conversationId: string, rootNodeId: string) {
+    const compositeRootId = `${conversationId}:${rootNodeId}`;
+
+    // Cycle-safe SQLite CTE query (Flaw 4 & 22)
+    const rawNodes: any[] = await prisma.$queryRaw`
+      WITH RECURSIVE graph_cte(id, conversationId, type, title, summary, payload, path) AS (
+        SELECT id, conversationId, type, title, summary, payload, id AS path
+        FROM GraphNode
+        WHERE id = ${compositeRootId} AND conversationId = ${conversationId}
+        
+        UNION ALL
+        
+        SELECT n.id, n.conversationId, n.type, n.title, n.summary, n.payload, c.path || '->' || n.id
+        FROM GraphNode n
+        JOIN GraphEdge e ON e.targetNodeId = n.id AND e.conversationId = n.conversationId
+        JOIN graph_cte c ON c.id = e.sourceNodeId
+        WHERE instr(c.path, n.id) = 0
+      )
+      SELECT DISTINCT id, conversationId, type, title, summary, payload FROM graph_cte;
+    `;
+
+    return rawNodes.map((n) => ({
+      ...n,
+      payload: safeParseJson(n.payload, {}),
+    }));
+  }
+
+  static async handleUpstreamModification(conversationId: string, modifiedStage: string) {
+    const normalized = modifiedStage.toLowerCase();
+    const downstreamStages: string[] = [];
+
+    if (normalized === 'queen') {
+      downstreamStages.push('planner', 'architect', 'system', 'designer', 'tester');
+    } else if (normalized === 'planner') {
+      downstreamStages.push('architect', 'system', 'designer', 'tester');
+    } else if (normalized === 'architect') {
+      downstreamStages.push('system', 'designer', 'tester');
+    } else if (normalized === 'system') {
+      downstreamStages.push('designer', 'tester');
+    } else if (normalized === 'designer') {
+      downstreamStages.push('tester');
+    }
+
+    // Flush in-memory node cache
+    conversationNodeCache.delete(conversationId);
+
+    // Mark downstream correlations as INVALIDATED in DB state machine
+    const agentCode = CorrelationService.getAgentCode(modifiedStage);
+    const downstreamCodes = CorrelationService.getDownstreamAgentCodes(modifiedStage);
+
+    await prisma.$transaction([
+      prisma.graphEdge.deleteMany({ where: { conversationId } }),
+      prisma.graphNode.deleteMany({ where: { conversationId } }),
+      prisma.correlation.updateMany({
+        where: {
+          conversationId,
+          agentCode: { in: downstreamCodes },
+          status: 'ACTIVE',
+        },
+        data: { status: 'INVALIDATED' },
+      }),
+    ]);
+  }
+}
+
+function safeParseJson<T>(val: string | null | undefined, fallback: T): T {
+  if (!val) return fallback;
+  try {
+    return JSON.parse(val) as T;
+  } catch {
+    return fallback;
+  }
 }
 
 export class StageLedger {

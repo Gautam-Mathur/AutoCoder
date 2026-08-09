@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
-import { getLLMConfig } from '@/lib/agents/inference';
+import { getLLMConfig, checkOllamaConnection } from '@/lib/agents/inference';
 import { prisma } from '@/lib/db';
+
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export async function GET() {
   const config = await getLLMConfig();
@@ -10,15 +13,28 @@ export async function GET() {
   let models: string[] = [];
 
   try {
-    const res = await fetch(`${host}/api/tags`, {
-      method: 'GET',
-      signal: AbortSignal.timeout(3000),
-    });
-    if (res.ok) {
-      connected = true;
-      const data = await res.json();
-      if (data && Array.isArray(data.models)) {
-        models = data.models.map((m: any) => m.name);
+    const urlsToTry = [host];
+    if (host.includes('localhost')) {
+      urlsToTry.push(host.replace('localhost', '127.0.0.1'));
+    }
+
+    for (const targetHost of urlsToTry) {
+      try {
+        const res = await fetch(`${targetHost}/api/tags`, {
+          method: 'GET',
+          cache: 'no-store',
+          signal: AbortSignal.timeout(3000),
+        });
+        if (res.ok) {
+          connected = true;
+          const data = await res.json();
+          if (data && Array.isArray(data.models)) {
+            models = data.models.map((m: any) => m.name);
+          }
+          break;
+        }
+      } catch (err) {
+        // Try next host if any
       }
     }
   } catch (e) {

@@ -44,7 +44,6 @@ You must:
 - Design the project structure.
 - Design the directory hierarchy.
 - Define every required file.
-- Assign every file to exactly one module.
 - Define logical module boundaries.
 - Define module responsibilities.
 - Define module dependencies.
@@ -70,12 +69,13 @@ Those responsibilities belong to downstream agents.
 
 When designing the architecture:
 
-- Every feature must be represented by at least one module.
-- Every generated file must belong to exactly one module.
 - Every module must have a clear responsibility.
 - Module dependencies should be explicit and minimal.
 - Prefer simple architectures over unnecessary complexity.
 - Follow conventions appropriate to the selected technology stack.
+- **Entry Point Conventions**:
+  - Web application HTML entry point ('index.html') MUST ALWAYS be placed at the project root ('index.html') or inside 'public/index.html'. NEVER place 'index.html' inside 'src/' or 'src/ui/'.
+  - Config files ('vite.config.js', 'webpack.config.js', 'package.json', 'tsconfig.json') MUST ALWAYS be placed at the project root.
 
 ## Output Contract
 
@@ -179,7 +179,17 @@ export const schema = {
   required: ['architectureStyle', 'modules', 'projectStructure', 'projectConventions']
 };
 
+import { ContextResolver } from '../contextResolver';
+
 export async function getContext(ledger: StageLedger): Promise<string> {
+  const convoId = (ledger as any).conversationId;
+  if (convoId) {
+    const data = await ContextResolver.resolveExactPaths(convoId, [
+      { fromAgent: 'Queen', select: ['projectName', 'projectGoal', 'mvpScope.included', 'constraints'] },
+      { fromAgent: 'Planner', select: ['recommendedTechStack', 'features', 'functionalRequirements', 'nonFunctionalRequirements.performance', 'nonFunctionalRequirements.scalability'] }
+    ]);
+    return JSON.stringify(data, null, 2);
+  }
   const queenData = ledger.query('Architect', {
     fromAgent: 'Queen',
     select: ['projectName', 'projectGoal', 'mvpScope.included', 'constraints']

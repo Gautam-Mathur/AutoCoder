@@ -8,7 +8,6 @@ import fs from 'fs';
 import path from 'path';
 import { exec } from 'child_process';
 import { resolveContext } from './contextResolver';
-import { runDeterministic } from './registry/Blueprinter';
 import { dispatchFailureEvent, executeSpecialistRecovery } from './eventDispatcher';
 import { buildMinimalContext } from './contentAssistant';
 
@@ -239,19 +238,7 @@ export async function runAgent(
     throw new Error(`Unknown agent: ${agentName}`);
   }
 
-  const legacyNameMap: Record<string, string> = {
-    SystemsArchitect: 'Architect',
-    BackendArchitect: 'System',
-    UIUXArchitect: 'Designer',
-    VerificationAgent: 'Reviewer',
-    SecurityAuditor: 'Security',
-  };
-  const legacyAgentName = legacyNameMap[agentName] || agentName;
-
   const onEvent: PipelineEventCallback = (event) => {
-    if (event && event.agent === agentName) {
-      event.agent = legacyAgentName;
-    }
     rawOnEvent(event);
   };
 
@@ -260,14 +247,14 @@ export async function runAgent(
     agent: agentName,
     message: `Agent ${agentName} started (Attempt ${attempt}/3)...`,
   });
-  await writeHistoryLog(conversationId, legacyAgentName, 'Retrying', `Agent ${agentName} started (Attempt ${attempt}/3)...`);
+  await writeHistoryLog(conversationId, agentName, 'Retrying', `Agent ${agentName} started (Attempt ${attempt}/3)...`);
 
   const startTime = Date.now();
   const contextResult = await buildMinimalContext(ledger, agentName, targetFile);
   const contextData = typeof contextResult === 'string' ? contextResult : contextResult.contextText;
   const config = await getLLMConfig();
   const contextStats = typeof contextResult === 'object' ? ` (Context Optimized: ${contextResult.bytesSaved} bytes saved, ${contextResult.reductionRatio}% reduction)` : '';
-  await writeHistoryLog(conversationId, legacyAgentName, 'Retrying', `Active Model: ${config.ollamaModel}. Context payload assembled${contextStats}.`);
+  await writeHistoryLog(conversationId, agentName, 'Retrying', `Active Model: ${config.ollamaModel}. Context payload assembled${contextStats}.`);
 
   const constraintsBlock = `\n\nActive Model Constraints:
 - Output MUST be valid, parseable JSON. Do not include markdown code blocks (e.g. \`\`\`json) in the raw response, return raw text representing JSON.
@@ -305,7 +292,7 @@ Original Instruction:
   });
   await writeHistoryLog(
     conversationId,
-    legacyAgentName,
+    agentName,
     'Retrying',
     `Executing LLM inference request on model "${config.ollamaModel}". Dynamic Budget: ${budget} tokens. Timeout: ${Math.round(timeoutMs / 1000)}s.`
   );
@@ -491,7 +478,7 @@ Original Instruction:
         agent: agentName,
         message: `JSON parse failed. Attempting cleanup...`,
       });
-      await writeHistoryLog(conversationId, legacyAgentName, 'Retrying', `JSON parse failed, executing regular expression fallback extraction...`);
+      await writeHistoryLog(conversationId, agentName, 'Retrying', `JSON parse failed, executing regular expression fallback extraction...`);
       let extractedJsonString = '';
       const firstBrace = cleanJsonText.indexOf('{');
       const lastBrace = cleanJsonText.lastIndexOf('}');
@@ -504,7 +491,7 @@ Original Instruction:
         } catch (e) {
           await writeRichTelemetryLog({
             conversationId,
-            agentName: legacyAgentName,
+            agentName: agentName,
             status: 'Failed',
             systemInstructions,
             userContent,
@@ -525,7 +512,7 @@ Original Instruction:
       } else {
         await writeRichTelemetryLog({
           conversationId,
-          agentName: legacyAgentName,
+          agentName: agentName,
           status: 'Failed',
           systemInstructions,
           userContent,
@@ -556,7 +543,7 @@ Original Instruction:
     });
     await writeRichTelemetryLog({
       conversationId,
-      agentName: legacyAgentName,
+      agentName: agentName,
       status: 'Failed',
       systemInstructions,
       userContent,
@@ -586,8 +573,8 @@ Original Instruction:
   // Save to legacy SML tables for backwards-compatibility with telemetry/workspace views
   await writeAgentOutput({
     conversationId,
-    agentName: legacyAgentName,
-    stage: legacyAgentName,
+    agentName: agentName,
+    stage: agentName,
     schemaVersion: '1.0',
     model: config.ollamaModel,
     validatedJson: parsedJson,
@@ -601,17 +588,13 @@ Original Instruction:
     Queen: 'taskSpec',
     Planner: 'planner',
     Architect: 'architect',
-    SystemsArchitect: 'architect',
     System: 'system',
-    BackendArchitect: 'system',
     Designer: 'designer',
-    UIUXArchitect: 'designer',
+    Blueprinter: 'blueprinter',
     Coder: 'coder',
     Debugger: 'debugger',
     Security: 'security',
-    SecurityAuditor: 'security',
     Reviewer: 'reviewer',
-    VerificationAgent: 'reviewer',
     Tester: 'tester',
   };
   const field = fieldMap[agentName];
@@ -642,7 +625,7 @@ Original Instruction:
 
   await writeRichTelemetryLog({
     conversationId,
-    agentName: legacyAgentName,
+    agentName: agentName,
     status: 'Success',
     systemInstructions,
     userContent,
@@ -862,27 +845,17 @@ export async function runOrchestrator(
     const pipelineStages = [
       'Queen',
       'Planner',
-      'SystemsArchitect',
-      'BackendArchitect',
-      'UIUXArchitect',
+      'Architect',
+      'System',
+      'Designer',
       'Blueprinter',
       'Coder',
       'Tester',
-      'VerificationAgent',
-      'SecurityAuditor'
+      'Security',
+      'Reviewer'
     ];
 
-    const legacyStageMap: Record<string, string> = {
-      Architect: 'SystemsArchitect',
-      System: 'BackendArchitect',
-      Designer: 'UIUXArchitect',
-      Reviewer: 'VerificationAgent',
-      Security: 'SecurityAuditor',
-      Debugger: 'Tester'
-    };
-    const mappedStage = legacyStageMap[currentStage] || currentStage;
-
-    let startIndex = pipelineStages.indexOf(mappedStage);
+    let startIndex = pipelineStages.indexOf(currentStage);
     if (startIndex === -1) {
       startIndex = 0;
     }
@@ -903,12 +876,12 @@ export async function runOrchestrator(
 
     if (stage === 'Blueprinter') {
       // ----------------------------------------------------
-      // SPECIAL STAGE: Blueprinter (Deterministic Engine)
+      // SPECIAL STAGE: Blueprinter (LLM Dependency & Contract Engine)
       // ----------------------------------------------------
       onEvent({
         type: 'AGENT_START',
         agent: 'Blueprinter',
-        message: 'Running deterministic Blueprint Engine...'
+        message: 'Running Blueprinter (LLM Dependency & Contract Engine)...'
       });
 
       // 1. Run Conflict Resolver
@@ -936,36 +909,18 @@ export async function runOrchestrator(
         await writeHistoryLog(conversationId, 'System', 'Success', 'Context Resolver check passed cleanly with 0 specification conflicts.');
       }
 
-      // 2. Run Blueprinter deterministically
+      // 2. Run Blueprinter via LLM inference
       try {
-        const bpStartTime = Date.now();
-        await writeHistoryLog(conversationId, 'Blueprinter', 'Retrying', 'Running deterministic Blueprint Engine module graph solver...');
-        const bpOutput = await runDeterministic(ledger);
-        const bpDuration = Date.now() - bpStartTime;
-        const blueprintCount = Array.isArray(bpOutput?.blueprints) ? bpOutput.blueprints.length : 0;
-        
-        // Write to legacy SML tables for compatibility
-        await writeAgentOutput({
+        output = await runAgent(
           conversationId,
-          agentName: 'Blueprinter',
-          stage: 'Blueprinter',
-          schemaVersion: '1.0',
-          model: 'deterministic-service',
-          validatedJson: bpOutput,
-          executionTime: bpDuration,
-          tokenUsage: 0,
-          attempt: 1,
-        });
-
-        await ledger.write('Blueprinter', 'blueprinter', bpOutput);
-
-        await writeHistoryLog(conversationId, 'Blueprinter', 'Success', `Blueprint Engine compiled ${blueprintCount} file blueprints deterministically in ${bpDuration}ms.`);
-
-        onEvent({
-          type: 'AGENT_COMPLETE',
-          agent: 'Blueprinter',
-          message: `Blueprinter completed successfully. Created ${blueprintCount} file blueprint manifests.`
-        });
+          'Blueprinter',
+          actualPrompt,
+          onEvent,
+          ledger,
+          1,
+          undefined,
+          signal
+        );
       } catch (err: any) {
         onEvent({
           type: 'PIPELINE_ERROR',
@@ -1554,7 +1509,7 @@ Ensure you write complete source code matching these specs. Do not truncate.`;
         }
       }
 
-    } else if (stage === 'Security' || stage === 'SecurityAuditor') {
+    } else if (stage === 'Security') {
       // ----------------------------------------------------
       // SPECIAL STAGE: Security Scanner (Map-Reduce)
       // ----------------------------------------------------
@@ -1747,10 +1702,10 @@ Perform a security review strictly for this file. Identify potential vulnerabili
           attempt: 1,
         });
         await ledger.write('Security', 'security', finalReport);
-        await writeHistoryLog(conversationId, 'Security', 'Success', `SecurityAuditor completed full map-reduce audit and security scan.`);
+        await writeHistoryLog(conversationId, 'Security', 'Success', `Security completed full map-reduce audit and security scan.`);
       }
 
-    } else if (stage === 'Reviewer' || stage === 'VerificationAgent') {
+    } else if (stage === 'Reviewer') {
       // ----------------------------------------------------
       // SPECIAL STAGE: Reviewer Scanner (Map-Reduce)
       // ----------------------------------------------------
@@ -2019,16 +1974,16 @@ Review this file for quality, completeness, spec alignment, and bugs. Assign a q
       }
     }
 
-    if (stage === 'SystemsArchitect') {
+    if (stage === 'Architect') {
       await prisma.conversation.update({
         where: { id: conversationId },
-        data: { status: 'Paused', currentStage: 'SystemsArchitect' },
+        data: { status: 'Paused', currentStage: 'Architect' },
       });
       onEvent({
         type: 'PAUSE_APPROVAL_GATE',
-        message: `Pipeline paused at Approval Gate (SystemsArchitect Review completed). Awaiting user approval to generate code.`,
+        message: `Pipeline paused at Approval Gate (Architect Review completed). Awaiting user approval to generate code.`,
       });
-      await writeHistoryLog(conversationId, 'System', 'Success', 'Pipeline paused at SystemsArchitect Approval Gate. Awaiting user approval to generate code.');
+      await writeHistoryLog(conversationId, 'System', 'Success', 'Pipeline paused at Architect Approval Gate. Awaiting user approval to generate code.');
       return;
     }
 

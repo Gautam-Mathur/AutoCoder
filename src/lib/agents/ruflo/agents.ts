@@ -30,12 +30,5 @@ export const AGENT_DEFS: Record<string, AgentDef> = {
   Tester,
   Debugger,
   Security,
-  Reviewer,
-
-  // RuFlo target architecture stage aliases mapping
-  SystemsArchitect: Architect,
-  BackendArchitect: System,
-  UIUXArchitect: Designer,
-  VerificationAgent: Reviewer,
-  SecurityAuditor: Security
+  Reviewer
 };

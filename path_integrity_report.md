@@ -19,7 +19,7 @@ We executed an automated static analysis check scanning all source files (`.ts`,
 
 ## 2. Directory Tree Integrity
 
-All core engine modules under [ruflo/](file:///home/lenovo/Downloads/autocoder-redone-/src/lib/agents/ruflo/) are in place and correctly cross-reference each other:
+All core engine modules under [ruflo/](file:///home/lenovo/autogod/src/lib/agents/ruflo/) are in place and correctly cross-reference each other:
 
 ```
 src/lib/agents/ruflo/
@@ -42,7 +42,7 @@ src/lib/agents/ruflo/
 
 The analysis identified only one import that does not resolve statically, which is expected behavior:
 
-#### [orchestrator.ts:L671](file:///home/lenovo/Downloads/autocoder-redone-/src/lib/agents/ruflo/orchestrator.ts#L671)
+#### [orchestrator.ts:L671](file:///home/lenovo/autogod/src/lib/agents/ruflo/orchestrator.ts#L671)
 ```typescript
 try {
   const taskRoutes = require('./routes/taskRoutes');
