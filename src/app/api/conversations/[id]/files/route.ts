@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
+import { listVirtualFiles } from '@/lib/agents/ruflo/vfs';
 
 function getFilesRecursively(dir: string, baseDir: string = dir): string[] {
   let results: string[] = [];
@@ -28,14 +29,21 @@ export async function GET(
 ) {
   try {
     const { id } = await context.params;
-    const projectDir = path.join(process.cwd(), 'projects', id);
+    const fileSet = new Set<string>();
 
-    if (!fs.existsSync(projectDir)) {
-      return NextResponse.json([]);
+    // 1. Fetch VFS Virtual Workspace files
+    const virtualFiles = await listVirtualFiles(id);
+    virtualFiles.forEach((f) => fileSet.add(f));
+
+    // 2. Fetch Physical Disk Workspace files
+    const projectDir = path.join(process.cwd(), 'projects', id);
+    if (fs.existsSync(projectDir)) {
+      const diskFiles = getFilesRecursively(projectDir);
+      diskFiles.forEach((f) => fileSet.add(f));
     }
 
-    const files = getFilesRecursively(projectDir);
-    return NextResponse.json(files);
+    const sortedFiles = Array.from(fileSet).sort();
+    return NextResponse.json(sortedFiles);
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }

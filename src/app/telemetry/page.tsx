@@ -202,8 +202,11 @@ export default function TelemetryDashboard() {
 
   const filteredLogs = logsList
     .filter((log) => {
-      if (filter === 'SUCCESS' && log.status !== 'Success') return false;
-      if (filter === 'FAILED' && log.status !== 'Failed' && log.status !== 'Retrying') return false;
+      const isOk = ['success', 'completed', 'started', 'skipped'].includes((log.status || '').toLowerCase());
+      const isErr = ['failed', 'error', 'rejected'].includes((log.status || '').toLowerCase());
+
+      if (filter === 'SUCCESS' && !isOk) return false;
+      if (filter === 'FAILED' && !isErr) return false;
       if (categoryFilter !== 'ALL' && categorizeLog(log) !== categoryFilter) return false;
 
       if (searchTerm) {
@@ -689,7 +692,9 @@ export default function TelemetryDashboard() {
                 </thead>
                 <tbody className="divide-y divide-slate-800">
                   {filteredLogs.map((log) => {
-                    const isSuccess = log.status === 'Success';
+                    const statusLower = (log.status || '').toLowerCase();
+                    const isSuccess = ['success', 'completed', 'started', 'skipped'].includes(statusLower);
+                    const isFailed = ['failed', 'error', 'rejected'].includes(statusLower);
                     const category = categorizeLog(log);
                     const isSelected = selectedLog && (selectedLog.executionMemory?.stage === log.stage || (selectedLog.thought === log.logs));
                     return (
@@ -712,7 +717,7 @@ export default function TelemetryDashboard() {
                             });
                           }
                         }}
-                        className={`hover:bg-slate-900/30 transition-colors cursor-pointer ${isSelected ? 'bg-indigo-950/20 border-l-2 border-l-indigo-500' : ''} ${!isSuccess && 'bg-red-500/5'}`}
+                        className={`hover:bg-slate-900/30 transition-colors cursor-pointer ${isSelected ? 'bg-indigo-950/20 border-l-2 border-l-indigo-500' : ''} ${isFailed ? 'bg-red-500/5' : ''}`}
                       >
                         <td className="p-3 text-slate-500 whitespace-nowrap">
                           {new Date(log.createdAt).toLocaleTimeString()}
@@ -736,7 +741,7 @@ export default function TelemetryDashboard() {
                         </td>
                         <td className="p-3">
                           <div className="flex items-center gap-2">
-                            <span className={`w-1.5 h-1.5 rounded-full ${isSuccess ? 'bg-electric-indigo' : 'bg-red-500'}`} />
+                            <span className={`w-1.5 h-1.5 rounded-full ${isFailed ? 'bg-red-500' : statusLower === 'started' ? 'bg-blue-400' : statusLower === 'skipped' ? 'bg-amber-400' : 'bg-electric-indigo'}`} />
                             <span className="text-on-surface font-semibold">{log.stage}</span>
                           </div>
                         </td>
@@ -757,12 +762,16 @@ export default function TelemetryDashboard() {
                         </td>
                         <td className="p-3">
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] uppercase font-bold border ${
-                            isSuccess
-                              ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500'
-                              : 'bg-red-500/10 border-red-500/20 text-red-500'
+                            isFailed
+                              ? 'bg-red-500/10 border-red-500/20 text-red-500'
+                              : statusLower === 'started'
+                              ? 'bg-blue-500/10 border-blue-500/20 text-blue-400'
+                              : statusLower === 'skipped'
+                              ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+                              : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500'
                           }`}>
-                            {isSuccess ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
-                            {isSuccess ? 'Success' : 'Error'}
+                            {isFailed ? <XCircle className="w-3 h-3" /> : <CheckCircle className="w-3 h-3" />}
+                            {log.status || 'Completed'}
                           </span>
                         </td>
                       </tr>
@@ -781,7 +790,11 @@ export default function TelemetryDashboard() {
             <div className="p-4 border-b border-slate-850 bg-slate-900/20 flex flex-col gap-1.5">
               <div className="flex justify-between items-center w-full">
                 <h4 className="font-bold text-slate-100 flex items-center gap-2">
-                  <span className={`w-2 h-2 rounded-full ${selectedLog.executionMemory?.status === 'Success' ? 'bg-emerald-400' : 'bg-red-500'}`} />
+                  <span className={`w-2 h-2 rounded-full ${
+                    ['success', 'completed', 'started', 'skipped'].includes((selectedLog.executionMemory?.status || selectedLog.status || 'completed').toLowerCase())
+                      ? 'bg-emerald-400'
+                      : 'bg-red-500'
+                  }`} />
                   Stage: {selectedLog.executionMemory?.stage || 'Unknown'}
                 </h4>
                 <button 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
+import { readVirtualFile } from '@/lib/agents/ruflo/vfs';
 
 export async function GET(
   request: NextRequest,
@@ -15,6 +16,13 @@ export async function GET(
       return NextResponse.json({ error: 'file parameter is required' }, { status: 400 });
     }
 
+    // 1. Primary Source of Truth: Check VFS Virtual Workspace
+    const virtualContent = await readVirtualFile(id, file);
+    if (virtualContent !== null) {
+      return NextResponse.json({ content: virtualContent });
+    }
+
+    // 2. Fallback: Physical Disk Workspace
     const projectDir = path.resolve(process.cwd(), 'projects', id);
     const safePath = path.resolve(projectDir, file);
 

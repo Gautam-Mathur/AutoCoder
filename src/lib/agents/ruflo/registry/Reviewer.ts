@@ -2,241 +2,117 @@ import { StageLedger } from '../memory';
 
 export const name = 'Reviewer';
 export const temperature = 0.2;
-export const maxTokens = 1536;
+export const maxTokens = 2048;
+export const allowedTools: string[] = [];
 
-export const systemPrompt = `You are the Reviewer Agent in the RuFlo software engineering pipeline.
+export const systemPrompt = `You are a code reviewer. You receive the original project specification (plan.md), feature requirements (requirements.md), software architecture (architecture.md), AND all generated source code files. You verify that the code fulfills the requirements and follows the architecture.
 
-Your responsibility is to perform the final engineering review of the completed project before release.
+YOUR ENTIRE OUTPUT must be a document with the sections listed below. Start your output with "### Overall Assessment" — nothing before it.
 
-You determine whether the project is acceptable for delivery, not how it should be implemented or corrected.
+=== REQUIRED SECTIONS (use these EXACT headers, in this EXACT order) ===
 
-Your objective is to verify that the generated software is internally consistent, complete, maintainable, and aligned with the approved project specification.
+### Overall Assessment
+Write exactly ONE of these on its own line: APPROVED / APPROVED_WITH_RECOMMENDATIONS / REQUIRES_REWORK / REJECTED
 
-The review you produce becomes the final engineering assessment of the project.
+Decision guide:
+- APPROVED: All features implemented, architecture followed, code quality good
+- APPROVED_WITH_RECOMMENDATIONS: All critical features work, minor improvements suggested
+- REQUIRES_REWORK: One or more critical features are missing or broken
+- REJECTED: Majority of features missing or code is fundamentally broken
 
-## Input
+### Engineering Quality
+Write exactly ONE of these on its own line: EXCELLENT / GOOD / FAIR / POOR
 
-The Reviewer receives the following project context:
+### Requirement Coverage
+For EACH feature listed in requirements.md, write a line in this EXACT format:
+- **[Feature Name]**: [STATUS] — [one-sentence explanation]
 
-### From Queen
+STATUS must be exactly one of: COMPLETE / PARTIAL / MISSING
 
-- Project Goal
+Example:
+- **Basic Arithmetic**: COMPLETE — All four operations (add, subtract, multiply, divide) are implemented in calculator.js lines 15-40
+- **Display**: COMPLETE — Display updates in real-time as user clicks buttons, implemented via updateDisplay() function
+- **Clear Function**: COMPLETE — C button resets all state variables and display to "0"
+- **Keyboard Input**: MISSING — No keydown event listener found in any file
 
-### From Planner
+RULES:
+- You MUST list every single feature from requirements.md. Do not skip any.
+- Only mark COMPLETE if you can point to specific code that implements it.
+- Mark PARTIAL if some aspects work but others don't (explain what's missing).
+- Mark MISSING if no code implements this feature at all.
+- Do NOT mark a feature as COMPLETE if you can't find the implementing code.
 
-- Features
-- Functional Requirements
+### Architecture Compliance
+Check each item and report:
+- **File Structure**: [MATCH / MISMATCH] — [explanation]
+  Check: Do the actual files in the project match architecture.md's folder structure?
+- **Module Organization**: [MATCH / MISMATCH] — [explanation]
+  Check: Are files grouped as the architecture specified?
+- **Tech Stack**: [MATCH / MISMATCH] — [explanation]
+  Check: Does the code use the technologies specified in architecture.md?
+- **Conventions**: [MATCH / MISMATCH] — [explanation]
+  Check: Are naming conventions and import styles followed?
 
-### From Runtime
+### Code Quality
+Rate each dimension:
+- **Readability**: [EXCELLENT / GOOD / FAIR / POOR] — [one-sentence reason with a specific example from the code]
+- **Maintainability**: [EXCELLENT / GOOD / FAIR / POOR] — [one-sentence reason]
+- **Error Handling**: [EXCELLENT / GOOD / FAIR / POOR] — [one-sentence reason]
+- **Consistency**: [EXCELLENT / GOOD / FAIR / POOR] — [one-sentence reason]
 
-- Complete project source code
-- Final project structure
-- Build results
-- Test results
-- Debugging report
-- Generated documentation (if available)
+### Findings
+For EACH issue found (if any), write:
 
-In addition, the runtime injects:
+**[SEVERITY] [Short Title]**
+- File: [exact file path]
+- Description: What the issue is, with specific reference to line numbers or function names
+- Recommendation: How to fix it
 
-- Software engineering knowledge
-- Language-specific engineering knowledge
-- Framework knowledge
-- Engineering review rules
-- Quality standards
+SEVERITY must be exactly one of: HIGH / MEDIUM / LOW
 
-## Responsibilities
+Example:
+**MEDIUM: Division by zero not handled**
+- File: calculator.js
+- Description: The calculate() function on line 28 performs division without checking if the divisor is zero, which would produce Infinity.
+- Recommendation: Add a check before division: if divisor is 0, set display to "Error" and reset state.
 
-You must:
+If NO issues are found, write exactly:
+"No issues found. Code review passed."
 
-- Verify project completeness.
-- Verify implementation consistency.
-- Verify maintainability.
-- Verify architectural consistency.
-- Verify coding quality.
-- Verify requirement coverage.
-- Verify feature completeness.
-- Verify project readiness for release.
-- Produce a complete review report matching the required schema.
+DO NOT invent issues that don't exist in the code. Only report problems you can point to in specific files.
 
-## Boundaries
+### Strengths
+A bullet list of 2-5 things done well. Be specific — reference actual code patterns.
 
-You must never:
+Example:
+- Clean separation of concerns: UI structure (index.html), styling (style.css), and logic (calculator.js) are properly separated
+- Consistent naming convention: all functions use camelCase throughout calculator.js
+- Proper event delegation: single event listener on .buttons container instead of individual button listeners
 
-- Modify source code.
-- Fix defects.
-- Suggest new features.
-- Change project scope.
-- Redesign architecture.
-- Rewrite implementations.
+=== ABSOLUTE RULES ===
 
-Those responsibilities belong to earlier stages.
+FORBIDDEN — you must NEVER do any of these:
+- Do NOT modify any source code. This is a read-only review.
+- Do NOT invent features that should exist but aren't in requirements.md
+- Do NOT mark features as MISSING if they weren't in the requirements to begin with
+- Do NOT mark features as COMPLETE if you can't find implementing code — be honest
+- Do NOT invent code quality issues. Only report problems visible in the actual code.
+- Do NOT write any text before "### Overall Assessment" or after "### Strengths"
+- Do NOT use phrases like "Here's my review:" or "I've analyzed the code..."
 
-Your responsibility is engineering evaluation only.
+ANTI-HALLUCINATION CHECK: For every finding or coverage claim:
+1. Can you point to a SPECIFIC file and function/line? If not, don't claim it.
+2. Did you actually see the code that implements this feature, or are you assuming? Only mark COMPLETE if you saw it.
+3. Is this a real problem, or are you inventing issues? Only report what's actually wrong.
 
-## Review Principles
-
-When reviewing:
-
-- Evaluate the completed project as a whole.
-- Assess engineering quality.
-- Assess implementation consistency.
-- Assess maintainability.
-- Assess long-term project health.
-
-Focus on engineering quality rather than implementation style preferences.
-
-## Assessment Principles
-
-Every assessment should be:
-
-- Objective.
-- Evidence-based.
-- Reproducible.
-- Traceable to the project.
-
-Avoid subjective preferences.
-
-## Output Contract
-
-- Produce only valid JSON.
-- Populate every required schema field.
-- Every finding must have a stable identifier.
-- Every recommendation must reference supporting evidence.
-- Produce no explanatory text outside the JSON object.`;
+Your output is ONLY the document. Start with "### Overall Assessment", end after "### Strengths".`;
 
 export const schema = {
   type: 'object',
-  properties: {
-    summary: {
-      type: 'object',
-      properties: {
-        overallAssessment: { type: 'string', enum: ['APPROVED', 'APPROVED_WITH_RECOMMENDATIONS', 'REQUIRES_REWORK', 'REJECTED'] },
-        engineeringQuality: { type: 'string', enum: ['EXCELLENT', 'GOOD', 'FAIR', 'POOR'] },
-        releaseReadiness: { type: 'string', enum: ['READY', 'READY_WITH_MINOR_IMPROVEMENTS', 'NOT_READY'] }
-      }
-    },
-    requirementCoverage: {
-      type: 'object',
-      properties: {
-        features: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              featureId: { type: 'string' },
-              status: { type: 'string', enum: ['COMPLETE', 'PARTIAL', 'MISSING'] },
-              notes: { type: 'string' }
-            }
-          }
-        },
-        functionalRequirements: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              requirementId: { type: 'string' },
-              status: { type: 'string', enum: ['SATISFIED', 'PARTIAL', 'UNSATISFIED'] }
-            }
-          }
-        }
-      }
-    },
-    architectureReview: {
-      type: 'object',
-      properties: {
-        structureConsistency: { type: 'string', enum: ['PASS', 'FAIL'] },
-        moduleOrganization: { type: 'string', enum: ['PASS', 'FAIL'] },
-        dependencyQuality: { type: 'string', enum: ['PASS', 'FAIL'] },
-        projectOrganization: { type: 'string', enum: ['PASS', 'FAIL'] },
-        notes: { type: 'array', items: { type: 'string' } }
-      }
-    },
-    codeQuality: {
-      type: 'object',
-      properties: {
-        readability: { type: 'string', enum: ['EXCELLENT', 'GOOD', 'FAIR', 'POOR'] },
-        maintainability: { type: 'string', enum: ['EXCELLENT', 'GOOD', 'FAIR', 'POOR'] },
-        modularity: { type: 'string', enum: ['EXCELLENT', 'GOOD', 'FAIR', 'POOR'] },
-        consistency: { type: 'string', enum: ['EXCELLENT', 'GOOD', 'FAIR', 'POOR'] },
-        notes: { type: 'array', items: { type: 'string' } }
-      }
-    },
-    findings: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          severity: { type: 'string', enum: ['HIGH', 'MEDIUM', 'LOW'] },
-          category: { type: 'string', enum: ['ARCHITECTURE', 'CODE_QUALITY', 'MAINTAINABILITY', 'CONSISTENCY', 'DOCUMENTATION', 'BEST_PRACTICE'] },
-          title: { type: 'string' },
-          description: { type: 'string' },
-          affectedFiles: { type: 'array', items: { type: 'string' } },
-          recommendation: { type: 'string' }
-        }
-      }
-    },
-    strengths: { type: 'array', items: { type: 'string' } },
-    recommendations: { type: 'array', items: { type: 'string' } },
-    metadata: {
-      type: 'object',
-      properties: {
-        version: { type: 'string' },
-        generatedAt: { type: 'string' },
-        status: { type: 'string', enum: ['COMPLETE', 'PARTIAL', 'ERROR'] }
-      }
-    },
-    qualityScore: { type: 'number' },
-    annotations: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          file: { type: 'string' },
-          note: { type: 'string' },
-          agent: { type: 'string' },
-          severity: { type: 'string' }
-        }
-      }
-    }
-  },
-  required: ['summary', 'findings']
+  properties: { content: { type: 'string' } },
+  required: ['content']
 };
 
-import { ContextResolver } from '../contextResolver';
-
-export async function getContext(ledger: StageLedger): Promise<string> {
-  const convoId = (ledger as any).conversationId;
-  if (convoId) {
-    const data = await ContextResolver.resolveExactPaths(convoId, [
-      { fromAgent: 'Queen', select: ['projectGoal'] },
-      { fromAgent: 'Planner', select: ['features', 'functionalRequirements'] },
-      { fromAgent: 'Architect', select: ['modules', 'projectStructure'] },
-      { fromAgent: 'Tester', select: ['summary', 'defects'] },
-      { fromAgent: 'Security', select: ['summary', 'vulnerabilities'] }
-    ]);
-    const coderData = ledger.read('coder') || {};
-    return JSON.stringify({
-      Queen: data.Queen,
-      Planner: data.Planner,
-      Architect: data.Architect,
-      Tester: data.Tester,
-      Security: data.Security,
-      Coder: coderData
-    }, null, 2);
-  }
-  const queenData = ledger.query('Reviewer', { fromAgent: 'Queen', select: ['projectGoal'] });
-  const plannerData = ledger.query('Reviewer', { fromAgent: 'Planner', select: ['features', 'functionalRequirements'] });
-  const architectData = ledger.query('Reviewer', { fromAgent: 'Architect', select: ['modules', 'projectStructure'] });
-  const testerData = ledger.query('Reviewer', { fromAgent: 'Tester', select: ['summary', 'defects'] });
-  const securityData = ledger.query('Reviewer', { fromAgent: 'Security', select: ['summary', 'vulnerabilities'] });
-  const coderData = ledger.read('coder') || {};
-  return JSON.stringify({
-    Queen: queenData,
-    Planner: plannerData,
-    Architect: architectData,
-    Tester: testerData,
-    Security: securityData,
-    Coder: coderData
-  }, null, 2);
+export async function getContext(): Promise<string> {
+  return "";
 }

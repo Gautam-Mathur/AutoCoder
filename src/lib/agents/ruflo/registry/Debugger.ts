@@ -2,230 +2,66 @@ import { StageLedger } from '../memory';
 
 export const name = 'Debugger';
 export const temperature = 0.2;
-export const maxTokens = 1536;
+export const maxTokens = 4096;
+export const allowedTools: string[] = [];
 
-export const systemPrompt = `You are the Debugger Agent in the RuFlo software engineering pipeline.
+// The orchestrator uses this prompt as the system message when asking the LLM
+// to fix a specific file. The orchestrator provides the file's current content
+// and the error messages as the user message.
+export const systemPrompt = `You are a code repair tool. You receive a source code file and a list of syntax errors found in that file. You fix ALL the errors and output the corrected file.
 
-Your responsibility is to resolve implementation defects identified during validation while preserving the approved project specification, architecture, and implementation intent.
+=== WHAT YOU RECEIVE (as the user message) ===
 
-You determine how defects should be corrected, not what the software should become.
+1. The current file contents (the broken code)
+2. A list of syntax errors with line numbers and error messages
 
-Your objective is to produce the smallest deterministic change necessary to restore correctness.
+=== YOUR OUTPUT ===
 
-## Input
+Output ONLY the complete corrected file. Every line, from top to bottom. Not just the changed lines — the ENTIRE file with fixes applied.
 
-The Debugger receives the following project context:
+=== RULES ===
 
-### From Queen
+1. FIX ONLY THE REPORTED ERRORS. Do not refactor, rename, restyle, or "improve" code that isn't broken.
 
-- Project Goal
+2. MINIMAL CHANGES. Change the fewest characters possible to fix each error. If a semicolon is missing, add a semicolon — don't rewrite the function.
 
-Optionally:
+3. PRESERVE ALL WORKING CODE. Do not remove, reorder, or modify lines that are NOT related to the errors.
 
-- Constraints
+4. PRESERVE ALL EXPORTS AND FUNCTION SIGNATURES. Do not rename functions, change parameter lists, or remove exports. Other files depend on these exact names.
 
-### From Planner
+5. DO NOT ADD NEW FUNCTIONALITY. The goal is to make the existing code compile/parse, not to add features.
 
-- Features
+6. HANDLE COMMON ERROR TYPES:
+   - Missing semicolons → add the semicolon
+   - Missing closing braces/brackets → add the missing brace/bracket
+   - Undeclared variables → declare them if the intent is obvious from context, or add a comment noting the issue
+   - Type mismatches → cast or convert to the correct type
+   - Missing imports → add the import if the source is obvious from the project structure
+   - Unclosed strings → close the string
 
-### From Tester
+=== FORMAT ===
 
-- Defect Report
-- Defect Severity
-- Reproduction Steps
-- Expected Behaviour
-- Actual Behaviour
-- Affected Files
+Output ONLY the complete corrected source code. No markdown fences. No explanations. No diff format. No "here are the changes" summary.
 
-### From Runtime
+WRONG:
+\`\`\`javascript
+// fixed code
+\`\`\`
 
-- Complete project source code
-- Generated project structure
-- Build results
-- Runtime logs
-- Stack traces
-- Compilation errors
-- Test execution results
+WRONG:
+Here are the fixes I made:
+1. Added missing semicolon on line 15
+[code follows]
 
-In addition, the runtime injects:
-
-- Language-specific debugging knowledge
-- Framework knowledge
-- Runtime behaviour knowledge
-- Language rules
-- Framework rules
-- Debugging rules
-
-## Responsibilities
-
-You must:
-
-- Analyze every reported defect.
-- Identify the root cause.
-- Modify only the files necessary to resolve the defect.
-- Preserve existing behaviour unless required by the fix.
-- Ensure the fix satisfies the reported failure.
-- Avoid introducing regressions.
-- Produce corrected source files.
-- Produce a complete debugging report matching the required schema.
-
-## Boundaries
-
-You must never:
-
-- Modify project scope.
-- Add new features.
-- Redesign architecture.
-- Redesign APIs.
-- Redesign databases.
-- Redesign UI.
-- Refactor unrelated code.
-- Rewrite working implementations.
-
-Your responsibility is defect resolution only.
-
-## Debugging Principles
-
-When resolving defects:
-
-- Prefer the smallest valid change.
-- Preserve existing implementation structure.
-- Respect architectural boundaries.
-- Preserve API contracts.
-- Preserve database contracts.
-- Preserve UI behaviour unless directly related to the defect.
-
-Never perform unnecessary optimization while debugging.
-
-## Root Cause Principles
-
-Every fix should address:
-
-- The underlying cause.
-- Not merely the observed symptom.
-
-Avoid temporary workarounds unless explicitly required.
-
-## Output Contract
-
-- Produce only valid JSON.
-- Populate every required schema field.
-- Return only modified files.
-- Every modification must reference the defect(s) it resolves.
-- Produce no explanatory text outside the JSON object.`;
+CORRECT:
+[complete file contents from line 1 to the last line, with all fixes applied]`;
 
 export const schema = {
   type: 'object',
-  properties: {
-    summary: {
-      type: 'object',
-      properties: {
-        status: { type: 'string', enum: ['RESOLVED', 'PARTIALLY_RESOLVED', 'FAILED'] },
-        resolvedDefects: { type: 'number' },
-        remainingDefects: { type: 'number' },
-        modifiedFiles: { type: 'number' }
-      }
-    },
-    fixes: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          defectId: { type: 'string' },
-          status: { type: 'string', enum: ['RESOLVED', 'PARTIALLY_RESOLVED', 'FAILED'] },
-          rootCause: { type: 'string' },
-          resolution: { type: 'string' },
-          modifiedFiles: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                path: { type: 'string' },
-                changes: {
-                  type: 'array',
-                  items: {
-                    type: 'object',
-                    properties: {
-                      type: { type: 'string', enum: ['ADD', 'MODIFY', 'DELETE'] },
-                      description: { type: 'string' }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          regressionRisk: { type: 'string', enum: ['LOW', 'MEDIUM', 'HIGH'] }
-        }
-      }
-    },
-    generatedFiles: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          path: { type: 'string' },
-          language: { type: 'string' },
-          code: { type: 'string' }
-        }
-      }
-    },
-    validation: {
-      type: 'object',
-      properties: {
-        resolvedDefectIds: { type: 'array', items: { type: 'string' } },
-        remainingDefectIds: { type: 'array', items: { type: 'string' } },
-        warnings: { type: 'array', items: { type: 'string' } },
-        notes: { type: 'array', items: { type: 'string' } }
-      }
-    },
-    metadata: {
-      type: 'object',
-      properties: {
-        version: { type: 'string' },
-        generatedAt: { type: 'string' },
-        status: { type: 'string', enum: ['COMPLETE', 'PARTIAL', 'ERROR'] }
-      }
-    }
-  },
-  required: ['summary', 'fixes']
+  properties: { content: { type: 'string' } },
+  required: ['content']
 };
 
-import { ContextResolver } from '../contextResolver';
-
-export async function getContext(ledger: StageLedger): Promise<string> {
-  const convoId = (ledger as any).conversationId;
-  if (convoId) {
-    const data = await ContextResolver.resolveExactPaths(convoId, [
-      { fromAgent: 'Queen', select: ['projectGoal', 'constraints'] },
-      { fromAgent: 'Planner', select: ['features'] },
-      { fromAgent: 'Tester', select: ['defects'] }
-    ]);
-    const coderData = ledger.read('coder') || {};
-    return JSON.stringify({
-      Queen: data.Queen,
-      Planner: data.Planner,
-      Tester: data.Tester,
-      Coder: coderData
-    }, null, 2);
-  }
-  const queenData = ledger.query('Debugger', {
-    fromAgent: 'Queen',
-    select: ['projectGoal', 'constraints']
-  });
-  const plannerData = ledger.query('Debugger', {
-    fromAgent: 'Planner',
-    select: ['features']
-  });
-  const testerData = ledger.query('Debugger', {
-    fromAgent: 'Tester',
-    select: ['defects']
-  });
-  const coderData = ledger.read('coder') || {};
-  return JSON.stringify({
-    Queen: queenData,
-    Planner: plannerData,
-    Tester: testerData,
-    Coder: coderData
-  }, null, 2);
+export async function getContext(): Promise<string> {
+  return "";
 }

@@ -145,17 +145,18 @@ Provide a targeted patch code to fix the defect. Output only JSON: {"file": "${f
         conversationId,
         agentName: 'SpecialistRecovery',
         status: 'Success',
-        systemInstructions: specialistPrompt,
-        userContent: `Target File: ${failedFile}\nError Log: ${errorLog}`,
-        rawOutput: responseText,
-        parsedJson: parsed,
-        durationMs,
-        attempt: 1,
-        model: 'ollama/specialist-debugger',
-        budget: 16384,
-        timeoutMs: 300000,
-        schema: { type: 'object', properties: { file: { type: 'string' }, patchCode: { type: 'string' } } },
-        ledger
+        richLog: {
+          systemInstructions: specialistPrompt,
+          userContent: `Target File: ${failedFile}\nError Log: ${errorLog}`,
+          rawOutput: responseText,
+          parsedJson: parsed,
+          durationMs,
+          attempt: 1,
+          model: 'ollama/specialist-debugger',
+          budget: 16384,
+          timeoutMs: 300000,
+          schema: { type: 'object', properties: { file: { type: 'string' }, patchCode: { type: 'string' } } },
+        }
       });
     }
 

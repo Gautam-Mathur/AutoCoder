@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { flushVfsToDisk } from '@/lib/agents/ruflo/vfs';
 
 const execFilePromise = promisify(execFile);
 
@@ -12,6 +13,10 @@ export async function GET(
 ) {
   try {
     const { id } = await context.params;
+
+    // Flush any in-memory/database virtual files to disk before creating zip archive
+    await flushVfsToDisk(id);
+
     const projectDir = path.join(process.cwd(), 'projects', id);
 
     if (!fs.existsSync(projectDir)) {

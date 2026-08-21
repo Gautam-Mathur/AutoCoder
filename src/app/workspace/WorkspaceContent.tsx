@@ -77,6 +77,91 @@ const buildFileTree = (fileList: string[]): FileNode => {
   return root;
 };
 
+function parseModulesFromMarkdown(markdown: string): any[] {
+  if (!markdown) return [];
+  const modules: any[] = [];
+  const modulesSection = markdown.split(/### Modules/i)[1]?.split(/###/)[0] || '';
+  const blocks = modulesSection.split(/(?=\*\*([^*]+)\*\*)/g);
+
+  let current: any = null;
+  blocks.forEach((block) => {
+    const nameMatch = block.match(/^\*\*([^*]+)\*\*/);
+    if (nameMatch) {
+      if (current) modules.push(current);
+      current = {
+        name: nameMatch[1].trim(),
+        responsibility: '',
+        ownedFiles: [],
+        dependsOn: 'None',
+        supportsFeatures: '',
+      };
+
+      const respMatch = block.match(/-\s*Responsibility:\s*(.+)/i);
+      if (respMatch) current.responsibility = respMatch[1].trim();
+
+      const filesMatch = block.match(/-\s*Owned Files:\s*(.+)/i);
+      if (filesMatch) {
+        current.ownedFiles = filesMatch[1]
+          .split(/[,;\s]+/)
+          .map((f) => f.replace(/[`'"]/g, '').trim())
+          .filter(Boolean);
+      }
+
+      const depMatch = block.match(/-\s*Depends On:\s*(.+)/i);
+      if (depMatch) current.dependsOn = depMatch[1].trim();
+
+      const featMatch = block.match(/-\s*Supports Features:\s*(.+)/i);
+      if (featMatch) current.supportsFeatures = featMatch[1].trim();
+    }
+  });
+  if (current) modules.push(current);
+  return modules;
+}
+
+function getSimpleFileExplanation(fileName: string, moduleResp?: string) {
+  const base = fileName.toLowerCase();
+  if (base.endsWith('index.html')) {
+    return {
+      easyName: 'Main Webpage Screen (HTML)',
+      role: 'Entry Point & Layout',
+      why: 'This is the main screen of your project. It contains all buttons, text boxes, and layout elements that the user sees in their browser.',
+    };
+  }
+  if (base.endsWith('.css')) {
+    return {
+      easyName: 'Visual Design & Colors (CSS)',
+      role: 'Theme & Styling',
+      why: 'Controls colors, fonts, spacing, shadows, and animations so the app looks clean, modern, and easy to use.',
+    };
+  }
+  if (base.endsWith('.js') || base.endsWith('.ts') || base.endsWith('.jsx') || base.endsWith('.tsx')) {
+    return {
+      easyName: 'Interactive Logic & Behavior (JS/TS)',
+      role: 'App Logic',
+      why: moduleResp || 'Handles user clicks, state calculations, button actions, and dynamic page updates.',
+    };
+  }
+  if (base.endsWith('package.json')) {
+    return {
+      easyName: 'Project Settings & Dependencies (JSON)',
+      role: 'Configuration',
+      why: 'Tells Node.js what libraries, external packages, and scripts are needed to build and run the application.',
+    };
+  }
+  if (base.endsWith('.md')) {
+    return {
+      easyName: 'AI Architectural Document (Markdown)',
+      role: 'Specification',
+      why: 'Stores AI-generated blueprints, requirements, tech stack decisions, and project summaries.',
+    };
+  }
+  return {
+    easyName: 'Component / Utility File',
+    role: 'Supporting Module',
+    why: moduleResp || 'Provides auxiliary functions, helper utilities, or data processing for the application.',
+  };
+}
+
 export default function WorkspaceContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -147,10 +232,10 @@ export default function WorkspaceContent() {
     };
   }, []);
 
-  // Auto-start or auto-resume pipeline if loaded and status is Active (or Idle with initial prompt)
+  // Auto-start or auto-resume pipeline if loaded and status is Active or Paused (or Idle with initial prompt)
   useEffect(() => {
-    if (detailsLoaded && ollamaConnected && !didConnectRef.current) {
-      if (pipelineStatus === 'Active') {
+    if (detailsLoaded && !didConnectRef.current) {
+      if (pipelineStatus === 'Active' || pipelineStatus === 'Paused') {
         didConnectRef.current = true;
         handleStartPipeline(true);
       } else if (pipelineStatus === 'Idle' && initialPrompt) {
@@ -158,7 +243,7 @@ export default function WorkspaceContent() {
         handleStartPipeline(false);
       }
     }
-  }, [detailsLoaded, pipelineStatus, initialPrompt, ollamaConnected]);
+  }, [detailsLoaded, pipelineStatus, initialPrompt]);
 
   // Handle scroll to bottom of logs
   useEffect(() => {
@@ -293,29 +378,35 @@ export default function WorkspaceContent() {
     }
 
     if (archOut) {
+      let modulesList: any[] = [];
       const json = safeParseJson(archOut.validatedJson);
-      if (json) {
-        const modulesList = Array.isArray(json.modules) ? json.modules : [];
-        setModules(modulesList);
-        // Collate files list
-        const filePaths: string[] = [];
-        modulesList.forEach((mod: any) => {
-          const collect = (arr: any) => {
-            if (Array.isArray(arr)) {
-              arr.forEach((f: any) => {
-                const norm = normalizeFilePath(f);
-                if (norm) filePaths.push(norm);
-              });
-            }
-          };
-          collect(mod.files);
-          collect(mod.ownedFiles);
-          collect(mod.pages);
-          collect(mod.components);
-          collect(mod.services);
-          collect(mod.apis);
-        });
-        setFiles([...new Set(filePaths)]);
+      if (json && Array.isArray(json.modules)) {
+        modulesList = json.modules;
+      } else if (archOut.validatedJson?.content) {
+        modulesList = parseModulesFromMarkdown(archOut.validatedJson.content);
+      }
+      setModules(modulesList);
+      
+      // Collate files list
+      const filePaths: string[] = [];
+      modulesList.forEach((mod: any) => {
+        const collect = (arr: any) => {
+          if (Array.isArray(arr)) {
+            arr.forEach((f: any) => {
+              const norm = normalizeFilePath(f);
+              if (norm) filePaths.push(norm);
+            });
+          }
+        };
+        collect(mod.files);
+        collect(mod.ownedFiles);
+        collect(mod.pages);
+        collect(mod.components);
+        collect(mod.services);
+        collect(mod.apis);
+      });
+      if (filePaths.length > 0) {
+        setFiles((prev) => [...new Set([...prev, ...filePaths])]);
       }
     }
 
@@ -345,7 +436,7 @@ export default function WorkspaceContent() {
   // Start execution stream
   const handleStartPipeline = (isResume = false) => {
     if (!conversationId) return;
-    if (!ollamaConnected) {
+    if (!isResume && !ollamaConnected) {
       alert('Please start Ollama locally before initiating pipeline.');
       return;
     }
@@ -381,6 +472,17 @@ export default function WorkspaceContent() {
       const data = JSON.parse(event.data);
 
       if (data.type === 'PING') return;
+
+      if (data.type === 'HISTORY_REPLAY') {
+        if (data.message && data.message.trim()) {
+          addLog({
+            type: data.status === 'Completed' || data.status === 'Success' ? 'AGENT_COMPLETE' : 'AGENT_LOG',
+            agent: data.agent,
+            message: data.message,
+          });
+        }
+        return;
+      }
 
       if (data.type === 'AGENT_STREAM_PROGRESS') {
         setStreamProgress(data.data);
@@ -441,10 +543,31 @@ export default function WorkspaceContent() {
       }
     };
 
-    eventSource.onerror = () => {
+    eventSource.onerror = async () => {
+      eventSource.close();
+
+      // Check database to see if pipeline is still actively compiling
+      try {
+        const res = await fetch(`/api/conversations/${conversationId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === 'Active') {
+            addLog({ type: 'SYSTEM', message: 'Stream connection tickle detected. Re-connecting to compiler loop...' });
+            setTimeout(() => {
+              handleStartPipeline(true);
+            }, 1000);
+            return;
+          } else if (data.status === 'Paused' || data.status === 'Completed') {
+            setPipelineStatus(data.status);
+            return;
+          }
+        }
+      } catch (e) {
+        // Fallback if DB check fails
+      }
+
       addLog({ type: 'PIPELINE_ERROR', message: 'Connection to compiler service lost.' });
       setPipelineStatus('Failed');
-      eventSource.close();
     };
   };
 
@@ -710,7 +833,41 @@ export default function WorkspaceContent() {
   const renderAgentOutputCard = (agentName: string, rawData: any) => {
     if (!rawData) return null;
     let data = safeParseJson(rawData);
-    if (!data) return null;
+    if (!data) {
+      if (typeof rawData === 'string' && rawData.trim().length > 0) {
+        data = { content: rawData };
+      } else {
+        return null;
+      }
+    }
+
+    // Handle all-markdown output cards for Hybrid v2 pipeline
+    if (typeof data.content === 'string' && !data.project && !data.architecture && !data.features) {
+      const STAGE_CONFIG: Record<string, { icon: string; title: string; color: string }> = {
+        Queen:       { icon: '👑', title: 'Project Plan', color: 'text-purple-400' },
+        Planner:     { icon: '📋', title: 'Requirements', color: 'text-indigo-400' },
+        Architect:   { icon: '🏗️', title: 'Architecture', color: 'text-violet-400' },
+        System:      { icon: '⚙️', title: 'Backend Spec', color: 'text-blue-400' },
+        Designer:    { icon: '🎨', title: 'UI/UX Spec', color: 'text-pink-400' },
+        Blueprinter: { icon: '📐', title: 'Blueprint', color: 'text-cyan-400' },
+        Coder:       { icon: '💻', title: 'Generated Files', color: 'text-amber-400' },
+        Tester:      { icon: '🧪', title: 'Test Report', color: 'text-emerald-400' },
+        Debugger:    { icon: '🔧', title: 'Debug Report', color: 'text-orange-400' },
+        Security:    { icon: '🛡️', title: 'Security Audit', color: 'text-red-400' },
+        Reviewer:    { icon: '📝', title: 'Code Review', color: 'text-purple-400' },
+      };
+
+      const cfg = STAGE_CONFIG[agentName] || { icon: '📄', title: agentName, color: 'text-slate-300' };
+
+      return (
+        <div className="mt-3 p-3 bg-slate-900 border border-slate-700/80 rounded-lg text-slate-300 space-y-2 select-text w-full max-w-md">
+          <div className={`text-xs font-bold ${cfg.color}`}>{cfg.icon} {cfg.title}</div>
+          <div className="text-[11px] text-slate-300 font-mono whitespace-pre-wrap max-h-60 overflow-y-auto p-2 bg-slate-950/60 rounded border border-slate-800">
+            {data.content}
+          </div>
+        </div>
+      );
+    }
 
     if (data.outflow && typeof data.outflow === 'object') {
       data = data.outflow;
@@ -1108,12 +1265,22 @@ export default function WorkspaceContent() {
 
         {/* Console Log Feed */}
         <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 font-mono text-xs">
-          <div className="flex flex-col items-start gap-1">
-            <div className="bg-slate-950 border border-slate-700 p-3 rounded-lg rounded-tl-none max-w-[90%]">
-              <span className="text-electric-indigo font-bold">System Orchestrator</span>
-              <p className="text-slate-300 mt-1">Provide project details and hit run to compile the specifications.</p>
+          {logs.length === 0 && (
+            <div className="flex flex-col items-start gap-1">
+              <div className="bg-slate-950 border border-slate-700 p-3 rounded-lg rounded-tl-none max-w-[90%]">
+                <span className="text-electric-indigo font-bold">System Orchestrator</span>
+                <p className="text-slate-300 mt-1">
+                  {pipelineStatus === 'Active'
+                    ? 'Connected to active compiler loop — receiving live telemetry...'
+                    : pipelineStatus === 'Paused'
+                    ? 'Pipeline compilation paused. Click Resume or provide input to continue.'
+                    : pipelineStatus === 'Completed'
+                    ? 'Pipeline compilation complete. All specifications synthesized.'
+                    : 'Provide project details and hit run to compile the specifications.'}
+                </p>
+              </div>
             </div>
-          </div>
+          )}
 
           {logs.map((log, idx) => {
             const isSystem = log.type === 'SYSTEM';
@@ -1286,75 +1453,113 @@ export default function WorkspaceContent() {
                     </div>
                   )}
                 </div>
-              ) : modules.length === 0 ? (
+              ) : modules.length === 0 && files.length === 0 ? (
                 <div className="text-xs text-slate-500 py-12 flex flex-col items-center gap-2 justify-center h-full">
                   <Database className="w-12 h-12 text-slate-800" />
                   <span>Architecture flowchart will load here after the Architect stage compiles.</span>
                 </div>
               ) : (
-                <div className="w-full max-w-2xl flex flex-col gap-6">
-                  {/* API Gateway Box */}
-                  <div className="bg-slate-900 border border-electric-indigo/50 rounded-lg p-4 flex flex-col items-center justify-center relative shadow-[0_0_20px_rgba(99,102,241,0.15)]">
-                    <span className="px-2 py-0.5 bg-slate-950 border border-slate-700 rounded text-[9px] font-mono text-slate-400 absolute top-2 right-2">Port: 3000</span>
-                    <TerminalIcon className="w-6 h-6 text-electric-indigo mb-1" />
-                    <h4 className="text-sm font-bold text-on-surface">API Gateway &amp; App Routes</h4>
-                    <p className="text-[10px] text-slate-400 text-center mt-1">Routes frontend pages and resolves APIs</p>
+                <div className="w-full max-w-3xl flex flex-col gap-6 pb-12">
+                  {/* High Level Flowchart Header */}
+                  <div className="bg-slate-900/80 border border-electric-indigo/40 rounded-xl p-5 shadow-[0_0_30px_rgba(99,102,241,0.15)] flex flex-col gap-3">
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+                      <div className="flex items-center gap-2">
+                        <Compass className="w-5 h-5 text-electric-indigo" />
+                        <h4 className="text-sm font-bold text-slate-100 uppercase tracking-wider">System Architecture &amp; File Flowchart</h4>
+                      </div>
+                      <span className="bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-[10px] px-2.5 py-0.5 rounded font-mono font-bold">
+                        {files.length > 0 ? `${files.length} Files Mapped` : `${modules.length} Modules`}
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-slate-300">
+                      Below is the plain-English flowchart of your application showing <strong>what files exist and why</strong>, how they interact, and their responsibilities.
+                    </p>
+
+                    {/* Flow Diagram Pipeline */}
+                    <div className="grid grid-cols-4 gap-2 pt-2 text-[10px] font-mono font-bold text-center">
+                      <div className="bg-blue-500/10 border border-blue-500/30 text-blue-400 p-2.5 rounded-lg flex flex-col items-center gap-1">
+                        <span>🌐 1. Browser Entry</span>
+                        <span className="text-[9px] font-normal text-slate-400">index.html</span>
+                      </div>
+                      <div className="bg-purple-500/10 border border-purple-500/30 text-purple-400 p-2.5 rounded-lg flex flex-col items-center gap-1">
+                        <span>🎨 2. Visual Design</span>
+                        <span className="text-[9px] font-normal text-slate-400">style.css</span>
+                      </div>
+                      <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 p-2.5 rounded-lg flex flex-col items-center gap-1">
+                        <span>⚡ 3. Application Logic</span>
+                        <span className="text-[9px] font-normal text-slate-400">JS / TS Logic</span>
+                      </div>
+                      <div className="bg-amber-500/10 border border-amber-500/30 text-amber-400 p-2.5 rounded-lg flex flex-col items-center gap-1">
+                        <span>🗄️ 4. Data &amp; State</span>
+                        <span className="text-[9px] font-normal text-slate-400">API &amp; Store</span>
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Connectors */}
-                  <div className="flex justify-around items-center">
-                    <div className="w-[1px] h-6 bg-slate-700"></div>
-                    <div className="w-[1px] h-6 bg-slate-700"></div>
-                  </div>
+                  {/* Modules & File Cards Grid */}
+                  <div className="flex flex-col gap-4">
+                    <h5 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                      <Cpu className="w-4 h-4 text-emerald-400" /> Files &amp; Responsibility Breakdown (Easy Explanation)
+                    </h5>
 
-                  {/* Modules grid */}
-                  <div className="grid grid-cols-2 gap-4">
-                    {modules.map((mod) => (
-                      <div key={mod.name} className="bg-slate-900 border border-slate-700 rounded-lg p-4 flex flex-col gap-2 hover:border-slate-500 transition-colors">
-                        <div className="flex items-center gap-2 border-b border-slate-800 pb-1.5">
-                          <Cpu className="w-4 h-4 text-emerald-ship" />
-                          <h5 className="text-xs font-bold text-on-surface">{mod.name}</h5>
-                        </div>
-                        <div className="flex flex-col gap-1 text-[10px] text-slate-400">
-                          {Array.isArray(mod.files) && mod.files.length > 0 && (
-                            <div className="flex flex-col gap-1 mt-1">
-                              <div className="flex flex-wrap gap-1">
-                                {mod.files.map((file: string, idx: number) => (
-                                  <code key={idx} className="px-1.5 py-0.5 bg-slate-950 border border-slate-800 rounded text-[9px] text-slate-300 font-mono">
-                                    {getFileBasename(file)}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {(modules.length > 0 ? modules : files.map((f) => ({ name: getFileBasename(f), ownedFiles: [f], responsibility: '' }))).map((item, idx) => {
+                        const fileList = item.ownedFiles && item.ownedFiles.length > 0 ? item.ownedFiles : [item.name];
+                        const mainFile = fileList[0] || 'file';
+                        const info = getSimpleFileExplanation(mainFile, item.responsibility);
+
+                        return (
+                          <div key={idx} className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col gap-3 hover:border-indigo-500/50 transition-all shadow-md">
+                            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                              <div className="flex items-center gap-2">
+                                <span className="p-1.5 rounded-md bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
+                                  <Cpu className="w-3.5 h-3.5" />
+                                </span>
+                                <div>
+                                  <h6 className="text-xs font-bold text-slate-100">{item.name || getFileBasename(mainFile)}</h6>
+                                  <span className="text-[9px] font-mono text-indigo-400">{info.role}</span>
+                                </div>
+                              </div>
+                              <span className="bg-slate-950 border border-slate-800 text-slate-400 text-[9px] font-mono px-2 py-0.5 rounded">
+                                {info.easyName}
+                              </span>
+                            </div>
+
+                            {/* Easy Explanation */}
+                            <div className="bg-slate-950/70 border border-slate-855 rounded-lg p-2.5 text-xs text-slate-300 leading-relaxed">
+                              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">💡 Why this file exists:</div>
+                              {info.why}
+                            </div>
+
+                            {/* Owned files */}
+                            {fileList.length > 0 && (
+                              <div className="flex flex-wrap gap-1 items-center pt-1">
+                                <span className="text-[9px] text-slate-500 font-mono mr-1">Files:</span>
+                                {fileList.map((f: string, i: number) => (
+                                  <code key={i} className="px-1.5 py-0.5 bg-slate-950 border border-slate-800 rounded text-[9px] text-slate-300 font-mono">
+                                    {getFileBasename(f)}
                                   </code>
                                 ))}
                               </div>
-                            </div>
-                          )}
-                          {Array.isArray(mod.pages) && mod.pages.length > 0 && (
-                            <div>Pages: <code className="text-slate-300">{mod.pages.join(', ')}</code></div>
-                          )}
-                          {Array.isArray(mod.components) && mod.components.length > 0 && (
-                            <div>Components: <code className="text-slate-300">{mod.components.join(', ')}</code></div>
-                          )}
-                          {Array.isArray(mod.services) && mod.services.length > 0 && (
-                            <div>Services: <code className="text-slate-300">{mod.services.join(', ')}</code></div>
-                          )}
-                          {Array.isArray(mod.apis) && mod.apis.length > 0 && (
-                            <div>APIs: <code className="text-slate-300">{mod.apis.join(', ')}</code></div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
 
-                  {/* Entities list */}
+                  {/* Entities Schema */}
                   {entities.length > 0 && (
-                    <div className="bg-slate-900 border border-slate-700 rounded-lg p-4 flex flex-col gap-3">
-                      <h5 className="text-xs font-bold text-on-surface border-b border-slate-800 pb-1.5 flex items-center gap-2">
-                        <Database className="w-4 h-4 text-cyan-400" /> DB Entities Schema
+                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col gap-3">
+                      <h5 className="text-xs font-bold text-slate-300 border-b border-slate-800 pb-2 flex items-center gap-2">
+                        <Database className="w-4 h-4 text-cyan-400" /> Database Entities Schema
                       </h5>
                       <div className="grid grid-cols-3 gap-2">
                         {entities.map((entity) => (
-                          <div key={entity.name} className="bg-slate-950 border border-slate-800 rounded p-2 text-[10px]">
-                            <div className="font-bold text-slate-300 mb-1">{entity.name}</div>
-                            <div className="flex flex-col text-slate-500 gap-0.5">
+                          <div key={entity.name} className="bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-[10px]">
+                            <div className="font-bold text-cyan-300 mb-1">{entity.name}</div>
+                            <div className="flex flex-col text-slate-400 gap-0.5 font-mono">
                               {entity.fields?.map((f: any) => (
                                 <div key={f.name}>{f.name}: {f.type}</div>
                               ))}

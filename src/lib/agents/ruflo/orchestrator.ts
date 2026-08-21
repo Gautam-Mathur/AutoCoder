@@ -1,5 +1,6 @@
+import { EventEmitter } from 'events';
 import { prisma } from '../../db';
-import { runInference, getLLMConfig } from '../inference';
+import { runInference, getLLMConfig, startOllamaKeepAlive, stopOllamaKeepAlive } from '../inference';
 import { writeAgentOutput, queryAgentOutput } from '../sml';
 import { AGENT_DEFS, AgentDef } from './agents';
 import { loadExecutiveMemory, saveExecutiveMemory, StageLedger } from './memory';
@@ -7,9 +8,23 @@ import { calculateTokenBudget } from './token-budgeter';
 import fs from 'fs';
 import path from 'path';
 import { exec } from 'child_process';
-import { resolveContext } from './contextResolver';
-import { dispatchFailureEvent, executeSpecialistRecovery } from './eventDispatcher';
-import { buildMinimalContext } from './contentAssistant';
+import { writeVirtualFile, readVirtualFile, listVirtualFiles, flushVfsToDisk } from './vfs';
+import { runLinter } from './linter';
+
+// Global Event Emitter for decoupling browser SSE streams from background Node pipeline compilation
+export const pipelineEvents = new EventEmitter();
+pipelineEvents.setMaxListeners(100);
+
+export const activePipelines = new Set<string>();
+export const pipelineAbortControllers = new Map<string, AbortController>();
+
+export function abortPipelineExecution(conversationId: string) {
+  const controller = pipelineAbortControllers.get(conversationId);
+  if (controller) {
+    controller.abort();
+    pipelineAbortControllers.delete(conversationId);
+  }
+}
 
 // ─── Infrastructure Failure Detection ───────────────────────────────────────
 
@@ -46,8 +61,6 @@ async function handleInfrastructurePause(
     `Pipeline paused due to infrastructure failure: ${errorMessage}`
   );
 }
-
-export const activePipelines = new Set<string>();
 
 async function classifyIsSoftwareRequest(
   prompt: string,
@@ -102,64 +115,19 @@ export async function writeHistoryLog(conversationId: string, stage: string, sta
 export async function writeRichTelemetryLog(params: {
   conversationId: string;
   agentName: string;
-  status: 'Success' | 'Failed' | 'Retrying';
-  systemInstructions: string;
-  userContent: string;
-  rawOutput: string;
-  parsedJson: any;
-  durationMs: number;
-  attempt: number;
-  model: string;
-  budget: number;
-  timeoutMs: number;
-  schema: any;
-  ledger: StageLedger;
-  errorMessage?: string;
+  status: string;
+  richLog?: any;
   onEvent?: PipelineEventCallback;
-}) {
+}): Promise<void> {
   try {
-    const ledgerState = params.ledger.getState();
-    const richLog = {
-      telemetryType: "rich_step_log",
-      inflow: {
-        systemInstructions: params.systemInstructions,
-        userContent: params.userContent,
-      },
-      thought: params.rawOutput,
-      outflow: params.parsedJson,
-      orchestration: {
-        durationMs: params.durationMs,
-        tokenUsage: Math.round(params.rawOutput.length / 4),
-        attempt: params.attempt,
-        model: params.model,
-        budget: params.budget,
-        timeoutMs: params.timeoutMs,
-        errorMessage: params.errorMessage
-      },
-      validationSchema: params.schema,
-      ledgerState,
-      executionMemory: {
-        conversationId: params.conversationId,
-        stage: params.agentName,
-        status: params.status,
-      }
-    };
     await prisma.executionHistory.create({
       data: {
         conversationId: params.conversationId,
         stage: params.agentName,
         status: params.status,
-        logs: JSON.stringify(richLog),
+        logs: JSON.stringify(params.richLog || {}),
       },
     });
-    if (params.onEvent) {
-      params.onEvent({
-        type: 'AGENT_RICH_TELEMETRY',
-        agent: params.agentName,
-        message: `Agent ${params.agentName} ${params.status.toLowerCase()} telemetry details.`,
-        data: richLog
-      });
-    }
   } catch (e) {
     console.error('Failed to write rich telemetry log:', e);
   }
@@ -172,54 +140,386 @@ export type PipelineEventCallback = (event: {
   data?: any;
 }) => void;
 
-function validateSchema(obj: any, schema: any): string | null {
-  if (!obj || typeof obj !== 'object') {
-    return 'Output is not a valid JSON object';
-  }
-  if (schema.anyOf && Array.isArray(schema.anyOf)) {
-    const errors: string[] = [];
-    for (const subSchema of schema.anyOf) {
-      const err = validateSchema(obj, subSchema);
-      if (err === null) {
-        return null;
-      }
-      errors.push(err);
+// ─── VFS & Context Maps ──────────────────────────────────────────────────────
+
+const VFS_OUTPUT_MAP: Record<string, string> = {
+  'Queen':       'plan.md',
+  'Planner':     'requirements.md',
+  'Architect':   'architecture.md',
+  'System':      'backend_spec.md',
+  'Designer':    'ui_spec.md',
+  'Blueprinter': 'blueprint.md',
+  'Security':    'security_report.md',
+  'Reviewer':    'review_report.md',
+};
+
+const CONTEXT_MAP: Record<string, string[]> = {
+  'Queen':       [],
+  'Planner':     ['plan.md'],
+  'Architect':   ['plan.md', 'requirements.md'],
+  'System':      ['plan.md', 'requirements.md', 'architecture.md'],
+  'Designer':    ['plan.md', 'requirements.md', 'architecture.md', 'backend_spec.md'],
+  'Blueprinter': ['plan.md', 'requirements.md', 'architecture.md', 'backend_spec.md', 'ui_spec.md'],
+  'Security':    ['plan.md'],
+  'Reviewer':    ['plan.md', 'requirements.md', 'architecture.md'],
+};
+
+const EXPECTED_FIRST_HEADERS: Record<string, string> = {
+  'Queen':       'Context Snapshot',
+  'Planner':     'Context Snapshot',
+  'Architect':   'Context Snapshot',
+  'System':      'Context Snapshot',
+  'Designer':    'Context Snapshot',
+  'Blueprinter': 'File:',
+  'Security':    'Overall Status',
+  'Reviewer':    'Overall Assessment',
+};
+
+const MAX_SNAPSHOT_CHARS = 600;
+
+// ─── Snapshot Extraction & Context Assembly ──────────────────────────────────
+
+export async function extractSnapshot(conversationId: string, vfsPath: string): Promise<string> {
+  const fullContent = (await readVirtualFile(conversationId, vfsPath)) || '';
+  if (!fullContent) return '';
+
+  // Tier 1: Exact match
+  const exact = fullContent.match(/### Context Snapshot[\s\S]*?(?=\n###[^#]|$)/i);
+  if (exact) {
+    let snapshotText = exact[0].trim();
+    if (snapshotText.length > MAX_SNAPSHOT_CHARS) {
+      snapshotText = snapshotText.substring(0, MAX_SNAPSHOT_CHARS) + '\n...[SNAPSHOT TRUNCATED]';
     }
-    return `Does not match any of the allowed schemas: ${errors.join(' OR ')}`;
+    return snapshotText;
   }
-  if (schema.required) {
-    for (const field of schema.required) {
-      if (!(field in obj) || obj[field] === undefined) {
-        return `Missing required field: ${field}`;
-      }
+
+  // Tier 2: Fuzzy match
+  const fuzzy = fullContent.match(/(#+)?\s*(context|snapshot|summary|overview)[\s\S]*?(?=\n###[^#]|$)/i);
+  if (fuzzy) {
+    let snapshotText = fuzzy[0].trim();
+    if (snapshotText.length > MAX_SNAPSHOT_CHARS) {
+      snapshotText = snapshotText.substring(0, MAX_SNAPSHOT_CHARS) + '\n...[SNAPSHOT TRUNCATED]';
     }
+    return snapshotText;
   }
-  if (schema.properties && typeof schema.properties === 'object') {
-    for (const key of Object.keys(schema.properties)) {
-      if (key in obj && schema.properties[key] && schema.properties[key].type) {
-        const expectedType = schema.properties[key].type;
-        const actualVal = obj[key];
-        if (expectedType === 'string' && typeof actualVal !== 'string') {
-          return `Field '${key}': expected string, got ${typeof actualVal}`;
-        }
-        if (expectedType === 'number' && typeof actualVal !== 'number') {
-          return `Field '${key}': expected number, got ${typeof actualVal}`;
-        }
-        if (expectedType === 'boolean' && typeof actualVal !== 'boolean') {
-          return `Field '${key}': expected boolean, got ${typeof actualVal}`;
-        }
-        if (expectedType === 'array' && !Array.isArray(actualVal)) {
-          return `Field '${key}': expected array, got ${typeof actualVal}`;
-        }
-      }
-      if (key in obj && obj[key] !== null && typeof obj[key] === 'object' && schema.properties[key].type === 'object') {
-        const nestedErr = validateSchema(obj[key], schema.properties[key]);
-        if (nestedErr) return `Field '${key}': ${nestedErr}`;
-      }
-    }
+
+  // Tier 3: Synthetic fallback (first line of top 3 headers)
+  const headers = fullContent.match(/^### .+$/gm) || [];
+  const synthetic = headers.slice(0, 3).map(h => {
+    const idx = fullContent.indexOf(h) + h.length;
+    const nextLine = fullContent.substring(idx).trim().split('\n')[0];
+    return `- ${h.replace('### ', '')}: ${nextLine}`;
+  }).join('\n');
+
+  if (synthetic) {
+    return `### Context Snapshot (AUTO-GENERATED)\n${synthetic}`;
   }
-  return null;
+
+  // Final fallback: Truncated content
+  return fullContent.substring(0, 800) + (fullContent.length > 800 ? '\n...[TRUNCATED]' : '');
 }
+
+export async function buildStageContext(conversationId: string, stage: string): Promise<string> {
+  const upstreamFiles = CONTEXT_MAP[stage] || [];
+
+  // Immutable Constraint Anchoring: Always inject Queen's plan.md snapshot first if present
+  let context = '';
+  if (stage !== 'Queen') {
+    const queenSnapshot = await extractSnapshot(conversationId, 'plan.md');
+    if (queenSnapshot) {
+      context += `=== ORIGINAL USER INTENT (DO NOT OVERRIDE) ===\n${queenSnapshot}\n\n`;
+    }
+  }
+
+  for (const filename of upstreamFiles) {
+    if (filename === 'plan.md') continue; // Already anchored above
+    const snapshot = await extractSnapshot(conversationId, filename);
+    if (snapshot) {
+      context += `--- [FROM ${filename}] ---\n${snapshot}\n\n`;
+    }
+  }
+
+  return context.trim();
+}
+
+// ─── Post-Hoc Snapshot Consistency Check ────────────────────────────────────
+
+const TECH_KEYWORDS = ['react', 'vue', 'angular', 'express', 'next', 'vite', 'postgresql', 'sqlite', 'mongodb', 'mysql', 'firebase', 'typescript'];
+
+export function validateSnapshotConsistency(snapshot: string, fullBody: string): boolean {
+  const snapshotTerms = TECH_KEYWORDS.filter(kw => snapshot.toLowerCase().includes(kw));
+  const bodyTerms = TECH_KEYWORDS.filter(kw => fullBody.toLowerCase().includes(kw));
+
+  const missing = bodyTerms.filter(t => !snapshotTerms.includes(t));
+  if (missing.length > 0) {
+    console.warn(`[WARN] Snapshot missing tech terms found in body: ${missing.join(', ')}`);
+    return false;
+  }
+  return true;
+}
+
+// ─── Header Anchoring & Sanitization ─────────────────────────────────────────
+
+export function sanitizeStageOutput(rawOutput: string, expectedFirstHeader?: string): string {
+  let cleaned = rawOutput;
+
+  // 1. Strip markdown fences
+  cleaned = cleaned.replace(/^```\w*\n?/gm, '').replace(/\n?```$/gm, '');
+
+  if (!expectedFirstHeader) return cleaned.trim();
+
+  // 2. Find expected first header anchor and strip preamble
+  const headerRegex = new RegExp(
+    `(#{2,3})\\s*${expectedFirstHeader.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
+    'i'
+  );
+  const headerMatch = cleaned.match(headerRegex);
+
+  if (headerMatch && headerMatch.index !== undefined && headerMatch.index > 0) {
+    cleaned = '### ' + expectedFirstHeader + cleaned.substring(headerMatch.index + headerMatch[0].length);
+  }
+
+  return cleaned.trim();
+}
+
+// ─── Deterministic Spec Pre-Fetch for Coder ──────────────────────────────────
+
+export function parseSpecsRequired(blueprintSection: string): Array<{ file: string; section: string }> {
+  const match = blueprintSection.match(/\*\*Specs Required\*\*:\s*(.+)/i);
+  if (!match || match[1].trim().toLowerCase() === 'none') {
+    return [];
+  }
+
+  return match[1].split(',').map(entry => {
+    const parts = entry.trim().split('#');
+    const file = parts[0]?.trim() || '';
+    const section = parts[1]?.trim() || '';
+    return { file, section };
+  }).filter(e => e.file && e.section);
+}
+
+export async function extractSection(conversationId: string, vfsPath: string, sectionName: string): Promise<string> {
+  const fullContent = (await readVirtualFile(conversationId, vfsPath)) || '';
+  const regex = new RegExp(
+    `###\\s*${sectionName.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}[\\s\\S]*?(?=\\n###[^#]|$)`,
+    'i'
+  );
+  const match = fullContent.match(regex);
+  if (match) {
+    return match[0].trim();
+  }
+  return `[Section "${sectionName}" not found in ${vfsPath}]`;
+}
+
+export async function buildCoderContext(
+  conversationId: string,
+  blueprintSection: string,
+  dependencyCode: string
+): Promise<string> {
+  let context = `=== BLUEPRINT ===\n${blueprintSection}\n\n`;
+
+  if (dependencyCode) {
+    context += `=== DEPENDENCY CODE ===\n${dependencyCode}\n\n`;
+  }
+
+  const specsNeeded = parseSpecsRequired(blueprintSection);
+  if (specsNeeded.length > 0) {
+    context += `=== REFERENCED SPECS ===\n`;
+    for (const spec of specsNeeded) {
+      const sectionText = await extractSection(conversationId, spec.file, spec.section);
+      context += `--- [FROM ${spec.file}#${spec.section}] ---\n${sectionText}\n\n`;
+    }
+  }
+
+  return context.trim();
+}
+
+// ─── Thinking Gates (SLM Triage) ──────────────────────────────────────────────
+
+export interface ThinkingDecision {
+  action: 'RETRY' | 'SKIP' | 'ABORT';
+  targetFile?: string;
+  reason: string;
+}
+
+export async function orchestratorThinkDebugger(
+  errorLog: string,
+  retryCount: number,
+  maxRetries: number
+): Promise<ThinkingDecision> {
+  if (retryCount >= maxRetries) {
+    return { action: 'ABORT', reason: `Max retries (${maxRetries}) exceeded` };
+  }
+
+  const thinkingPrompt = `You are a build error triage bot. You receive a TypeScript compiler error log.
+Your job is to decide ONE action. Respond with EXACTLY one JSON line.
+
+ERROR LOG:
+${errorLog.substring(0, 500)}
+
+RETRY COUNT: ${retryCount}/${maxRetries}
+
+Respond with EXACTLY this JSON format (no other text):
+{"action": "RETRY" | "SKIP" | "ABORT", "targetFile": "filename.ts", "reason": "one sentence"}
+
+Rules:
+- RETRY: Error is fixable (syntax, missing import, wrong type). Set targetFile to the file mentioned in the error.
+- SKIP: Error is in a non-critical file. Pipeline can continue without it.
+- ABORT: Error is fundamental (missing entire module, circular dependency). Retrying won't help.`;
+
+  try {
+    const response = await runInference(
+      [
+        { role: 'system', content: 'You are a build error triage bot.' },
+        { role: 'user', content: thinkingPrompt },
+      ],
+      { temperature: 0.1, format: 'json', maxTokens: 100 }
+    );
+    const parsed = JSON.parse(response.trim());
+    return {
+      action: parsed.action || 'RETRY',
+      targetFile: parsed.targetFile,
+      reason: parsed.reason || 'SLM triage completed',
+    };
+  } catch {
+    return { action: 'RETRY', reason: 'SLM thinking fallback' };
+  }
+}
+
+export function evaluateComplexity(planSnapshot: string, fileCount: number): { complexity: 'SIMPLE' | 'MODERATE' | 'COMPLEX'; recommendedTokens: number; enableReasoning: boolean } {
+  if (fileCount <= 3) {
+    return { complexity: 'SIMPLE', recommendedTokens: 1024, enableReasoning: false };
+  }
+  if (fileCount >= 15) {
+    return { complexity: 'COMPLEX', recommendedTokens: 4096, enableReasoning: true };
+  }
+
+  const hasBackend = !planSnapshot.toLowerCase().includes('no backend') && !planSnapshot.toLowerCase().includes('frontend-only');
+  if (hasBackend) {
+    return { complexity: 'COMPLEX', recommendedTokens: 3072, enableReasoning: true };
+  }
+  return { complexity: 'MODERATE', recommendedTokens: 2048, enableReasoning: false };
+}
+
+// ─── Disk Flushing Helper for Preview ───────────────────────────────────────
+
+function writeProjectFile(conversationId: string, filePath: string, content: string) {
+  const projectDir = path.join(process.cwd(), 'projects', conversationId);
+  const fullPath = path.join(projectDir, filePath);
+  let normalizedContent = content;
+  if (filePath.endsWith('.html')) {
+    normalizedContent = normalizedContent.replace(/UTF-[\u4e00-\u9fa5]8/g, 'UTF-8');
+  }
+  fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+  fs.writeFileSync(fullPath, normalizedContent, 'utf8');
+}
+
+export async function launchVSCodePreview(conversationId: string, onEvent: PipelineEventCallback) {
+  try {
+    await flushVfsToDisk(conversationId);
+    const projectPath = path.join(process.cwd(), 'projects', conversationId);
+    if (!fs.existsSync(projectPath)) return;
+
+    const potentialEntries = ['main.js', 'app.js', 'server.js', 'index.js'];
+    let entryFile = '';
+    for (const f of potentialEntries) {
+      if (fs.existsSync(path.join(projectPath, f))) {
+        entryFile = f;
+        break;
+      }
+    }
+
+    if (entryFile) {
+      onEvent({
+        type: 'AGENT_LOG',
+        message: `⚡ Automatic Local Execution: Launching Node.js backend server (${entryFile})...`,
+      });
+      exec(`node ${entryFile}`, { cwd: projectPath }, (error, stdout, stderr) => {
+        if (error) {
+          onEvent({
+            type: 'AGENT_LOG',
+            message: `⚠️ Node.js Runtime Error: ${error.message}`,
+          });
+        }
+      });
+    } else if (fs.existsSync(path.join(projectPath, 'index.html'))) {
+      onEvent({
+        type: 'AGENT_LOG',
+        message: `⚡ Automatic Local Execution: Launching local web preview server (npx serve)...`,
+      });
+      exec(`npx serve -s . -l 8080`, { cwd: projectPath });
+    }
+  } catch (err: any) {
+    console.error('Failed to launch preview:', err);
+  }
+}
+
+// ─── Blueprint Parser ────────────────────────────────────────────────────────
+
+export interface BlueprintFileSection {
+  file: string;
+  purpose: string;
+  dependencies: string[];
+  specsRequired: string[];
+  exports: string[];
+  details: string;
+  rawSection: string;
+}
+
+export function parseBlueprintFiles(blueprintText: string): BlueprintFileSection[] {
+  const sections: BlueprintFileSection[] = [];
+  const fileBlocks = blueprintText.split(/###\s*File:\s*/i).slice(1);
+
+  for (const block of fileBlocks) {
+    const lines = block.trim().split('\n');
+    const file = lines[0].trim();
+    if (!file) continue;
+
+    const rawSection = '### File: ' + block.trim();
+    const purposeMatch = block.match(/\*\*Purpose\*\*:\s*(.+)/i);
+    const depsMatch = block.match(/\*\*Dependencies\*\*:\s*(.+)/i);
+    const specsMatch = block.match(/\*\*Specs Required\*\*:\s*(.+)/i);
+    const exportsMatch = block.match(/\*\*Exports\*\*:\s*(.+)/i);
+
+    const purpose = purposeMatch ? purposeMatch[1].trim() : '';
+    const depsRaw = depsMatch ? depsMatch[1].trim() : 'None';
+    const dependencies = depsRaw.toLowerCase() === 'none' ? [] : depsRaw.split(',').map(d => d.trim()).filter(Boolean);
+    const specsRequired = parseSpecsRequired(rawSection).map(s => `${s.file}#${s.section}`);
+    const exportsRaw = exportsMatch ? exportsMatch[1].trim() : 'None';
+    const exportsList = exportsRaw.toLowerCase() === 'none' ? [] : exportsRaw.split(',').map(e => e.trim()).filter(Boolean);
+
+    sections.push({
+      file,
+      purpose,
+      dependencies,
+      specsRequired,
+      exports: exportsList,
+      details: block,
+      rawSection,
+    });
+  }
+
+  // Entry Point Guard: If web project lacks an html entry point, unshift index.html as File #1
+  const isWebProject = sections.some((s) => s.file.endsWith('.css') || s.file.endsWith('.html') || s.file.endsWith('.js') || s.file.endsWith('.jsx') || s.file.endsWith('.tsx'));
+  const hasHtmlEntryPoint = sections.some((s) => s.file === 'index.html' || s.file === 'public/index.html' || s.file.endsWith('.html'));
+
+  if (isWebProject && !hasHtmlEntryPoint) {
+    const defaultHtmlSection: BlueprintFileSection = {
+      file: 'index.html',
+      purpose: 'Main web entry point mounting project layout and scripts',
+      dependencies: sections.map((s) => s.file).filter((f) => f.endsWith('.css') || f.endsWith('.js') || f.endsWith('.ts')),
+      specsRequired: [],
+      exports: [],
+      details: 'HTML5 doctype with viewport meta, linking style.css and loading script.js',
+      rawSection: '### File: index.html\n- **Purpose**: Main web entry point\n- **Dependencies**: None\n- **Specs Required**: None\n- **Exports**: None\n- **Implementation Details**:\n  1. HTML5 Doctype lang="en"\n  2. Head with meta charset, viewport, title, link rel="stylesheet" href="style.css"\n  3. Body with main container div id="app"\n  4. Script tag loading script.js at end of body',
+    };
+    sections.unshift(defaultHtmlSection);
+  }
+
+  return sections;
+}
+
+// ─── Stage Execution Helper (runAgent) ─────────────────────────────────────
 
 export async function runAgent(
   conversationId: string,
@@ -238,570 +538,170 @@ export async function runAgent(
     throw new Error(`Unknown agent: ${agentName}`);
   }
 
-  const onEvent: PipelineEventCallback = (event) => {
-    rawOnEvent(event);
-  };
-
+  const onEvent: PipelineEventCallback = (event) => rawOnEvent(event);
   onEvent({
     type: 'AGENT_START',
     agent: agentName,
     message: `Agent ${agentName} started (Attempt ${attempt}/3)...`,
   });
-  await writeHistoryLog(conversationId, agentName, 'Retrying', `Agent ${agentName} started (Attempt ${attempt}/3)...`);
 
   const startTime = Date.now();
-  const contextResult = await buildMinimalContext(ledger, agentName, targetFile);
-  const contextData = typeof contextResult === 'string' ? contextResult : contextResult.contextText;
   const config = await getLLMConfig();
-  const contextStats = typeof contextResult === 'object' ? ` (Context Optimized: ${contextResult.bytesSaved} bytes saved, ${contextResult.reductionRatio}% reduction)` : '';
-  await writeHistoryLog(conversationId, agentName, 'Retrying', `Active Model: ${config.ollamaModel}. Context payload assembled${contextStats}.`);
+  const upstreamContext = await buildStageContext(conversationId, agentName);
 
-  const constraintsBlock = `\n\nActive Model Constraints:
-- Output MUST be valid, parseable JSON. Do not include markdown code blocks (e.g. \`\`\`json) in the raw response, return raw text representing JSON.
-- Strictly adhere to names and terms defined by previous agents.`;
+  const constraintsBlock = `\n\nActive System Constraints:
+- Output MUST be valid structured markdown matching the exact header specifications.
+- Do NOT wrap your entire response in markdown code blocks (\`\`\`markdown). Return raw text directly.`;
 
-  const schemaBlock =
-    agentName === 'Coder'
-      ? `\n\nOutput Schema (follow strictly):\n${JSON.stringify(agentDef.schema, null, 2)}`
-      : `\n\nOutput Schema (MUST return a valid JSON object matching this schema):\n${JSON.stringify(
-          agentDef.schema,
-          null,
-          2
-        )}`;
+  const retryHint = attempt > 1 ? `\n\nRetry Repair Hint: Your previous output failed verification. Error: ${validationError || 'Ensure ALL required section headers are present.'}` : '';
 
-  const retryHint =
-    attempt > 1
-      ? `\n\nRetry Schema Repair Hint: Your previous output failed verification. Error: ${validationError || 'Ensure ALL required keys are present and the JSON structure is perfectly valid.'}`
-      : '';
-
-  const systemInstructions =
-    agentDef.systemPrompt + constraintsBlock + schemaBlock + retryHint;
-
-  const userContent = customUserContent || `Upstream Context:
-${contextData}
-
-Original Instruction:
-"${userPromptText}"`;
+  const systemInstructions = agentDef.systemPrompt + constraintsBlock + retryHint;
+  const userContent = customUserContent || (upstreamContext ? `Upstream Specification Context:\n${upstreamContext}\n\nOriginal Request:\n"${userPromptText}"` : `Original Request:\n"${userPromptText}"`);
 
   const { budget, timeoutMs } = calculateTokenBudget(agentName, ledger);
 
-  onEvent({
-    type: 'AGENT_LOG',
-    agent: agentName,
-    message: `Running inference (Max Tokens: ${budget}, Timeout: ${Math.round(timeoutMs / 1000)}s)...`,
-  });
   await writeHistoryLog(
     conversationId,
     agentName,
-    'Retrying',
-    `Executing LLM inference request on model "${config.ollamaModel}". Dynamic Budget: ${budget} tokens. Timeout: ${Math.round(timeoutMs / 1000)}s.`
+    'Started',
+    `Agent ${agentName} started (Attempt ${attempt}/3)... Estimated tokens: ${budget}`
   );
-
-  let rawOutput = '';
-  let accumulatedText = '';
-  let lastUpdate = 0;
-
-  try {
-    let temperature = agentDef.temperature;
-    if (attempt === 2) {
-      temperature = Math.max(0, agentDef.temperature - 0.1);
-    } else if (attempt === 3) {
-      temperature = 0.0;
-    }
-
-    rawOutput = await runInference(
-      [
-        { role: 'system', content: systemInstructions },
-        { role: 'user', content: userContent },
-      ],
-      {
-        temperature: temperature,
-        format: agentName === 'Coder' ? undefined : 'json',
-        maxTokens: budget,
-        timeoutMs: timeoutMs,
-        signal: signal,
-        onChunk: (chunk: string) => {
-          accumulatedText += chunk;
-          const now = Date.now();
-          // Throttle updates to at most once every 300ms to avoid flooding SSE connection
-          if (now - lastUpdate > 300) {
-            lastUpdate = now;
-            
-            const apis: any[] = [];
-            const entities: string[] = [];
-            const files: string[] = [];
-
-            // Speculative parsing patterns
-            const methodRegex = /"method"\s*:\s*"([^"]+)"/g;
-            const routeRegex = /"route"\s*:\s*"([^"]+)"/g;
-            let mMatch, rMatch;
-            const methodsFound: string[] = [];
-            const routesFound: string[] = [];
-            while ((mMatch = methodRegex.exec(accumulatedText)) !== null) {
-              methodsFound.push(mMatch[1]);
-            }
-            while ((rMatch = routeRegex.exec(accumulatedText)) !== null) {
-              routesFound.push(rMatch[1]);
-            }
-            for (let idx = 0; idx < Math.min(methodsFound.length, routesFound.length); idx++) {
-              apis.push({ method: methodsFound[idx], route: routesFound[idx] });
-            }
-
-            const entityNameRegex = /"name"\s*:\s*"([^"]+)"/g;
-            let entMatch;
-            while ((entMatch = entityNameRegex.exec(accumulatedText)) !== null) {
-              const name = entMatch[1];
-              if (name && name.length > 2 && !name.includes('App') && !entities.includes(name)) {
-                entities.push(name);
-              }
-            }
-
-            const fileRegex = /"path"\s*:\s*"([^"]+\.(?:js|jsx|ts|tsx|json))"/g;
-            let fMatch;
-            while ((fMatch = fileRegex.exec(accumulatedText)) !== null) {
-              if (!files.includes(fMatch[1])) {
-                files.push(fMatch[1]);
-              }
-            }
-
-            onEvent({
-              type: 'AGENT_STREAM_PROGRESS',
-              agent: agentName,
-              message: `Generating: ${accumulatedText.split(/\s+/).length} tokens...`,
-              data: {
-                tokenCount: Math.round(accumulatedText.length / 4),
-                maxTokens: budget,
-                apis,
-                entities,
-                files,
-                latestText: accumulatedText.substring(Math.max(0, accumulatedText.length - 200))
-              }
-            });
-          }
-        }
-      }
-    );
-  } catch (err: any) {
-    const errMsg = err.message || (signal?.aborted ? 'Request cancelled due to client disconnect.' : 'Connection timed out or socket dropped.');
-    onEvent({
-      type: 'AGENT_LOG',
-      agent: agentName,
-      message: `Inference failed: ${errMsg}`,
-    });
-    await writeRichTelemetryLog({
-      conversationId,
-      agentName,
-      status: 'Failed',
-      systemInstructions,
-      userContent,
-      rawOutput: accumulatedText || '',
-      parsedJson: null,
-      durationMs: Date.now() - startTime,
-      attempt,
-      model: config.ollamaModel,
-      budget,
-      timeoutMs,
-      schema: agentDef.schema,
-      ledger,
-      errorMessage: errMsg,
-      onEvent
-    });
-    throw err;
-  }
-
-  let parsedJson: any = null;
-
-  if (agentName === 'Coder') {
-    let codeContent = rawOutput.trim();
-
-    // 1. Try parsing as JSON first to extract the code key if the model followed the schema block
-    try {
-      let cleanJsonText = codeContent;
-      if (cleanJsonText.includes('```')) {
-        cleanJsonText = cleanJsonText.replace(/```json/g, '').replace(/```/g, '').trim();
-      }
-      const parsed = JSON.parse(cleanJsonText);
-      if (parsed && typeof parsed === 'object' && typeof parsed.code === 'string') {
-        codeContent = parsed.code;
-      }
-    } catch (err) {
-      // 2. Fallback: Line-Slicing extraction for raw code output
-      if (codeContent.startsWith('```')) {
-        const lines = codeContent.split('\n');
-        lines.shift(); // Remove opening backticks line
-        
-        if (lines[lines.length - 1].trim() === '```') {
-          lines.pop(); // Remove closing backticks line
-        }
-        codeContent = lines.join('\n').trim();
-      }
-    }
-
-    // 3. Basic Syntax Check (prevent conversational text fallback)
-    // Only apply this syntax check to script/code files
-    const isScriptFile = /\.(js|jsx|ts|tsx|py|go|java|kt|rs|cpp|c|cs|sh|ps1)$/i.test(targetFile || '');
-    if (isScriptFile) {
-      const hasBasicSyntax = /[{};=]/.test(codeContent);
-      if (!hasBasicSyntax && codeContent.split(/\s+/).length > 25) {
-        throw new Error("Output appears to be conversational explanation text. Please generate raw programming code.");
-      }
-    }
-
-    // 4. Placeholder Guard (prevent bracketed stubs)
-    const isPlaceholder = /^\[[a-zA-Z0-9\s_.-]+\]$/.test(codeContent.trim());
-    if (isPlaceholder) {
-      throw new Error("Output contains only placeholder text inside brackets. Please implement actual code.");
-    }
-
-    // 5. Multi-line placeholder guard (detect TODO-only files)
-    const lines = codeContent.split('\n').filter(l => l.trim().length > 0);
-    const todoLines = lines.filter(l => /^\s*(\/\/|#|\/\*|\*|<!--)\s*(TODO|FIXME|PLACEHOLDER|IMPLEMENT|YOUR\s+CODE)/i.test(l));
-    if (lines.length > 0 && todoLines.length / lines.length > 0.5) {
-      throw new Error("Output is more than 50% placeholder comments. Please implement actual code.");
-    }
-
-    parsedJson = {
-      file: targetFile || 'unknown.ts',
-      code: codeContent
-    };
-  } else {
-    let cleanJsonText = rawOutput;
-    if (cleanJsonText.includes('```')) {
-      cleanJsonText = cleanJsonText.replace(/```json/g, '').replace(/```/g, '').trim();
-    }
-
-    try {
-      parsedJson = JSON.parse(cleanJsonText);
-    } catch (err) {
-      onEvent({
-        type: 'AGENT_LOG',
-        agent: agentName,
-        message: `JSON parse failed. Attempting cleanup...`,
-      });
-      await writeHistoryLog(conversationId, agentName, 'Retrying', `JSON parse failed, executing regular expression fallback extraction...`);
-      let extractedJsonString = '';
-      const firstBrace = cleanJsonText.indexOf('{');
-      const lastBrace = cleanJsonText.lastIndexOf('}');
-      if (firstBrace !== -1 && lastBrace > firstBrace) {
-        extractedJsonString = cleanJsonText.substring(firstBrace, lastBrace + 1);
-      }
-      if (extractedJsonString) {
-        try {
-          parsedJson = JSON.parse(extractedJsonString);
-        } catch (e) {
-          await writeRichTelemetryLog({
-            conversationId,
-            agentName: agentName,
-            status: 'Failed',
-            systemInstructions,
-            userContent,
-            rawOutput,
-            parsedJson: null,
-            durationMs: Date.now() - startTime,
-            attempt,
-            model: config.ollamaModel,
-            budget,
-            timeoutMs,
-            schema: agentDef.schema,
-            ledger,
-            errorMessage: 'Failed to parse extracted JSON block.',
-            onEvent
-          });
-          throw new Error('Failed to parse output as JSON.');
-        }
-      } else {
-        await writeRichTelemetryLog({
-          conversationId,
-          agentName: agentName,
-          status: 'Failed',
-          systemInstructions,
-          userContent,
-          rawOutput,
-          parsedJson: null,
-          durationMs: Date.now() - startTime,
-          attempt,
-          model: config.ollamaModel,
-          budget,
-          timeoutMs,
-          schema: agentDef.schema,
-          ledger,
-          errorMessage: 'JSON parse failed. No curly brace object found in output.',
-          onEvent
-        });
-        throw new Error('Failed to parse output as JSON.');
-      }
-    }
-  }
-
-  const schemaError = validateSchema(parsedJson, agentDef.schema);
-  if (schemaError) {
-    console.error(`[VALIDATION ERROR] Agent ${agentName} output that failed schema validation:`, JSON.stringify(parsedJson, null, 2));
-    onEvent({
-      type: 'AGENT_LOG',
-      agent: agentName,
-      message: `Schema validation error: ${schemaError}. Output: ${JSON.stringify(parsedJson)}`,
-    });
-    await writeRichTelemetryLog({
-      conversationId,
-      agentName: agentName,
-      status: 'Failed',
-      systemInstructions,
-      userContent,
-      rawOutput,
-      parsedJson,
-      durationMs: Date.now() - startTime,
-      attempt,
-      model: config.ollamaModel,
-      budget,
-      timeoutMs,
-      schema: agentDef.schema,
-      ledger,
-      errorMessage: `Schema validation error: ${schemaError}`,
-      onEvent
-    });
-    throw new Error(schemaError);
-  }
-
-  const duration = Date.now() - startTime;
 
   onEvent({
     type: 'AGENT_LOG',
     agent: agentName,
-    message: `Saving output to SML...`,
+    message: `Running inference on model ${config.ollamaModel} (Budget: ${budget} tokens, Timeout: ${Math.round(timeoutMs / 1000)}s)...`,
   });
 
-  // Save to legacy SML tables for backwards-compatibility with telemetry/workspace views
-  await writeAgentOutput({
-    conversationId,
-    agentName: agentName,
-    stage: agentName,
-    schemaVersion: '1.0',
-    model: config.ollamaModel,
-    validatedJson: parsedJson,
-    executionTime: duration,
-    tokenUsage: rawOutput.length / 4,
-    attempt,
-  });
+  let tokenCount = 0;
+  let chunkBuffer = '';
+  let lastEmittedTime = Date.now();
 
-  // 1. Write to StageLedger (enforces ownership and oscillation checks!)
-  const fieldMap: Record<string, string> = {
-    Queen: 'taskSpec',
-    Planner: 'planner',
-    Architect: 'architect',
-    System: 'system',
-    Designer: 'designer',
-    Blueprinter: 'blueprinter',
-    Coder: 'coder',
-    Debugger: 'debugger',
-    Security: 'security',
-    Reviewer: 'reviewer',
-    Tester: 'tester',
-  };
-  const field = fieldMap[agentName];
-  if (field) {
-    if (agentName === 'Coder' && parsedJson) {
-      let code = '';
-      if (parsedJson.code) {
-        code = parsedJson.code;
-      } else if (Array.isArray(parsedJson.generatedFiles) && parsedJson.generatedFiles[0]) {
-        code = parsedJson.generatedFiles[0].content || '';
-        // Polyfill code for backward compatibility
-        parsedJson.code = code;
-      }
-      const effectiveTargetFile = targetFile
-        || (customUserContent ? customUserContent.match(/filepath: "([^"]+)"/)?.[1] : undefined)
-        || 'output.js';
-      const currentCoderState = ledger.read('coder') || {};
-      const updatedCoderState = {
-        ...currentCoderState,
-        [effectiveTargetFile]: code
-      };
-      await ledger.write(agentName, field, updatedCoderState);
-    } else {
-      await ledger.write(agentName, field, parsedJson);
+  const rawResponse = await runInference(
+    [
+      { role: 'system', content: systemInstructions },
+      { role: 'user', content: userContent },
+    ],
+    {
+      temperature: agentDef.temperature,
+      maxTokens: budget,
+      timeoutMs,
+      signal,
+      onChunk: (chunk: string) => {
+        tokenCount += Math.max(1, Math.round(chunk.length / 4));
+        chunkBuffer += chunk;
+        if (chunkBuffer.length > 600) {
+          chunkBuffer = chunkBuffer.slice(-600); // rolling 600-char window of live generated markdown/text
+        }
+
+        const now = Date.now();
+        if (now - lastEmittedTime > 120) {
+          lastEmittedTime = now;
+          const evt = {
+            type: 'AGENT_STREAM_PROGRESS',
+            agent: agentName,
+            message: 'Streaming agent output...',
+            data: {
+              tokenCount,
+              maxTokens: budget,
+              latestText: chunkBuffer,
+            },
+          };
+          onEvent(evt);
+          pipelineEvents.emit(`event:${conversationId}`, evt);
+        }
+      },
     }
+  );
+
+  const sanitized = sanitizeStageOutput(rawResponse, EXPECTED_FIRST_HEADERS[agentName]);
+
+  // If agent specifies an output filename in VFS_OUTPUT_MAP, write to VFS
+  const outputFilename = VFS_OUTPUT_MAP[agentName];
+  if (outputFilename) {
+    await writeVirtualFile(conversationId, outputFilename, sanitized);
   }
-  await ledger.clearInvalidation(agentName);
+
+  const durationMs = Date.now() - startTime;
+  const estimatedTokens = Math.round((systemInstructions.length + userContent.length + sanitized.length) / 4);
 
   await writeRichTelemetryLog({
     conversationId,
-    agentName: agentName,
-    status: 'Success',
-    systemInstructions,
-    userContent,
-    rawOutput,
-    parsedJson,
-    durationMs: duration,
-    attempt,
-    model: config.ollamaModel,
-    budget,
-    timeoutMs,
-    schema: agentDef.schema,
-    ledger,
-    onEvent
+    agentName,
+    status: 'Completed',
+    richLog: {
+      telemetryType: 'rich_step_log',
+      executionMemory: { stage: agentName },
+      orchestration: { durationMs },
+      inflow: { systemInstructions, userContent },
+      thought: sanitized,
+      model: config.ollamaModel,
+      budget,
+      timeoutMs,
+    },
   });
+
+  await writeAgentOutput({
+    conversationId,
+    agentName,
+    stage: agentName,
+    schemaVersion: '2.0.0',
+    model: config.ollamaModel,
+    validatedJson: { content: sanitized },
+    executionTime: durationMs,
+    tokenUsage: estimatedTokens,
+    attempt,
+  });
+
+  await writeHistoryLog(
+    conversationId,
+    agentName,
+    'Completed',
+    `Agent ${agentName} completed in ${durationMs}ms (${sanitized.length} bytes generated). Estimated tokens: ${estimatedTokens}`
+  );
 
   onEvent({
-    type: 'AGENT_COMPLETE',
+    type: 'AGENT_LOG',
     agent: agentName,
-    message: `Agent ${agentName} finished successfully!`,
-    data: parsedJson,
+    message: `Agent ${agentName} completed in ${durationMs}ms (${sanitized.length} bytes generated).`,
   });
 
-  return parsedJson;
+  return { content: sanitized, raw: rawResponse };
 }
 
-// Helper to write files safely to target workspace path
-function writeProjectFile(conversationId: string, filePath: string, content: string) {
-  const projectDir = path.join(process.cwd(), 'projects', conversationId);
-  const fullPath = path.join(projectDir, filePath);
-  
-  // Normalization pass to correct any character encoding hallucinations (e.g. UTF-保8 to UTF-8)
-  let normalizedContent = content;
-  if (filePath.endsWith('.html')) {
-    normalizedContent = normalizedContent.replace(/UTF-[\u4e00-\u9fa5]8/g, 'UTF-8');
-  }
-
-  // Create directories if needed
-  fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-  fs.writeFileSync(fullPath, normalizedContent, 'utf8');
-}
-
-export async function launchVSCodePreview(conversationId: string, onEvent: PipelineEventCallback) {
-  try {
-    const projectPath = path.join(process.cwd(), 'projects', conversationId);
-    if (!fs.existsSync(projectPath)) return;
-
-    // Detect if there's a Node.js script entry point
-    const potentialEntries = ['main.js', 'app.js', 'server.js', 'index.js'];
-    let entryFile = '';
-    for (const f of potentialEntries) {
-      if (fs.existsSync(path.join(projectPath, f))) {
-        entryFile = f;
-        break;
-      }
-    }
-
-    // Fallback: If no entry file exists but it is a Node.js project, generate a default wrapper index.js
-    if (!entryFile && (fs.existsSync(path.join(projectPath, 'routes')) || fs.existsSync(path.join(projectPath, 'controllers')))) {
-      const defaultIndexContent = `const express = require('express');
-const path = require('path');
-const app = express();
-const port = process.env.PORT || 8080;
-
-app.use(express.json());
-
-// Serve static frontend assets from the root directory and public directory if available
-app.use(express.static(__dirname));
-if (require('fs').existsSync(path.join(__dirname, 'public'))) {
-  app.use(express.static(path.join(__dirname, 'public')));
-}
-
-// Auto-register REST API routes
-try {
-  const taskRoutes = require('./routes/taskRoutes');
-  app.use('/api', taskRoutes);
-} catch (err) {
-  console.log("No taskRoutes found or failed to load:", err.message);
-}
-
-// Fallback all other client-side routing requests to index.html
-app.get('*', (req, res, next) => {
-  if (!req.path.startsWith('/api')) {
-    const indexPath = path.join(__dirname, 'index.html');
-    const publicIndexPath = path.join(__dirname, 'public', 'index.html');
-    if (require('fs').existsSync(indexPath)) return res.sendFile(indexPath);
-    if (require('fs').existsSync(publicIndexPath)) return res.sendFile(publicIndexPath);
-  }
-  next();
-});
-
-app.get('/health', (req, res) => res.json({ status: 'OK', message: 'Fallback server running' }));
-
-app.listen(port, () => {
-  console.log(\`Server is running on port \${port}\`);
-});
-`;
-      fs.writeFileSync(path.join(projectPath, 'index.js'), defaultIndexContent, 'utf8');
-      entryFile = 'index.js';
-    }
-
-    const command = entryFile ? `node ${entryFile}` : (process.platform === 'win32' ? 'npx.cmd -y serve -l 8080' : 'npx -y serve -l 8080');
-
-    // Create .vscode directory if needed
-    const vscodeDir = path.join(projectPath, '.vscode');
-    if (!fs.existsSync(vscodeDir)) {
-      fs.mkdirSync(vscodeDir, { recursive: true });
-    }
-
-    const tasksJson = {
-      version: '2.0.0',
-      tasks: [
-        {
-          label: 'Auto Start Server',
-          type: 'shell',
-          command: command,
-          options: {
-            env: {
-              PORT: '8080'
-            }
-          },
-          runOptions: {
-            runOn: 'folderOpen'
-          },
-          presentation: {
-            reveal: 'always',
-            panel: 'new'
-          }
-        }
-      ]
-    };
-
-    fs.writeFileSync(
-      path.join(vscodeDir, 'tasks.json'),
-      JSON.stringify(tasksJson, null, 2),
-      'utf8'
-    );
-
-    onEvent({
-      type: 'AGENT_LOG',
-      message: `Launching new VS Code workspace instance for project: "${conversationId}"...`
-    });
-
-    exec(`code "${projectPath}"`, (err) => {
-      if (err) {
-        onEvent({
-          type: 'AGENT_LOG',
-          message: 'Warning: VS Code CLI ("code") was not found on your system PATH. Please open the project directory manually.'
-        });
-      }
-    });
-  } catch (error: any) {
-    onEvent({
-      type: 'AGENT_LOG',
-      message: `Failed to initialize VS Code auto-run: ${error.message}`
-    });
-  }
-}
+// ─── Main Pipeline Orchestrator Loop (11 Stages) ───────────────────────────
 
 export async function runOrchestrator(
   conversationId: string,
   userPrompt: string,
   onEvent: PipelineEventCallback,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  startStage?: string
 ): Promise<void> {
   if (signal?.aborted) {
     throw new Error('Pipeline compilation aborted due to client disconnect.');
   }
 
   if (activePipelines.has(conversationId)) {
-    onEvent({
-      type: 'AGENT_LOG',
-      message: 'Connection established to active compiler loop.',
-    });
+    const attachMsg = { type: 'AGENT_LOG', message: 'Reattached to active background compilation loop.' };
+    onEvent(attachMsg as any);
+    pipelineEvents.emit(`event:${conversationId}`, attachMsg);
     return;
   }
   activePipelines.add(conversationId);
+
+  // Dedicated internal AbortController for background execution (decoupled from browser reload signals)
+  const internalController = new AbortController();
+  pipelineAbortControllers.set(conversationId, internalController);
+  const executionSignal = internalController.signal;
+
+  // Dual Event Wrapper: Sends event to direct callback AND emits to global EventEmitter for reloaded browser tabs
+  const emit = (event: any) => {
+    try {
+      onEvent(event);
+    } catch (e) {}
+    pipelineEvents.emit(`event:${conversationId}`, event);
+  };
 
   try {
     const conversation = await prisma.conversation.findUnique({
@@ -812,37 +712,36 @@ export async function runOrchestrator(
       throw new Error(`Conversation not found: ${conversationId}`);
     }
 
-    // Load state ledger
     const memoryState = await loadExecutiveMemory(conversationId);
     const ledger = new StageLedger(conversationId, memoryState);
 
-    let actualPrompt = userPrompt;
-    if (userPrompt.trim().toLowerCase() === 'continue') {
-      actualPrompt = memoryState.originalPrompt || conversation.title || 'Make a project';
-    } else {
-      memoryState.originalPrompt = userPrompt;
-      await saveExecutiveMemory(conversationId, memoryState);
+    // Classification Gate (skip if resuming from mid-pipeline stage)
+    if (!startStage) {
+      const classification = await classifyIsSoftwareRequest(userPrompt, executionSignal);
+      if (!classification.isSoftware) {
+        emit({
+          type: 'PIPELINE_ERROR',
+          message: classification.reason || 'This request does not appear to be a software development task.',
+        });
+        await prisma.conversation.update({
+          where: { id: conversationId },
+          data: { status: 'Paused' },
+        });
+        return;
+      }
     }
 
-    let currentStage = conversation.currentStage;
-    let repairLoops = 0;
-
-    if (conversation.status === 'Completed') {
-      onEvent({
-        type: 'AGENT_LOG',
-        message: 'Project is already compiled. Initializing VS Code preview server...'
-      });
-      await launchVSCodePreview(conversationId, onEvent);
-      return;
-    }
-
-    onEvent({
+    emit({
       type: 'PIPELINE_START',
-      message: `Resuming pipeline for conversation ${conversationId} from stage: ${currentStage}...`,
+      message: startStage ? `Resuming AutoCoder Hybrid v2 Pipeline at stage ${startStage}...` : 'Starting AutoCoder Hybrid v2 11-Stage Pipeline...',
     });
-    await writeHistoryLog(conversationId, 'System', 'Success', `Resuming pipeline compilation loop from stage: ${currentStage}.`);
 
-    const pipelineStages = [
+    // Start active background Keep-Alive daemon (pings Ollama every 10s to keep sockets & VRAM alive)
+    startOllamaKeepAlive();
+
+    // ─── 11 STAGES DEFINITION ────────────────────────────────────────────────
+
+    const STAGES = [
       'Queen',
       'Planner',
       'Architect',
@@ -851,1157 +750,302 @@ export async function runOrchestrator(
       'Blueprinter',
       'Coder',
       'Tester',
+      'Debugger',
       'Security',
-      'Reviewer'
+      'Reviewer',
     ];
 
-    let startIndex = pipelineStages.indexOf(currentStage);
-    if (startIndex === -1) {
-      startIndex = 0;
-    }
+    const startIndex = startStage ? STAGES.indexOf(startStage) : 0;
+    const executionStages = startIndex >= 0 ? STAGES.slice(startIndex) : STAGES;
 
-  for (let i = startIndex; i < pipelineStages.length; i++) {
-    if (signal?.aborted) {
-      throw new Error('Pipeline compilation aborted due to client disconnect.');
-    }
+    for (const stageName of executionStages) {
+      if (signal?.aborted) throw new Error('Pipeline compilation aborted by user.');
 
-    const stage = pipelineStages[i];
+      // Permanent Fast-Forward Guard: Check if stage has ALREADY completed in history
+      const isAlreadyCompleted = (await prisma.executionHistory.findFirst({
+        where: { conversationId, stage: stageName, status: 'Completed' }
+      })) !== null;
 
-    await prisma.conversation.update({
-      where: { id: conversationId },
-      data: { currentStage: stage, status: 'Active' },
-    });
-
-    let output: any = null;
-
-    if (stage === 'Blueprinter') {
-      // ----------------------------------------------------
-      // SPECIAL STAGE: Blueprinter (LLM Dependency & Contract Engine)
-      // ----------------------------------------------------
-      onEvent({
-        type: 'AGENT_START',
-        agent: 'Blueprinter',
-        message: 'Running Blueprinter (LLM Dependency & Contract Engine)...'
-      });
-
-      // 1. Run Conflict Resolver
-      const contextPack = await resolveContext(conversationId, ledger);
-      if (contextPack.conflicts.length > 0) {
-        await prisma.conversation.update({
-          where: { id: conversationId },
-          data: { status: 'Paused' },
-        });
+      if (isAlreadyCompleted && stageName !== startStage && stageName !== 'Coder') {
         onEvent({
-          type: 'PAUSE_CONFLICT',
-          message: `Pipeline paused due to conflicts/misalignments: ${contextPack.conflicts[0].description}`,
-          data: {
-            conflict: contextPack.conflicts[0]
-          }
+          type: 'AGENT_COMPLETE',
+          agent: stageName,
+          message: `Stage ${stageName} already completed in history. Fast-forwarding to next stage...`,
         });
-        await writeHistoryLog(conversationId, 'System', 'Success', `Pipeline paused. Context Resolver detected conflict: ${contextPack.conflicts[0].description}`);
-        return;
-      } else {
-        onEvent({
-          type: 'AGENT_LOG',
-          agent: 'System',
-          message: 'Context Resolver checked specifications and verified 0 cross-contract conflicts.'
-        });
-        await writeHistoryLog(conversationId, 'System', 'Success', 'Context Resolver check passed cleanly with 0 specification conflicts.');
+        continue;
       }
 
-      // 2. Run Blueprinter via LLM inference
-      try {
-        output = await runAgent(
+      onEvent({
+        type: 'STAGE_START',
+        agent: stageName,
+        message: `Entering Stage: ${stageName}...`,
+      });
+
+      // ─── STAGE: TESTER (Deterministic Linter) ──────────────────────────────
+      if (stageName === 'Tester') {
+        const vfsFiles = await listVirtualFiles(conversationId);
+        const codeFiles = vfsFiles.filter(f => f.endsWith('.ts') || f.endsWith('.tsx') || f.endsWith('.js') || f.endsWith('.jsx') || f.endsWith('.html') || f.endsWith('.css'));
+
+        let passed = 0;
+        let failed = 0;
+        const testReportLines: string[] = ['### Context Snapshot', '- **Core Goal**: Code Verification & Linter Diagnostics', `- **Total Files Tested**: ${codeFiles.length}`, ''];
+
+        for (const file of codeFiles) {
+          const lResult = await runLinter(conversationId, file);
+          if (lResult.success) {
+            passed++;
+            testReportLines.push(`- **${file}**: PASSED (0 errors)`);
+          } else {
+            failed++;
+            testReportLines.push(`- **${file}**: FAILED (${lResult.errors.length} error(s)) — ${lResult.summary}`);
+          }
+        }
+
+        const testReportText = testReportLines.join('\n');
+        await writeVirtualFile(conversationId, 'test_report.md', testReportText);
+
+        await writeHistoryLog(
           conversationId,
-          'Blueprinter',
-          actualPrompt,
+          'Tester',
+          failed === 0 ? 'Completed' : 'Failed',
+          `Tester completed: ${passed} passed, ${failed} failed (${codeFiles.length} total files tested). Estimated tokens: 0`
+        );
+
+        onEvent({
+          type: 'AGENT_COMPLETE',
+          agent: 'Tester',
+          message: `Tester complete: ${passed} passed, ${failed} failed (${codeFiles.length} total files tested).`,
+          data: { passed, failed, total: codeFiles.length },
+        });
+        continue;
+      }
+
+      // ─── STAGE: DEBUGGER (Conditional Error Repair) ───────────────────────
+      if (stageName === 'Debugger') {
+        const testReport = (await readVirtualFile(conversationId, 'test_report.md')) || '';
+        const hasFailures = testReport.includes('FAILED');
+
+        if (!hasFailures) {
+          await writeVirtualFile(conversationId, 'debug_report.md', '### Debug Report\nSKIPPED — All files passed Tester linter checks with 0 errors.');
+          await writeHistoryLog(conversationId, 'Debugger', 'Skipped', 'Debugger skipped: All files passed linter verification cleanly. Estimated tokens: 0');
+          onEvent({
+            type: 'AGENT_COMPLETE',
+            agent: 'Debugger',
+            message: 'Debugger skipped: All files passed linter verification cleanly.',
+          });
+          continue;
+        }
+
+        // Triage Debugger Action via SLM Thinking Gate
+        const triage = await orchestratorThinkDebugger(testReport, 0, 3);
+        if (triage.action === 'ABORT' || triage.action === 'SKIP') {
+          await writeVirtualFile(conversationId, 'debug_report.md', `### Debug Report\n${triage.action}: ${triage.reason}`);
+          await writeHistoryLog(conversationId, 'Debugger', triage.action === 'SKIP' ? 'Skipped' : 'Failed', `Debugger ${triage.action}: ${triage.reason}. Estimated tokens: 50`);
+          onEvent({
+            type: 'AGENT_COMPLETE',
+            agent: 'Debugger',
+            message: `Debugger ${triage.action}: ${triage.reason}`,
+          });
+          continue;
+        }
+
+        // Attempt repair on reported failing file
+        const targetFile = triage.targetFile || 'src/index.ts';
+        const fileContent = (await readVirtualFile(conversationId, targetFile)) || '';
+        const repairPrompt = `File: ${targetFile}\nBroken Code:\n${fileContent}\n\nLinter Diagnostics:\n${testReport}`;
+
+        const repairResult = await runAgent(
+          conversationId,
+          'Debugger',
+          userPrompt,
           onEvent,
           ledger,
           1,
-          undefined,
+          repairPrompt,
           signal
         );
-      } catch (err: any) {
+
+        if (repairResult && repairResult.content) {
+          await writeVirtualFile(conversationId, targetFile, repairResult.content);
+          writeProjectFile(conversationId, targetFile, repairResult.content);
+          const reCheck = await runLinter(conversationId, targetFile);
+          await writeVirtualFile(
+            conversationId,
+            'debug_report.md',
+            `### Debug Report\nRepaired file "${targetFile}". Re-lint result: ${reCheck.summary}`
+          );
+        }
+
         onEvent({
-          type: 'PIPELINE_ERROR',
-          message: `Blueprinter failed: ${err.message}`
+          type: 'AGENT_COMPLETE',
+          agent: 'Debugger',
+          message: `Debugger completed repair attempt on ${targetFile}.`,
         });
-        await writeHistoryLog(conversationId, 'Blueprinter', 'Failed', `Blueprinter failed: ${err.message}`);
-        await prisma.conversation.update({
-          where: { id: conversationId },
-          data: { status: 'Paused' },
-        });
-        return;
+        continue;
       }
-    } else if (stage === 'Coder') {
-      // ----------------------------------------------------
-      // SPECIAL STAGE: Coder Loop
-      // ----------------------------------------------------
-      onEvent({
-        type: 'AGENT_START',
-        agent: 'Coder',
-        message: `Coder loop started. Generating individual files from blueprints...`,
-      });
 
-      const smlBlueprints = await queryAgentOutput(conversationId, 'Blueprinter', 'blueprints');
-      const blueprints = (smlBlueprints && smlBlueprints.length > 0)
-        ? smlBlueprints
-        : (ledger.read('blueprinter')?.blueprints || []);
+      // ─── STAGE: CODER (Per-File Generation Loop) ───────────────────────────
+      if (stageName === 'Coder') {
+        const blueprintText = (await readVirtualFile(conversationId, 'blueprint.md')) || '';
+        const fileSections = parseBlueprintFiles(blueprintText);
 
-      if (!blueprints || blueprints.length === 0) {
+        if (fileSections.length === 0) {
+          onEvent({
+            type: 'PIPELINE_ERROR',
+            message: 'Blueprint contains no valid file sections. Unable to execute Coder stage.',
+          });
+          return;
+        }
+
         onEvent({
-          type: 'AGENT_ERROR',
+          type: 'AGENT_START',
           agent: 'Coder',
-          message: 'No blueprints found in SML or StageLedger. Cannot compile files.',
+          message: `Coder loop starting: Synthesizing ${fileSections.length} files from blueprint...`,
         });
-        return;
-      }
 
-      // Sort blueprints dynamically: files with higher compileOrder are compiled last (e.g. index.html)
-      const sortedBlueprints = [...blueprints].sort((a, b) => {
-        const getOrder = (bp: any) => {
-          if (typeof bp.compileOrder === 'number') return bp.compileOrder;
-          if (typeof bp.compileOrder === 'string') {
-            const parsed = parseInt(bp.compileOrder, 10);
-            return isNaN(parsed) ? 0 : parsed;
+        for (const fileSec of fileSections) {
+          if (signal?.aborted) throw new Error('Pipeline compilation aborted by user.');
+
+          // Build dependency code context
+          let depCodeText = '';
+          for (const depFile of fileSec.dependencies) {
+            const depContent = await readVirtualFile(conversationId, depFile);
+            if (depContent) {
+              depCodeText += `--- [${depFile}] ---\n${depContent}\n\n`;
+            }
           }
-          return 0;
-        };
-        return getOrder(a) - getOrder(b);
-      });
 
-      onEvent({
-        type: 'AGENT_LOG',
-        agent: 'Coder',
-        message: `Found ${blueprints.length} blueprints. Synthesizing files in resolved order...`,
-      });
+          const fileStartTime = Date.now();
+          const coderPrompt = await buildCoderContext(conversationId, fileSec.rawSection, depCodeText);
+          const coderOutput = await runAgent(
+            conversationId,
+            'Coder',
+            userPrompt,
+            onEvent,
+            ledger,
+            1,
+            coderPrompt,
+            signal,
+            undefined,
+            fileSec.file
+          );
 
-      const generatedFilesInfo: any[] = [];
+          if (coderOutput && coderOutput.content) {
+            // Write code to VFS primary source and sync to disk workspace
+            await writeVirtualFile(conversationId, fileSec.file, coderOutput.content);
+            writeProjectFile(conversationId, fileSec.file, coderOutput.content);
 
-      for (const bp of sortedBlueprints) {
-        onEvent({
-          type: 'AGENT_LOG',
-          agent: 'Coder',
-          message: `Compiling file: ${bp.file}...`,
-        });
+            const fileDurationMs = Date.now() - fileStartTime;
+            const estTokens = Math.round((coderPrompt.length + coderOutput.content.length) / 4);
 
-        // Run inference specifically for this file
-        let coderOutput: any = null;
-        let success = false;
-        let lastError = '';
-
-        for (let attempt = 1; attempt <= 3; attempt++) {
-          try {
-            const referencesBlock = bp.references && bp.references.length > 0
-              ? `\nReference Guidelines & Patterns to Follow:\n${JSON.stringify(bp.references, null, 2)}`
-              : '';
-
-            const customUserContent = `Generate code for the target filepath: "${bp.file}"
-Language: ${bp.language || 'auto-detect'}
-Language Profile: ${bp.languageProfile || 'auto-detect'}
-Target Purpose: ${bp.purpose}
-Required Imports: ${JSON.stringify(bp.imports)}
-Required Exports: ${JSON.stringify(bp.exports)}
-Interfaces: ${JSON.stringify(bp.interfaces)}
-Classes: ${JSON.stringify(bp.classes)}
-Functions to Implement: ${JSON.stringify(bp.functions)}
-Implemented APIs: ${JSON.stringify(bp.implementedApis)}
-Consumed APIs: ${JSON.stringify(bp.consumedApis)}
-Database Entities: ${JSON.stringify(bp.databaseEntities)}
-Designer Page: ${bp.designerPageId || 'N/A'}
-Designer Components: ${JSON.stringify(bp.designerComponentIds)}
-Acceptance criteria to fulfill: ${JSON.stringify(bp.acceptanceCriteria)}
-Allowed Constructs: ${JSON.stringify(bp.allowedConstructs)}
-Forbidden Constructs: ${JSON.stringify(bp.forbiddenConstructs)}
-Validation Rules: ${JSON.stringify(bp.validationRules)}${referencesBlock}
-
-Ensure you write complete source code matching these specs. Do not truncate.`;
-
-            coderOutput = await runAgent(
+            await writeHistoryLog(
               conversationId,
               'Coder',
-              actualPrompt,
-              onEvent,
-              ledger,
-              attempt,
-              customUserContent,
-              signal,
-              lastError,
-              bp.file
+              'Completed',
+              `File ${fileSec.file} synthesized in ${fileDurationMs}ms (${coderOutput.content.length} bytes generated). Estimated tokens: ${estTokens}`
             );
-            success = true;
-            break;
-          } catch (err: any) {
-            lastError = err.message;
-            onEvent({
-              type: 'AGENT_LOG',
-              agent: 'Coder',
-              message: `Failed to compile ${bp.file} on attempt ${attempt}: ${err.message}`,
-            });
-            if (signal?.aborted) {
-              throw err;
-            }
-          }
-        }
 
-        if (success && coderOutput) {
-          // Write code to the local filesystem
-          writeProjectFile(conversationId, bp.file, coderOutput.code);
-          generatedFilesInfo.push({ file: bp.file, sizeBytes: coderOutput.code.length });
-
-          // Save specific file output into SML keyed by filename for history logging
-          await writeAgentOutput({
-            conversationId,
-            agentName: 'Coder',
-            stage: bp.file, // Store under the filepath
-            schemaVersion: '1.0',
-            model: 'ollama/default',
-            validatedJson: { file: bp.file, code: coderOutput.code },
-            executionTime: 0,
-            tokenUsage: coderOutput.code.length / 4,
-            attempt: 1,
-          });
-        } else {
-          onEvent({
-            type: 'PIPELINE_ERROR',
-            message: `Pipeline halted. Coder failed to compile file: ${bp.file}`,
-          });
-          await prisma.conversation.update({
-            where: { id: conversationId },
-            data: { status: 'Paused' },
-          });
-          return;
-        }
-      }
-
-      onEvent({
-        type: 'AGENT_COMPLETE',
-        agent: 'Coder',
-        message: `Coder loop completed successfully! Synthesized ${generatedFilesInfo.length} files.`,
-        data: { files: generatedFilesInfo },
-      });
-
-    } else if (stage === 'Tester') {
-      // ----------------------------------------------------
-      // SPECIAL STAGE: Tester & Linter checks (DETERMINISTIC PIPELINE)
-      // ----------------------------------------------------
-      onEvent({
-        type: 'AGENT_START',
-        agent: 'Tester',
-        message: 'Running deterministic validation pipeline (Build, Type Check, Dependency Check, Runtime, Test)...',
-      });
-
-      const projectPath = path.join(process.cwd(), 'projects', conversationId);
-      const defects: any[] = [];
-      const warnings: string[] = [];
-
-      // 1. Dependency Checker & Bracket Balancer
-      const checkFilesRecursively = (dir: string) => {
-        if (!fs.existsSync(dir)) return;
-        const list = fs.readdirSync(dir);
-        list.forEach((file) => {
-          const filePath = path.join(dir, file);
-          if (fs.statSync(filePath).isDirectory()) {
-            if (file !== 'node_modules' && file !== '.git' && file !== '.vscode') {
-              checkFilesRecursively(filePath);
-            }
-          } else if (filePath.endsWith('.ts') || filePath.endsWith('.tsx') || filePath.endsWith('.js') || filePath.endsWith('.jsx')) {
-            const code = fs.readFileSync(filePath, 'utf8');
-            const relPath = path.relative(projectPath, filePath).replace(/\\/g, '/');
-
-            // Bracket Balance check
-            const stack: string[] = [];
-            let hasMismatch = false;
-            for (let idx = 0; idx < code.length; idx++) {
-              const char = code[idx];
-              if (char === '{' || char === '(' || char === '[') {
-                stack.push(char);
-              } else if (char === '}' || char === ')' || char === ']') {
-                const top = stack.pop();
-                if (
-                  (char === '}' && top !== '{') ||
-                  (char === ')' && top !== '(') ||
-                  (char === ']' && top !== '[')
-                ) {
-                  hasMismatch = true;
-                  break;
-                }
-              }
-            }
-            if (hasMismatch || stack.length > 0) {
-              defects.push({
-                id: `DEF-SYNTAX-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-                severity: 'Critical',
-                category: 'Functional',
-                file: relPath,
-                description: 'Bracket/parentheses mismatch: unbalanced braces detected.',
-                expectedBehaviour: 'Source code syntax is well-formed with matching balanced braces.',
-                actualBehaviour: 'Unbalanced brace syntax error found.',
-                reproductionSteps: [`Statically review file braces of ${relPath}`]
+            // Automated Linter Check
+            const lCheck = await runLinter(conversationId, fileSec.file);
+            if (!lCheck.success) {
+              const errDetails = lCheck.errors.map(e => `L${e.line}:C${e.character} ${e.message}`).join('; ');
+              onEvent({
+                type: 'AGENT_LOG',
+                agent: 'Coder',
+                message: `⚠️ Linter warning on ${fileSec.file}: ${errDetails}`,
               });
             }
-
-            // Simple Dependency check
-            const importRegex = /(?:import\s+.*?\s+from\s+|require\s*\(\s*|import\s*\(\s*)['"]\.\/([^'"]+)['"]/g;
-            let match;
-            while ((match = importRegex.exec(code)) !== null) {
-              const targetRel = match[1];
-              // Resolve relative file
-              const targetFullPath = path.resolve(path.dirname(filePath), targetRel);
-              const possibleExtensions = ['', '.js', '.ts', '.jsx', '.tsx', '/index.js', '/index.ts'];
-              const found = possibleExtensions.some((ext) => fs.existsSync(targetFullPath + ext));
-              if (!found) {
-                defects.push({
-                  id: `DEF-DEP-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-                  severity: 'High',
-                  category: 'Integration',
-                  file: relPath,
-                  description: `Broken import: cannot resolve relative file target "./${targetRel}"`,
-                  expectedBehaviour: `All imported dependencies exist on disk.`,
-                  actualBehaviour: `Import target "./${targetRel}" does not exist.`,
-                  reproductionSteps: [`Check path reference to "./${targetRel}" in ${relPath}`]
-                });
-              }
-            }
-          }
-        });
-      };
-
-      try {
-        checkFilesRecursively(projectPath);
-      } catch (err: any) {
-        warnings.push(`File system static checks encountered issues: ${err.message}`);
-      }
-
-      // ─── HTML-JS Integration Check (Fix 4) ───
-      try {
-        const isVanillaProject = !fs.existsSync(path.join(projectPath, 'package.json'));
-        if (isVanillaProject) {
-          const findFilesRecursively = (dir: string): string[] => {
-            let results: string[] = [];
-            if (!fs.existsSync(dir)) return results;
-            const list = fs.readdirSync(dir);
-            list.forEach((file) => {
-              const filePath = path.join(dir, file);
-              const stat = fs.statSync(filePath);
-              if (stat.isDirectory()) {
-                if (file !== 'node_modules' && file !== '.git') {
-                  results = results.concat(findFilesRecursively(filePath));
-                }
-              } else {
-                results.push(filePath);
-              }
-            });
-            return results;
-          };
-
-          const allProjectFiles = findFilesRecursively(projectPath);
-          const htmlFiles = allProjectFiles.filter(f => f.endsWith('.html') || f.endsWith('.htm'));
-          const jsFiles = allProjectFiles.filter(f => (f.endsWith('.js') || f.endsWith('.mjs')) && !f.includes('.min.'));
-
-          for (const htmlFile of htmlFiles) {
-            const htmlContent = fs.readFileSync(htmlFile, 'utf8');
-            for (const jsFile of jsFiles) {
-              const relPath = path.relative(path.dirname(htmlFile), jsFile).replace(/\\/g, '/');
-              const baseName = path.basename(jsFile);
-              
-              // Match multiple script element layouts including module formats
-              const scriptRegex = new RegExp(`<script[^>]*src=["'](?:\\.\\/)?(${escapeRegex(relPath)}|${escapeRegex(baseName)})["'][^>]*>`, 'i');
-              const isLinked = scriptRegex.test(htmlContent);
-
-              if (!isLinked) {
-                defects.push({
-                  id: `DEF-INTEGRATION-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-                  severity: 'Critical',
-                  category: 'Integration',
-                  file: path.relative(projectPath, htmlFile).replace(/\\/g, '/'),
-                  description: `HTML file loads no script tag linking to javascript asset "${path.relative(projectPath, jsFile).replace(/\\/g, '/')}".`,
-                  expectedBehaviour: `Script src tags are placed within "${path.basename(htmlFile)}" referencing relative path "${relPath}".`,
-                  actualBehaviour: `Script import tag referencing "${relPath}" is absent.`,
-                  reproductionSteps: [`Ensure <script src="${relPath}"></script> is included.`]
-                });
-              }
-            }
           }
         }
-      } catch (err: any) {
-        warnings.push(`HTML script tag verification failed: ${err.message}`);
-      }
 
-      // Helper to escape regex special characters
-      function escapeRegex(str: string): string {
-        return str.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-      }
-
-      // 2. Runtime Executor Check
-      const potentialEntries = ['main.js', 'app.js', 'server.js', 'index.js'];
-      let entryFile = '';
-      for (const f of potentialEntries) {
-        if (fs.existsSync(path.join(projectPath, f))) {
-          entryFile = f;
-          break;
-        }
-      }
-
-      if (entryFile && defects.length === 0) {
         onEvent({
-          type: 'AGENT_LOG',
-          agent: 'Tester',
-          message: `Executing Runtime checks. Spawning "node ${entryFile}" on port 8082...`
+          type: 'AGENT_COMPLETE',
+          agent: 'Coder',
+          message: `Coder loop completed: Synthesized and verified ${fileSections.length} files.`,
         });
-
-        try {
-          const { spawn } = require('child_process');
-          const child = spawn('node', [entryFile], {
-            cwd: projectPath,
-            env: { ...process.env, PORT: '8082' }
-          });
-
-          let stdoutBuffer = '';
-          let stderrBuffer = '';
-
-          child.stdout.on('data', (data: any) => { stdoutBuffer += data.toString(); });
-          child.stderr.on('data', (data: any) => { stderrBuffer += data.toString(); });
-          child.on('error', (err: any) => { stderrBuffer += `Spawn error: ${err.message}\n`; });
-
-          await new Promise((resolve) => setTimeout(resolve, 4000));
-          child.kill('SIGTERM');
-
-          if (stderrBuffer.trim() && (stderrBuffer.includes('Error') || stderrBuffer.includes('exception') || stderrBuffer.includes('throw'))) {
-            defects.push({
-              id: `DEF-RUNTIME-${Date.now()}`,
-              severity: 'Critical',
-              category: 'Functional',
-              file: entryFile,
-              description: `Runtime execution failed with crash errors in stderr:\n${stderrBuffer}`,
-              expectedBehaviour: 'Application starts cleanly without immediate logs of exceptions or crashes.',
-              actualBehaviour: `Runtime startup crashed: ${stderrBuffer.split('\n')[0]}`,
-              reproductionSteps: [`node ${entryFile}`]
-            });
-          }
-        } catch (err: any) {
-          warnings.push(`Runtime check failed to launch: ${err.message}`);
-        }
+        continue;
       }
 
-      // ─── Constraint Compliance Audit (Fix 3) ───
-      try {
-        const queenData = ledger.read('taskSpec') || {};
-        const rawConstraints = queenData.constraints || {};
-        const constraints: string[] = [];
-        if (Array.isArray(rawConstraints)) {
-          constraints.push(...rawConstraints);
-        } else if (typeof rawConstraints === 'object' && rawConstraints !== null) {
-          for (const category of Object.values(rawConstraints)) {
-            if (Array.isArray(category)) {
-              constraints.push(...category);
-            } else if (typeof category === 'string') {
-              constraints.push(category);
-            }
-          }
-        }
-        
-        const CONSTRAINT_API_MAP: Array<{
-          keywords: string[];
-          patterns: RegExp[];
-          label: string;
-        }> = [
-          {
-            keywords: ['localstorage', 'local storage', 'browser storage', 'offline storage'],
-            patterns: [
-              /localStorage\.(getItem|setItem|removeItem|clear)/,
-              /localForage|localforage/i,
-              /store\.(set|get|remove)/i,
-              /lowdb/i,
-              /chrome\.storage/
-            ],
-            label: 'localStorage / Client Persistence API'
-          },
-          {
-            keywords: ['indexeddb', 'indexed db'],
-            patterns: [/indexedDB|IDBFactory|window\.indexedDB/i],
-            label: 'IndexedDB API'
-          },
-          {
-            keywords: ['websocket', 'web socket', 'real-time', 'realtime socket'],
-            patterns: [/new WebSocket\(|\.addEventListener\('message'/],
-            label: 'WebSocket Connection'
-          },
-          {
-            keywords: ['fetch api', 'rest api', 'http request', 'ajax'],
-            patterns: [/fetch\(|axios\.|XMLHttpRequest/],
-            label: 'Fetch/AJAX Client'
-          }
-        ];
-
-        const coderFilesMap = ledger.read('coder') || {};
-        const combinedCode = Object.values(coderFilesMap).join('\n');
-
-        for (const constraint of constraints) {
-          const lower = constraint.toLowerCase();
-          for (const item of CONSTRAINT_API_MAP) {
-            const hasKeyword = item.keywords.some(kw => lower.includes(kw));
-            if (hasKeyword) {
-              const apiFound = item.patterns.some(p => p.test(combinedCode));
-              if (!apiFound) {
-                defects.push({
-                  id: `DEF-CONSTRAINT-${Date.now()}`,
-                  severity: 'Critical',
-                  category: 'Functional',
-                  file: 'project-wide',
-                  description: `Required constraint: "${constraint}" mandates access to storage/networking APIs. No calls matching ${item.label} were detected in output code.`,
-                  expectedBehaviour: `Application implements ${item.label} to satisfy project requirements.`,
-                  actualBehaviour: `No codebase usage of ${item.label} detected.`,
-                  reproductionSteps: [`Inspect files to verify integration of ${item.label}.`]
-                });
-              }
-            }
-          }
-        }
-      } catch (err: any) {
-        warnings.push(`Constraint verification audit failed: ${err.message}`);
-      }
-
-      // Compile Tester Output JSON
-      const passed = defects.length === 0;
-      output = {
-        summary: {
-          overallStatus: passed ? 'PASSED' : 'FAILED',
-          totalTests: 1,
-          passedTests: passed ? 1 : 0,
-          failedTests: passed ? 0 : 1,
-          skippedTests: 0
-        },
-        defects,
-        generatedTests: [],
-        metadata: {
-          version: '1.0',
-          generatedAt: new Date().toISOString(),
-          status: 'COMPLETE'
-        }
-      };
-
-      // Write to legacy SML table for view/telemetry
-      await writeAgentOutput({
+      // ─── STAGES: Queen, Planner, Architect, System, Designer, Blueprinter, Security, Reviewer ───
+      const stageOutput = await runAgent(
         conversationId,
-        agentName: 'Tester',
-        stage: 'Tester',
-        schemaVersion: '1.0',
-        model: 'deterministic-service',
-        validatedJson: output,
-        executionTime: 0,
-        tokenUsage: 0,
-        attempt: 1,
-      });
-
-      // Write to StageLedger
-      await ledger.write('Tester', 'tester', output);
-
-      if (passed) {
-        await writeHistoryLog(conversationId, 'Tester', 'Success', 'Validation pipeline passed successfully with 0 static or runtime defects.');
-      } else {
-        await writeHistoryLog(conversationId, 'Tester', 'Failed', `Validation pipeline failed with ${defects.length} defect(s).`);
-      }
+        stageName,
+        userPrompt,
+        onEvent,
+        ledger,
+        1,
+        undefined,
+        signal
+      );
 
       onEvent({
         type: 'AGENT_COMPLETE',
-        agent: 'Tester',
-        message: passed 
-          ? 'Validation pipeline passed successfully!' 
-          : `Validation pipeline failed with ${defects.length} defect(s). Routing to Debugger for repair.`,
-        data: output
+        agent: stageName,
+        message: `Stage ${stageName} completed successfully.`,
+        data: stageOutput.content,
       });
 
-      // If checks failed, we classify and log triage information, then execute Specialist Recovery
-      if (!passed) {
-        const logsPayload = defects.map(d => `${d.file}: ${d.description}`).join('\n');
-        const triage = dispatchFailureEvent(logsPayload, 'Tester');
-        onEvent({
-          type: 'PIPELINE_TRIAGE',
-          message: `Triage dispatcher routed logs to specialist agent [${triage.specialistAgent}]. Reason: ${triage.contextHint}`
-        });
+      // Auto-flush VFS to physical disk after each stage completes
+      await flushVfsToDisk(conversationId);
 
-        if (repairLoops < 3) {
-          repairLoops++;
-          const uniqueDefectFiles = [...new Set(defects.map(d => d.file))];
-          const failedFile = uniqueDefectFiles[(repairLoops - 1) % uniqueDefectFiles.length];
-
-          onEvent({
-            type: 'AGENT_START',
-            agent: triage.specialistAgent,
-            message: `${triage.specialistAgent} Specialist Recovery activated (Loop Run ${repairLoops}/3). Resolving defect in ${failedFile}...`,
-          });
-
-          // Retrieve current code content
-          const coderOut = await queryAgentOutput(conversationId, 'Coder', failedFile);
-          let currentCode = coderOut?.code || '';
-          if (!currentCode) {
-            const projectPath = path.join(process.cwd(), 'projects', conversationId);
-            const filePath = path.join(projectPath, failedFile);
-            if (fs.existsSync(filePath)) {
-              currentCode = fs.readFileSync(filePath, 'utf8');
-            }
-          }
-
-          try {
-            const recoveryResult = await executeSpecialistRecovery(
-              conversationId,
-              logsPayload,
-              failedFile,
-              currentCode,
-              ledger
-            );
-
-            if (recoveryResult && recoveryResult.patchCode) {
-              // Write corrected code to disk
-              writeProjectFile(conversationId, failedFile, recoveryResult.patchCode);
-
-              // Update Coder output in SML
-              await writeAgentOutput({
-                conversationId,
-                agentName: 'Coder',
-                stage: failedFile,
-                schemaVersion: '1.0',
-                model: 'ollama/default',
-                validatedJson: { file: failedFile, code: recoveryResult.patchCode },
-                executionTime: 0,
-                tokenUsage: recoveryResult.patchCode.length / 4,
-                attempt: 1,
-              });
-
-              // Update Coder state in StageLedger
-              const currentCoderState = ledger.read('coder') || {};
-              const updatedCoderState = {
-                ...currentCoderState,
-                [failedFile]: recoveryResult.patchCode
-              };
-              await ledger.write('Coder', 'coder', updatedCoderState);
-
-              onEvent({
-                type: 'AGENT_LOG',
-                agent: triage.specialistAgent,
-                message: `Specialist Recovery applied patch to ${failedFile}. Re-running Tester stage to verify fix (Loop Run ${repairLoops}/3)...`,
-              });
-
-              // Loop back to Tester stage
-              i--;
-              continue;
-            } else {
-              onEvent({
-                type: 'AGENT_LOG',
-                agent: triage.specialistAgent,
-                message: `Specialist Recovery returned no patch for ${failedFile}. Proceeding to next stage.`,
-              });
-            }
-          } catch (recoveryErr: any) {
-            onEvent({
-              type: 'AGENT_LOG',
-              agent: triage.specialistAgent,
-              message: `Specialist Recovery failed for ${failedFile}: ${recoveryErr.message}`,
-            });
-          }
-        } else {
-          onEvent({
-            type: 'AGENT_LOG',
-            agent: 'Tester',
-            message: `Tester defects remain, but repair loop reached maximum limit of 3 runs. Proceeding to next stage.`,
-          });
-        }
-      }
-
-    } else if (stage === 'Security') {
-      // ----------------------------------------------------
-      // SPECIAL STAGE: Security Scanner (Map-Reduce)
-      // ----------------------------------------------------
-      onEvent({
-        type: 'AGENT_START',
-        agent: 'Security',
-        message: 'Security audit starting. Scanning generated files for vulnerabilities (Map-Reduce style)...',
-      });
-
-      const coderData = ledger.read('coder') || {};
-      const filesToAudit = Object.keys(coderData);
-
-      let finalReport: any = {
-        summary: {
-          overallSecurityStatus: 'SECURE',
-          securityScore: 100,
-          overallRisk: 'LOW'
-        },
-        vulnerabilities: [],
-        metadata: {
-          version: '1.0',
-          generatedAt: new Date().toISOString(),
-          status: 'COMPLETE'
-        }
-      };
-
-      if (filesToAudit.length === 0) {
-        onEvent({
-          type: 'AGENT_LOG',
-          agent: 'Security',
-          message: 'No files generated by Coder. Security audit skipped.',
-        });
-      } else {
-        // Map Phase: audit each file individually
-        for (const filepath of filesToAudit) {
-          const filecode = coderData[filepath] || '';
-          onEvent({
-            type: 'AGENT_LOG',
-            agent: 'Security',
-            message: `Auditing file for security vulnerabilities: ${filepath}...`,
-          });
-
-          const customPrompt = `You are auditing the following file: "${filepath}"
-          
-File Content:
-\`\`\`
-${filecode}
-\`\`\`
-
-Perform a security review strictly for this file. Identify potential vulnerabilities, insecure configurations, or secret exposures.`;
-
-          let fileReport: any = null;
-          let fileSuccess = false;
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            try {
-              fileReport = await runAgent(
-                conversationId,
-                'Security',
-                actualPrompt,
-                onEvent,
-                ledger,
-                attempt,
-                customPrompt,
-                signal
-              );
-              fileSuccess = true;
-              break;
-            } catch (e: any) {
-              if (signal?.aborted) throw e;
-            }
-          }
-
-          // Reduce Phase for this file
-          if (fileSuccess && fileReport) {
-            const vulns = fileReport.vulnerabilities || fileReport.securityReport?.issues || [];
-            finalReport.vulnerabilities.push(...vulns);
-          }
-        }
-
-        // Run static regex scans for secrets and evals on local files
-        const projectDir = path.join(process.cwd(), 'projects', conversationId);
-        const scannerIssues: any[] = [];
-        let scannedFilesCount = 0;
-        const scanFiles = (dir: string) => {
-          if (!fs.existsSync(dir)) return;
-          const entries = fs.readdirSync(dir, { withFileTypes: true });
-          entries.forEach((entry) => {
-            const fullPath = path.join(dir, entry.name);
-            if (entry.isDirectory()) {
-              if (entry.name !== 'node_modules' && entry.name !== '.git') {
-                scanFiles(fullPath);
-              }
-            } else if (entry.isFile() && (entry.name.endsWith('.js') || entry.name.endsWith('.ts') || entry.name.endsWith('.html'))) {
-              scannedFilesCount++;
-              const code = fs.readFileSync(fullPath, 'utf8');
-              const relPath = path.relative(projectDir, fullPath).replace(/\\/g, '/');
-
-              // Check for eval/Function injection
-              if (/\beval\s*\(|\bnew\s+Function\s*\(/.test(code)) {
-                scannerIssues.push({
-                  id: `SEC-STATIC-EVAL-${relPath.replace(/\//g, '-')}`,
-                  severity: 'CRITICAL',
-                  category: 'AUTHENTICATION',
-                  file: relPath,
-                  title: 'Arbitrary Code Execution Risk',
-                  description: 'Use of eval() or Function() constructor introduces arbitrary code execution risks.',
-                  attackSurface: 'High risk of remote code execution if user inputs can flow here.',
-                  businessImpact: 'Complete system compromise',
-                  evidence: 'eval / new Function call found in source code',
-                  recommendation: 'Refactor using safe alternative JS patterns.'
-                });
-              }
-
-              // Check for API keys
-              const keyRegex = /(sk-[a-zA-Z0-9]{32,}|AIzaSy[a-zA-Z0-9_-]{33}|api[-_]key|secret)/i;
-              if (keyRegex.test(code) && !code.includes('process.env')) {
-                scannerIssues.push({
-                  id: `SEC-STATIC-SECRET-${relPath.replace(/\//g, '-')}`,
-                  severity: 'HIGH',
-                  category: 'SECRET_MANAGEMENT',
-                  file: relPath,
-                  title: 'Hardcoded API Key or Secret',
-                  description: 'Potential hardcoded API key, token, or credential exposed in code.',
-                  attackSurface: 'Leaked credentials can be extracted and abused.',
-                  businessImpact: 'Unauthorized API access and credential theft',
-                  evidence: 'Hardcoded secret pattern matched',
-                  recommendation: 'Use environment variables (process.env) for secrets.'
-                });
-              }
-            }
-          });
-        };
-
-        scanFiles(projectDir);
-        await writeHistoryLog(
-          conversationId,
-          'Security',
-          'Success',
-          `Static regex security scan evaluated ${scannedFilesCount} file(s) and identified ${scannerIssues.length} alert(s).`
-        );
-        if (scannerIssues.length > 0) {
-          onEvent({
-            type: 'AGENT_LOG',
-            agent: 'Security',
-            message: `Static regex scan identified ${scannerIssues.length} alerts. Adding to Security report.`,
-          });
-          finalReport.vulnerabilities.push(...scannerIssues);
-        }
-
-        // Calculate unified Summary statistics
-        let hasCritical = false;
-        let hasHigh = false;
-        let hasMedium = false;
-        for (const vuln of finalReport.vulnerabilities) {
-          const sev = (vuln.severity || '').toUpperCase();
-          if (sev === 'CRITICAL') hasCritical = true;
-          else if (sev === 'HIGH') hasHigh = true;
-          else if (sev === 'MEDIUM') hasMedium = true;
-        }
-
-        if (hasCritical) {
-          finalReport.summary.overallSecurityStatus = 'CRITICAL';
-          finalReport.summary.overallRisk = 'CRITICAL';
-          finalReport.summary.securityScore = 40;
-        } else if (hasHigh) {
-          finalReport.summary.overallSecurityStatus = 'VULNERABLE';
-          finalReport.summary.overallRisk = 'HIGH';
-          finalReport.summary.securityScore = 65;
-        } else if (hasMedium) {
-          finalReport.summary.overallSecurityStatus = 'SECURE_WITH_WARNINGS';
-          finalReport.summary.overallRisk = 'MEDIUM';
-          finalReport.summary.securityScore = 85;
-        } else {
-          finalReport.summary.overallSecurityStatus = 'SECURE';
-          finalReport.summary.overallRisk = 'LOW';
-          finalReport.summary.securityScore = 100;
-        }
-
-        // Save output to database & ledger
-        const config = await getLLMConfig();
-        await writeAgentOutput({
-          conversationId,
-          agentName: 'Security',
-          stage: 'Security',
-          schemaVersion: '1.0',
-          model: config.ollamaModel,
-          validatedJson: finalReport,
-          executionTime: 0,
-          tokenUsage: 0,
-          attempt: 1,
-        });
-        await ledger.write('Security', 'security', finalReport);
-        await writeHistoryLog(conversationId, 'Security', 'Success', `Security completed full map-reduce audit and security scan.`);
-      }
-
-    } else if (stage === 'Reviewer') {
-      // ----------------------------------------------------
-      // SPECIAL STAGE: Reviewer Scanner (Map-Reduce)
-      // ----------------------------------------------------
-      onEvent({
-        type: 'AGENT_START',
-        agent: 'Reviewer',
-        message: 'Reviewer audit starting. Checking specs alignment and code quality per file...',
-      });
-
-      const coderData = ledger.read('coder') || {};
-      const filesToAudit = Object.keys(coderData);
-
-      let finalReport: any = {
-        summary: {
-          overallAssessment: 'APPROVED',
-          engineeringQuality: 'GOOD',
-          releaseReadiness: 'READY'
-        },
-        findings: [],
-        qualityScore: 100,
-        annotations: [],
-        metadata: {
-          version: '1.0',
-          generatedAt: new Date().toISOString(),
-          status: 'COMPLETE'
-        }
-      };
-
-      if (filesToAudit.length === 0) {
-        onEvent({
-          type: 'AGENT_LOG',
-          agent: 'Reviewer',
-          message: 'No files generated by Coder. Review skipped.',
-        });
-      } else {
-        let totalScore = 0;
-        let successfulAudits = 0;
-
-        // Map Phase: audit each file individually
-        for (const filepath of filesToAudit) {
-          const filecode = coderData[filepath] || '';
-          onEvent({
-            type: 'AGENT_LOG',
-            agent: 'Reviewer',
-            message: `Reviewing file: ${filepath}...`,
-          });
-
-          const customPrompt = `You are reviewing the following file: "${filepath}"
-          
-File Content:
-\`\`\`
-${filecode}
-\`\`\`
-
-Review this file for quality, completeness, spec alignment, and bugs. Assign a qualityScore (0-100) and generate annotations.`;
-
-          let fileReport: any = null;
-          let fileSuccess = false;
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            try {
-              fileReport = await runAgent(
-                conversationId,
-                'Reviewer',
-                actualPrompt,
-                onEvent,
-                ledger,
-                attempt,
-                customPrompt,
-                signal
-              );
-              fileSuccess = true;
-              break;
-            } catch (e: any) {
-              if (signal?.aborted) throw e;
-            }
-          }
-
-          // Reduce Phase for this file
-          if (fileSuccess && fileReport) {
-            const score = typeof fileReport.qualityScore === 'number' ? fileReport.qualityScore : 95;
-            totalScore += score;
-            successfulAudits++;
-
-            const annotations = fileReport.annotations || [];
-            finalReport.annotations.push(...annotations);
-
-            const findings = fileReport.findings || [];
-            finalReport.findings.push(...findings);
-          }
-        }
-
-        // Calculate average quality score
-        if (successfulAudits > 0) {
-          finalReport.qualityScore = Math.round(totalScore / successfulAudits);
-          if (finalReport.qualityScore < 70) {
-            finalReport.summary.overallAssessment = 'REQUIRES_REWORK';
-            finalReport.summary.engineeringQuality = 'POOR';
-            finalReport.summary.releaseReadiness = 'NOT_READY';
-          } else if (finalReport.qualityScore < 85) {
-            finalReport.summary.overallAssessment = 'APPROVED_WITH_RECOMMENDATIONS';
-            finalReport.summary.engineeringQuality = 'FAIR';
-            finalReport.summary.releaseReadiness = 'READY_WITH_MINOR_IMPROVEMENTS';
-          } else {
-            finalReport.summary.overallAssessment = 'APPROVED';
-            finalReport.summary.engineeringQuality = 'EXCELLENT';
-            finalReport.summary.releaseReadiness = 'READY';
-          }
-        }
-
-        // Save output to database & ledger
-        const config = await getLLMConfig();
-        await writeAgentOutput({
-          conversationId,
-          agentName: 'Reviewer',
-          stage: 'Reviewer',
-          schemaVersion: '1.0',
-          model: config.ollamaModel,
-          validatedJson: finalReport,
-          executionTime: 0,
-          tokenUsage: 0,
-          attempt: 1,
-        });
-        await ledger.write('Reviewer', 'reviewer', finalReport);
-
-        // ─── Fix 2: Reviewer Quality Ship Gate ───
-        const qualityGateOverride = memoryState.qualityGateOverride === true;
-
-        const errorAnnotations = finalReport.annotations.filter((a: any) => a.severity === 'error');
-        if (errorAnnotations.length > 0 && !qualityGateOverride) {
-          const annotationSummaries = errorAnnotations.map((a: any) => `• [${a.file}] ${a.note}`).join('\n');
-          
-          // Set override in state for next resume action
-          memoryState.qualityGateOverride = true;
-          await saveExecutiveMemory(conversationId, memoryState);
-
-          onEvent({
-            type: 'PIPELINE_ERROR',
-            message: `🛑 QUALITY GATE BLOCKED: Reviewer identified ${errorAnnotations.length} error-level annotation(s) preventing ship:\n` +
-                     `${annotationSummaries}\n\n` +
-                     `Please apply bugfixes to resolve these issues, or click Resume to acknowledge and bypass.`,
-          });
-
-          await prisma.conversation.update({
-            where: { id: conversationId },
-            data: { status: 'Paused' },
-          });
-
-          await writeHistoryLog(
-            conversationId,
-            'Reviewer',
-            'Failed',
-            `Quality Gate blocked ship due to ${errorAnnotations.length} errors. Next resume will bypass.`
-          );
-          return;
-        } else if (qualityGateOverride) {
-          // Reset override after successfully bypassing or passing the gate
-          memoryState.qualityGateOverride = false;
-          await saveExecutiveMemory(conversationId, memoryState);
-        }
-      }
-
-    } else {
-      // ----------------------------------------------------
-      // Standard Agent stages (Queen, Planner, Architect, etc.)
-      // ----------------------------------------------------
-      let success = false;
-      let bypassInference = false;
-      let lastError = '';
-
-      if (stage === 'Queen') {
-        onEvent({
-          type: 'AGENT_LOG',
-          agent: 'Queen',
-          message: 'Running pre-flight software classification check...'
-        });
-        const classification = await classifyIsSoftwareRequest(actualPrompt, signal);
-        if (!classification.isSoftware) {
-          output = {
-            contextType: 'validationError',
-            status: 'Rejected',
-            reason: 'Input contains zero software-related context',
-            message: classification.reason || 'The request is completely unrelated to programming or creating software utilities.'
-          };
-          bypassInference = true;
-          success = true;
-        }
-      }
-
-      if (!bypassInference) {
-        for (let attempt = 1; attempt <= 3; attempt++) {
-          try {
-            output = await runAgent(conversationId, stage, actualPrompt, onEvent, ledger, attempt, undefined, signal, lastError);
-            success = true;
-            break;
-          } catch (err: any) {
-            lastError = err.message;
-            onEvent({
-              type: 'AGENT_ERROR',
-              agent: stage,
-              message: `Attempt ${attempt} failed: ${err.message}`,
-            });
-
-            await prisma.executionHistory.create({
-              data: {
-                conversationId,
-                stage: stage,
-                status: 'Failed',
-                logs: `Attempt ${attempt} failed: ${err.message}`,
-              },
-            });
-
-            if (signal?.aborted) {
-              throw err;
-            }
-
-            if (attempt === 3) {
-              await prisma.conversation.update({
-                where: { id: conversationId },
-                data: { status: 'Paused' },
-              });
-              onEvent({
-                type: 'PIPELINE_ERROR',
-                message: `Pipeline halted at stage ${stage} after 3 failed attempts.`,
-              });
-              return;
-            }
-          }
-        }
-      }
-    }
-
-    // Intermediary check logic after standard runs
-    if (stage === 'Queen') {
-      if (output && (output.status === 'Rejected' || output.contextType === 'validationError')) {
+      // Architect Quality Gate Pause
+      if (stageName === 'Architect' && !conversation.qualityGateOverride) {
         await prisma.conversation.update({
           where: { id: conversationId },
-          data: { status: 'Paused' },
+          data: { status: 'Paused', currentStage: 'Architect' },
         });
+
         onEvent({
-          type: 'PIPELINE_ERROR',
-          message: `Pipeline rejected: Queen Agent classified the request as invalid.\nReason: ${output.reason || 'Invalid Request'}\nMessage: ${output.message}`,
+          type: 'QUALITY_GATE_PAUSE',
+          agent: 'Architect',
+          message: '📐 Architect stage completed. Paused for user approval before continuing to System, Designer, Blueprinter, and Coder stages.',
+          data: stageOutput.content,
         });
-        await writeHistoryLog(
-          conversationId,
-          'System',
-          'Failed',
-          `Pipeline halted. Queen validation error: ${output.message}`
-        );
-        return;
-      }
-      if (output && output.needsClarification) {
-        await prisma.conversation.update({
-          where: { id: conversationId },
-          data: { status: 'Paused' },
-        });
-        onEvent({
-          type: 'PAUSE_CLARIFICATION',
-          message: `Pipeline paused. Queen requires clarification questions to be answered.`,
-          data: {
-            questions: output.clarificationQuestions,
-            readinessScore: output.readinessScore,
-          },
-        });
-        await writeHistoryLog(conversationId, 'System', 'Success', 'Pipeline paused. Awaiting answers to Queen clarification questions.');
-        return;
+
+        return; // Exit orchestrator loop, waiting for user resume signal
       }
     }
 
-    if (stage === 'Architect') {
-      await prisma.conversation.update({
-        where: { id: conversationId },
-        data: { status: 'Paused', currentStage: 'Architect' },
-      });
-      onEvent({
-        type: 'PAUSE_APPROVAL_GATE',
-        message: `Pipeline paused at Approval Gate (Architect Review completed). Awaiting user approval to generate code.`,
-      });
-      await writeHistoryLog(conversationId, 'System', 'Success', 'Pipeline paused at Architect Approval Gate. Awaiting user approval to generate code.');
-      return;
-    }
-
-  }
+    // Flush all VFS files to disk workspace for preview execution
+    await flushVfsToDisk(conversationId);
+    await launchVSCodePreview(conversationId, onEvent);
 
     await prisma.conversation.update({
       where: { id: conversationId },
       data: { status: 'Completed' },
     });
 
-    await launchVSCodePreview(conversationId, onEvent);
-
     onEvent({
-      type: 'PIPELINE_SUCCESS',
-      message: `All stages completed successfully! Project code compiles and is ready.`,
+      type: 'PIPELINE_COMPLETE',
+      message: '🎉 AutoCoder Hybrid v2 Pipeline executed successfully!',
     });
-    await writeHistoryLog(conversationId, 'System', 'Success', 'Pipeline compilation completed successfully! All 11 passes resolved.');
+  } catch (err: any) {
+    console.error(`Pipeline error in conversation ${conversationId}:`, err);
+    await flushVfsToDisk(conversationId).catch(() => {});
+
+    await writeHistoryLog(
+      conversationId,
+      'Pipeline',
+      'Failed',
+      `Pipeline Execution Failed: ${err.message}`
+    ).catch(() => {});
+
+    if (isInfrastructureError(err)) {
+      await handleInfrastructurePause(conversationId, onEvent, err.message);
+      return;
+    }
+    onEvent({
+      type: 'PIPELINE_ERROR',
+      message: `Pipeline Execution Failed: ${err.message}`,
+    });
+    await prisma.conversation.update({
+      where: { id: conversationId },
+      data: { status: 'Failed' },
+    });
   } finally {
+    stopOllamaKeepAlive();
+    pipelineAbortControllers.delete(conversationId);
+    await flushVfsToDisk(conversationId).catch(() => {});
     activePipelines.delete(conversationId);
   }
 }

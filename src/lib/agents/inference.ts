@@ -1,11 +1,8 @@
 import { prisma } from '../db';
 
 // Ensure localhost bypasses any system proxies so Ollama connections aren't intercepted
-if (!process.env.no_proxy) {
-  process.env.no_proxy = 'localhost,127.0.0.1,::1';
-} else if (!process.env.no_proxy.includes('localhost')) {
-  process.env.no_proxy += ',localhost,127.0.0.1,::1';
-}
+process.env.no_proxy = process.env.no_proxy ? `${process.env.no_proxy},localhost,127.0.0.1,::1` : 'localhost,127.0.0.1,::1';
+process.env.NO_PROXY = process.env.no_proxy;
 
 const undici = typeof window === 'undefined' ? require('undici') : null;
 const undiciAgent = undici ? undici.Agent : null;
@@ -101,6 +98,8 @@ export async function checkOllamaConnection(host: string): Promise<boolean> {
   const hostsToTry = [host];
   if (host.includes('localhost')) {
     hostsToTry.push(host.replace('localhost', '127.0.0.1'));
+  } else if (host.includes('127.0.0.1')) {
+    hostsToTry.push(host.replace('127.0.0.1', 'localhost'));
   }
 
   for (const h of hostsToTry) {
@@ -108,7 +107,7 @@ export async function checkOllamaConnection(host: string): Promise<boolean> {
       const res = await fetch(`${h}/api/tags`, {
         method: 'GET',
         cache: 'no-store',
-        signal: AbortSignal.timeout(3000), // 3 second timeout
+        signal: AbortSignal.timeout(5000), // 5 second timeout
       });
       if (res.ok) return true;
     } catch (e) {
@@ -481,8 +480,8 @@ export async function runInference(
   const temp = options.temperature ?? 0.2;
   const isJson = options.format === 'json';
 
-  // Combine client abort signal with timeout signal (default fallback timeout 180s)
-  const effectiveTimeout = options.timeoutMs || 180000;
+  // Combine client abort signal with timeout signal (default fallback timeout 30 minutes / 1800s for large 30B models)
+  const effectiveTimeout = options.timeoutMs || 1800000;
   const timeoutSignal = AbortSignal.timeout(effectiveTimeout);
   const combinedSignal: AbortSignal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
 
@@ -496,6 +495,7 @@ export async function runInference(
     const payload: any = {
       model: config.ollamaModel,
       messages: messages,
+      keep_alive: -1, // Force Ollama to keep model loaded in VRAM permanently during pipeline run!
       options: {
         temperature: temp,
         num_ctx: 32768, // Request 32K context window to fit large specs and file histories
@@ -655,3 +655,30 @@ export async function runInference(
     throw new Error(`Unsupported LLM provider: ${config.provider}`);
   }
 }
+
+let ollamaHeartbeatTimer: NodeJS.Timeout | null = null;
+
+export function startOllamaKeepAlive(host: string = 'http://127.0.0.1:11434') {
+  if (ollamaHeartbeatTimer) return;
+
+  // Active Keep-Alive Heartbeat Daemon: Pings Ollama every 10s to keep TCP socket & process active
+  ollamaHeartbeatTimer = setInterval(async () => {
+    try {
+      await undiciFetch(`${host}/api/version`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(3000),
+        ...(longTimeoutDispatcher ? { dispatcher: longTimeoutDispatcher } : {} as any),
+      });
+    } catch (e) {
+      // Ignore transient ping errors
+    }
+  }, 10000);
+}
+
+export function stopOllamaKeepAlive() {
+  if (ollamaHeartbeatTimer) {
+    clearInterval(ollamaHeartbeatTimer);
+    ollamaHeartbeatTimer = null;
+  }
+}
+

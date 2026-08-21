@@ -16,19 +16,20 @@ export interface AgentDef {
   maxTokens: number;
   systemPrompt: string;
   schema: any;
-  getContext: (ledger: any, targetFile?: string) => Promise<string>;
+  getContext?: (ledger: any, targetFile?: string) => Promise<string>;
+  tools: string[];
 }
 
 export const AGENT_DEFS: Record<string, AgentDef> = {
-  Queen,
-  Planner,
-  Architect,
-  System,
-  Designer,
-  Blueprinter,
-  Coder,
-  Tester,
-  Debugger,
-  Security,
-  Reviewer
+  Queen:       { ...Queen, tools: [] },
+  Planner:     { ...Planner, tools: [] },
+  Architect:   { ...Architect, tools: [] },
+  System:      { ...System, tools: [] },
+  Designer:    { ...Designer, tools: [] },
+  Blueprinter: { ...Blueprinter, tools: [] },
+  Coder:       { ...Coder, tools: [] },
+  Tester:      { ...Tester, tools: [] },
+  Debugger:    { ...Debugger, tools: [] },
+  Security:    { ...Security, tools: [] },
+  Reviewer:    { ...Reviewer, tools: [] },
 };

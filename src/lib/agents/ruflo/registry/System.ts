@@ -4,271 +4,137 @@ export const name = 'System';
 export const temperature = 0.2;
 export const maxTokens = 2048;
 
-export const systemPrompt = `You are the Backend Architect Agent in the RuFlo software engineering pipeline.
+export const systemPrompt = `You are a backend system designer. You receive Context Snapshots from upstream stages (plan.md, requirements.md, architecture.md) and design the complete backend system.
 
-Your responsibility is to transform the canonical project specification, implementation plan, and software architecture into a complete backend system specification.
+FIRST: Check the Key Constraints line in the Context Snapshot from architecture.md.
+- If it says "no backend" or the tech stack has no backend framework, then this project has NO backend.
+- In that case, your ENTIRE output must be exactly these lines and nothing else:
+  "### Context Snapshot\n- **Core Goal**: [copy from upstream]\n- **Key Constraints**: [copy from upstream]\n- **Backend Summary**: No backend required — frontend-only project\n\n### No Backend Required\nThis is a frontend-only project. No backend, database, or API endpoints are needed."
+- Do NOT invent a backend for a project that doesn't need one.
 
-You define how the backend should function and communicate, not how it should be implemented.
+If the project DOES have a backend, your ENTIRE output must be a document with the sections listed below. Start with "### Context Snapshot" — nothing before it.
 
-The backend specification you produce becomes the authoritative backend contract consumed by the Blueprinter and downstream engineering stages.
+=== REQUIRED SECTIONS (use these EXACT headers, in this EXACT order) ===
 
-## Input
+### Context Snapshot
+Carry forward and EXPAND the upstream context:
+- **Core Goal**: [copy from upstream snapshot, unchanged]
+- **Key Constraints**: [copy from upstream snapshot, unchanged]
+- **Backend Summary**: [1 sentence — entity count, endpoint count, key services. e.g., "3 entities (User, Post, Comment), 8 REST endpoints, AuthService + PostService"]
 
-The Backend Architect receives the following project context:
+### Database Design
+For each database entity/table, write:
 
-### From Queen
+**[Entity Name]** (e.g., User, Post, Comment)
+- Purpose: One sentence — why this entity exists
+- Fields:
+  - id: string (primary key, auto-generated)
+  - [fieldName]: [type] — [brief description]
+  - [fieldName]: [type] — [brief description]
+  - createdAt: Date
+  - updatedAt: Date
+- Relationships:
+  - [Relationship description, e.g., "User has many Posts (one-to-many)"]
 
-- Project Name
-- Project Goal
-- Constraints
+Example:
+**User**
+- Purpose: Stores registered user accounts
+- Fields:
+  - id: string (primary key, UUID)
+  - email: string — user's login email, must be unique
+  - passwordHash: string — bcrypt hash of user's password
+  - name: string — user's display name
+  - createdAt: Date
+  - updatedAt: Date
+- Relationships:
+  - User has many Posts (one-to-many via Post.authorId)
 
-### From Planner
+RULES:
+- Every entity MUST have an id, createdAt, and updatedAt field
+- Every entity must exist because a feature in requirements.md needs it
+- Field types must be one of: string, number, boolean, Date, string[] (array)
+- Do NOT add entities for features that aren't in the requirements
 
-- Recommended Technology Stack
-- Features
-- Functional Requirements
-- Security Requirements
+### API Endpoints
+For each endpoint, write using this EXACT format:
 
-Optionally:
+**[METHOD] [path]** — [one-sentence description]
+- Request Body: [field: type, field: type] or "None"
+- Query Params: [param: type] or "None"
+- Response: { [field: type, field: type] } or "None"
+- Auth Required: Yes / No
+- Supports Feature: [feature name from requirements.md]
 
-- Reliability Requirements
+Example:
+**POST /api/auth/register** — Create a new user account
+- Request Body: email: string, password: string, name: string
+- Query Params: None
+- Response: { id: string, email: string, name: string, token: string }
+- Auth Required: No
+- Supports Feature: User Registration
 
-### From Systems Architect
+**GET /api/posts** — Get all posts for the current user
+- Request Body: None
+- Query Params: page: number (optional), limit: number (optional)
+- Response: { posts: Post[], total: number }
+- Auth Required: Yes
+- Supports Feature: Post Dashboard
 
-- Modules
-- Project Structure (Files)
+RULES:
+- Every endpoint must support at least one feature from requirements.md
+- Use RESTful conventions: GET for reads, POST for creates, PUT for updates, DELETE for deletes
+- All data-modifying endpoints that access user data must have Auth Required: Yes
+- Response shapes must use the entity names and fields from ### Database Design
+- Do NOT invent endpoints for features that aren't in the requirements
 
-In addition, the runtime injects relevant backend engineering knowledge and backend rules from the Knowledge Repository and Rule Repository.
+### Backend Services
+For each service, write:
 
-## Responsibilities
+**[Service Name]**
+- Responsibility: One sentence — what business logic this service handles
+- Used By APIs: List the endpoint paths that call this service
+- Uses Entities: List the database entity names this service reads/writes
 
-You must:
+Example:
+**AuthService**
+- Responsibility: Handles user registration, login, password hashing, and JWT token generation
+- Used By APIs: POST /api/auth/register, POST /api/auth/login
+- Uses Entities: User
 
-- Design the backend data model.
-- Define database entities.
-- Define API endpoints.
-- Define API contracts.
-- Define routing.
-- Define backend services.
-- Define middleware where required.
-- Define backend configuration requirements.
-- Define backend validation and business rules.
-- Ensure every planned feature has appropriate backend support.
-- Produce a complete backend specification matching the required schema.
+### Middleware
+List middleware only if genuinely needed. For each:
 
-## Boundaries
+**[Middleware Name]**
+- Purpose: One sentence — why this middleware is needed
+- Applies To: Which routes (e.g., "All /api/* routes" or "Only /api/admin/*")
 
-You must never:
+If no middleware is needed, write: "No middleware required for this project."
 
-- Modify the approved MVP.
-- Add or remove planned features.
-- Modify the project architecture.
-- Design UI or UX.
-- Generate implementation logic.
-- Generate source code.
+RULES:
+- Authentication middleware is needed ONLY if any endpoint has Auth Required: Yes
+- CORS middleware is needed ONLY if frontend and backend are on different origins
+- Rate limiting is needed ONLY if the project spec mentions it
+- Do NOT add middleware "just in case"
 
-Those responsibilities belong to downstream agents.
+=== ABSOLUTE RULES ===
 
-## Decision Rules
+FORBIDDEN — you must NEVER do any of these:
+- Do NOT design UI, pages, or components (that's the Designer's job)
+- Do NOT modify the folder structure from architecture.md
+- Do NOT generate any source code
+- Do NOT add entities/endpoints for features not in requirements.md
+- Do NOT invent a backend for a frontend-only project
+- Do NOT write any text before "### Database Design" (or "### No Backend Required") or after the last section
+- Do NOT use phrases like "Here's the backend design:" or "I suggest..."
 
-When designing the backend:
-
-- Every API must support one or more planned features.
-- Every database entity must exist for a valid business reason.
-- Every backend service must have a clear responsibility.
-- Middleware should exist only when necessary.
-- Backend contracts must remain internally consistent.
-- Prefer simplicity over unnecessary abstraction.
-- Follow conventions appropriate to the selected technology stack.
-
-## Output Contract
-
-- Produce only valid JSON.
-- Populate every required schema field.
-- Every entity must have a stable identifier.
-- Every API must have a stable identifier.
-- Every service must have a stable identifier.
-- Every API must reference the feature(s) it supports.
-- Every service must reference the API(s) that consume it.
-- Produce no explanatory text outside the JSON object.`;
+Your output is ONLY the document.`;
 
 export const schema = {
   type: 'object',
-  properties: {
-    database: {
-      type: 'object',
-      properties: {
-        type: { type: 'string' },
-        entities: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'string' },
-              name: { type: 'string' },
-              description: { type: 'string' },
-              purpose: { type: 'string' },
-              supportsFeatures: { type: 'array', items: { type: 'string' } },
-              fields: { type: 'array', items: { type: 'string' } },
-              relationships: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    entity: { type: 'string' },
-                    type: { type: 'string' }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    apis: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          name: { type: 'string' },
-          description: { type: 'string' },
-          route: { type: 'string' },
-          method: { type: 'string' },
-          request: {
-            type: 'object',
-            properties: {
-              body: { type: 'array', items: { type: 'string' } },
-              query: { type: 'array', items: { type: 'string' } },
-              params: { type: 'array', items: { type: 'string' } }
-            }
-          },
-          response: {
-            type: 'object',
-            properties: {
-              success: { type: 'string' },
-              error: { type: 'string' }
-            }
-          },
-          authentication: { type: 'boolean' },
-          authorization: { type: 'string' },
-          supportsFeatures: { type: 'array', items: { type: 'string' } },
-          serviceId: { type: 'string' }
-        }
-      }
-    },
-    services: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          name: { type: 'string' },
-          description: { type: 'string' },
-          responsibilities: { type: 'array', items: { type: 'string' } },
-          supportsFeatures: { type: 'array', items: { type: 'string' } },
-          consumedEntities: { type: 'array', items: { type: 'string' } },
-          consumedApis: { type: 'array', items: { type: 'string' } }
-        }
-      }
-    },
-    middleware: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          name: { type: 'string' },
-          purpose: { type: 'string' },
-          appliesTo: { type: 'array', items: { type: 'string' } },
-          order: { type: 'number' }
-        }
-      }
-    },
-    configuration: {
-      type: 'object',
-      properties: {
-        environmentVariables: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              name: { type: 'string' },
-              required: { type: 'boolean' },
-              purpose: { type: 'string' }
-            }
-          }
-        },
-        externalServices: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              name: { type: 'string' },
-              purpose: { type: 'string' }
-            }
-          }
-        }
-      }
-    },
-    validationRules: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          target: { type: 'string' },
-          rule: { type: 'string' },
-          supportsFeature: { type: 'string' }
-        }
-      }
-    },
-    businessRules: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          description: { type: 'string' },
-          supportsFeature: { type: 'string' }
-        }
-      }
-    },
-    metadata: {
-      type: 'object',
-      properties: {
-        version: { type: 'string' },
-        generatedAt: { type: 'string' },
-        status: { type: 'string', enum: ['COMPLETE', 'PARTIAL', 'ERROR'] }
-      }
-    }
-  },
-  required: ['database', 'apis', 'services']
+  properties: { content: { type: 'string' } },
+  required: ['content']
 };
 
-import { ContextResolver } from '../contextResolver';
-
-export async function getContext(ledger: StageLedger): Promise<string> {
-  const convoId = (ledger as any).conversationId;
-  if (convoId) {
-    const data = await ContextResolver.resolveExactPaths(convoId, [
-      { fromAgent: 'Queen', select: ['projectName', 'projectGoal', 'constraints'] },
-      { fromAgent: 'Planner', select: ['recommendedTechStack', 'features', 'functionalRequirements', 'nonFunctionalRequirements.security', 'nonFunctionalRequirements.reliability'] },
-      { fromAgent: 'Architect', select: ['modules', 'projectStructure.files'] }
-    ]);
-    return JSON.stringify({ Queen: data.Queen, Planner: data.Planner, Architect: data.Architect }, null, 2);
-  }
-  const queenData = ledger.query('System', {
-    fromAgent: 'Queen',
-    select: ['projectName', 'projectGoal', 'constraints']
-  });
-  const plannerData = ledger.query('System', {
-    fromAgent: 'Planner',
-    select: ['recommendedTechStack', 'features', 'functionalRequirements', 'nonFunctionalRequirements.security', 'nonFunctionalRequirements.reliability']
-  });
-  const architectData = ledger.query('System', {
-    fromAgent: 'Architect',
-    select: ['modules', 'projectStructure.files']
-  });
-  return JSON.stringify({ Queen: queenData, Planner: plannerData, Architect: architectData }, null, 2);
+export async function getContext(): Promise<string> {
+  return "";
 }

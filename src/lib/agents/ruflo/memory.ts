@@ -42,11 +42,8 @@ export const OWNERSHIP = Object.freeze({
   Tester:            ['tester'],
 });
 
-import { ContextResolver } from './contextResolver';
-import { CorrelationService } from './correlationService';
-
 export async function loadExecutiveMemory(conversationId: string): Promise<MemoryState> {
-  const skeleton: MemoryState = {
+  return {
     originalPrompt: '',
     taskSpec: null,
     planner: null,
@@ -64,37 +61,6 @@ export async function loadExecutiveMemory(conversationId: string): Promise<Memor
     fileStateHistory: {},
     decisions: [],
   };
-
-  try {
-    const resolved = await ContextResolver.resolveExactPaths(conversationId, [
-      { fromAgent: 'Queen', select: ['projectName', 'problemStatement', 'projectDescription', 'projectGoal', 'mvpScope', 'constraints', 'risks'] },
-      { fromAgent: 'Planner', select: ['recommendedTechStack', 'features', 'functionalRequirements', 'nonFunctionalRequirements', 'acceptanceCriteria'] },
-      { fromAgent: 'Architect', select: ['architectureStyle', 'modules', 'projectStructure', 'sharedResources', 'moduleDependencies', 'projectConventions'] },
-      { fromAgent: 'System', select: ['database', 'apis', 'services', 'middleware', 'configuration', 'validationRules', 'businessRules'] },
-      { fromAgent: 'Designer', select: ['theme', 'colorPalette', 'typography', 'spacing', 'iconography', 'navigationFlows', 'pages', 'components', 'interactionDesign', 'accessibility'] },
-      { fromAgent: 'Blueprinter', select: ['blueprints'] },
-      { fromAgent: 'Tester', select: ['overallStatus', 'totalTests', 'passedTests', 'failedTests', 'coverage', 'testCases', 'defects'] },
-      { fromAgent: 'Debugger', select: ['summary', 'fixes', 'generatedFiles', 'validation'] },
-      { fromAgent: 'Reviewer', select: ['summary', 'requirementCoverage', 'architectureReview', 'codeQuality', 'findings', 'recommendations', 'qualityScore'] },
-      { fromAgent: 'Security', select: ['summary', 'securityRequirements', 'securityChecks', 'vulnerabilities', 'recommendations'] },
-    ]);
-
-    return {
-      ...skeleton,
-      taskSpec: resolved.Queen || null,
-      planner: resolved.Planner || null,
-      architect: resolved.Architect || null,
-      system: resolved.System || null,
-      designer: resolved.Designer || null,
-      blueprinter: resolved.Blueprinter || null,
-      tester: resolved.Tester || null,
-      debugger: resolved.Debugger || null,
-      reviewer: resolved.Reviewer || null,
-      security: resolved.Security || null,
-    };
-  } catch (err) {
-    return skeleton;
-  }
 }
 
 export async function saveExecutiveMemory(conversationId: string, state: MemoryState) {
@@ -211,23 +177,6 @@ export class ExecutiveMemoryGateway {
 
     // Flush in-memory node cache
     conversationNodeCache.delete(conversationId);
-
-    // Mark downstream correlations as INVALIDATED in DB state machine
-    const agentCode = CorrelationService.getAgentCode(modifiedStage);
-    const downstreamCodes = CorrelationService.getDownstreamAgentCodes(modifiedStage);
-
-    await prisma.$transaction([
-      prisma.graphEdge.deleteMany({ where: { conversationId } }),
-      prisma.graphNode.deleteMany({ where: { conversationId } }),
-      prisma.correlation.updateMany({
-        where: {
-          conversationId,
-          agentCode: { in: downstreamCodes },
-          status: 'ACTIVE',
-        },
-        data: { status: 'INVALIDATED' },
-      }),
-    ]);
   }
 }
 

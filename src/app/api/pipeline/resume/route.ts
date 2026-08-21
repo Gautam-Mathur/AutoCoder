@@ -1,8 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { loadExecutiveMemory, StageLedger } from '@/lib/agents/ruflo/memory';
+import { runOrchestrator } from '@/lib/agents/ruflo/orchestrator';
 
 export const dynamic = 'force-dynamic';
+
+const STAGES = [
+  'Queen',
+  'Planner',
+  'Architect',
+  'System',
+  'Designer',
+  'Blueprinter',
+  'Coder',
+  'Tester',
+  'Debugger',
+  'Security',
+  'Reviewer',
+];
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,6 +28,7 @@ export async function POST(request: NextRequest) {
 
     const conversation = await prisma.conversation.findUnique({
       where: { id: conversationId },
+      include: { history: { orderBy: { createdAt: 'desc' } } },
     });
 
     if (!conversation) {
@@ -37,12 +52,16 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Advance stage if paused there
+    // Advance stage to the next stage in sequence if current stage has completed or is a paused gate
     let nextStage = conversation.currentStage;
-    if (conversation.currentStage === 'Architect') {
-      nextStage = 'System';
-    } else if (conversation.currentStage === 'Queen') {
-      nextStage = 'Planner';
+    const currentIdx = STAGES.indexOf(conversation.currentStage);
+    if (currentIdx >= 0 && currentIdx < STAGES.length - 1) {
+      const currentCompleted = conversation.history.some(
+        (h) => h.stage === conversation.currentStage && h.status === 'Completed'
+      );
+      if (currentCompleted || conversation.currentStage === 'Architect' || conversation.currentStage === 'Queen') {
+        nextStage = STAGES[currentIdx + 1];
+      }
     }
 
     await prisma.conversation.update({
@@ -50,8 +69,21 @@ export async function POST(request: NextRequest) {
       data: {
         status: 'Active',
         currentStage: nextStage,
+        qualityGateOverride: true,
       },
     });
+
+    // Derive prompt from conversation title or fallback
+    const userPrompt = conversation.title || 'Resume software development pipeline';
+
+    // Asynchronously resume orchestrator from nextStage
+    runOrchestrator(
+      conversationId,
+      userPrompt,
+      () => {},
+      undefined,
+      nextStage
+    ).catch((err) => console.error('Error resuming orchestrator:', err));
 
     return NextResponse.json({ success: true, nextStage });
   } catch (err: any) {

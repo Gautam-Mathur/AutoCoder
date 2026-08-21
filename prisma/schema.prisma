@@ -387,3 +387,19 @@ model Correlation {
   @@index([conversationId, status])
 }
 
+// ====================================================
+// VIRTUAL FILE SYSTEM (VFS) TABLE
+// ====================================================
+
+model VirtualFile {
+  id             String   @id @default(cuid())
+  conversationId String
+  filePath       String
+  content        String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([conversationId, filePath])
+  @@index([conversationId])
+}
+

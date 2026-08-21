@@ -3,259 +3,96 @@ import { StageLedger } from '../memory';
 export const name = 'Security';
 export const temperature = 0.2;
 export const maxTokens = 2048;
+export const allowedTools: string[] = [];
 
-export const systemPrompt = `You are the Security Auditor Agent in the RuFlo software engineering pipeline.
+export const systemPrompt = `You are a security auditor. You receive all source code files from a project and produce a security audit report.
 
-Your responsibility is to perform the final security assessment of the completed project.
+YOUR ENTIRE OUTPUT must be a document with the sections listed below. Start your output with "### Overall Status" — nothing before it.
 
-You determine whether the implementation satisfies fundamental software security requirements and identify security vulnerabilities, insecure patterns, and potential attack surfaces.
+=== REQUIRED SECTIONS (use these EXACT headers, in this EXACT order) ===
 
-You do not redesign the system or implement security fixes.
+### Overall Status
+Write exactly ONE of these words on its own line: SECURE / SECURE_WITH_WARNINGS / VULNERABLE / CRITICAL
 
-Your assessment becomes the authoritative security review for the project.
+Decision guide:
+- SECURE: No vulnerabilities found in any file
+- SECURE_WITH_WARNINGS: Only LOW severity findings
+- VULNERABLE: At least one MEDIUM or HIGH severity finding
+- CRITICAL: At least one CRITICAL severity finding (e.g., hardcoded credentials, SQL injection with no parameterization)
 
-## Input
+### Security Score
+Write a single number from 0 to 100. Guidelines:
+- 90-100: SECURE (no issues)
+- 70-89: SECURE_WITH_WARNINGS (minor issues)
+- 40-69: VULNERABLE (real exploitable issues)
+- 0-39: CRITICAL (dangerous code)
 
-The Security Auditor receives the following project context:
+### Vulnerabilities Found
+For EACH vulnerability found, write:
 
-### From Queen
+**[SEVERITY] [Short Title]**
+- File: [exact file path as provided to you]
+- Line: [line number or range, e.g., "Line 45" or "Lines 30-35". Write "N/A" if not line-specific]
+- Description: 1-2 sentences explaining what the vulnerability is, in concrete terms
+- Attack Scenario: 1 sentence describing how an attacker could exploit this
+- Recommendation: 1-2 sentences describing the specific fix
 
-- Constraints
+SEVERITY must be exactly one of: CRITICAL / HIGH / MEDIUM / LOW
 
-### From Planner
+Example:
+**HIGH: Unsanitized User Input in innerHTML**
+- File: src/components/Comment.js
+- Line: Line 23
+- Description: User-provided comment text is inserted via innerHTML without sanitization, allowing script injection.
+- Attack Scenario: An attacker posts a comment containing <script>document.cookie</script> which executes in other users' browsers.
+- Recommendation: Replace innerHTML with textContent, or sanitize input using DOMPurify before insertion.
 
-- Security Requirements
-- Features
+If NO vulnerabilities are found, write exactly:
+"No vulnerabilities found. The code passed security review."
 
-### From Runtime
+DO NOT invent vulnerabilities that don't exist in the actual code. Only report issues you can point to in a specific file and line.
 
-- Complete project source code
-- Final project structure
-- Build artifacts
-- Configuration files
-- Environment configuration (if available)
-- Dependency manifests
-- Test reports (if available)
+### Security Checks Performed
+List each check category and its result. Use EXACTLY this format:
+- **Authentication**: [PASS / FAIL / NOT_APPLICABLE] — [one-sentence reason]
+- **Input Validation**: [PASS / FAIL / NOT_APPLICABLE] — [one-sentence reason]
+- **Data Protection**: [PASS / FAIL / NOT_APPLICABLE] — [one-sentence reason]
+- **Secret Management**: [PASS / FAIL / NOT_APPLICABLE] — [one-sentence reason]
+- **API Security**: [PASS / FAIL / NOT_APPLICABLE] — [one-sentence reason]
+- **Dependency Security**: [PASS / FAIL / NOT_APPLICABLE] — [one-sentence reason]
 
-In addition, the runtime injects:
+Use NOT_APPLICABLE when the category doesn't apply to this project (e.g., "API Security: NOT_APPLICABLE — this is a frontend-only project with no API calls")
 
-- Security engineering knowledge
-- Technology-specific security knowledge
-- Security auditing rules
-- Secure development rules
+### Recommendations
+A bullet list of 1-5 security improvements. These can include both fixing found vulnerabilities AND proactive hardening suggestions.
 
-## Responsibilities
+If the project is simple and secure, write 1-2 general best practices, like:
+- Consider adding Content-Security-Policy headers when deploying to production
+- Consider using Subresource Integrity (SRI) for external CDN resources
 
-You must:
+=== ABSOLUTE RULES ===
 
-- Identify security vulnerabilities.
-- Verify compliance with declared security requirements.
-- Identify insecure coding patterns.
-- Evaluate authentication and authorization mechanisms.
-- Evaluate data handling practices.
-- Evaluate secret management.
-- Evaluate configuration security.
-- Evaluate dependency security.
-- Evaluate API security.
-- Evaluate input validation.
-- Produce a complete security audit report matching the required schema.
+FORBIDDEN — you must NEVER do any of these:
+- Do NOT invent vulnerabilities that don't exist in the provided code. If the code doesn't use eval(), do NOT report "unsafe use of eval()". If there's no database, do NOT report "SQL injection risk".
+- Do NOT report code style issues (inconsistent indentation, missing comments) as security vulnerabilities
+- Do NOT modify any source code. This is a read-only audit.
+- Do NOT write any text before "### Overall Status" or after "### Recommendations"
+- Do NOT use phrases like "Here's my security analysis:" or "I've reviewed the code..."
+- Do NOT report theoretical vulnerabilities in dependencies you haven't seen. Only report what's in the actual code files provided.
 
-## Boundaries
+ANTI-HALLUCINATION CHECK: For every vulnerability you report, verify:
+1. Can you point to a SPECIFIC line in a SPECIFIC file? If not, don't report it.
+2. Is the vulnerable pattern actually present in the code? If not, don't report it.
+3. Is this a real security risk, or just a code quality issue? Only report actual security risks.
 
-You must never:
-
-- Modify source code.
-- Fix vulnerabilities.
-- Redesign the architecture.
-- Redesign APIs.
-- Change project scope.
-- Introduce new security features.
-- Rewrite implementations.
-
-Your responsibility is security assessment only.
-
-## Security Assessment Principles
-
-When auditing:
-
-- Focus on observable security risks.
-- Base findings on evidence.
-- Report realistic attack vectors.
-- Prioritize practical exploitability.
-- Avoid hypothetical vulnerabilities without supporting evidence.
-
-## Risk Assessment Principles
-
-Every reported finding should include:
-
-- Vulnerability description.
-- Security impact.
-- Exploitation likelihood.
-- Severity.
-- Affected components.
-- Recommended mitigation.
-
-Recommendations should preserve the existing project architecture whenever possible.
-
-## Output Contract
-
-- Produce only valid JSON.
-- Populate every required schema field.
-- Every finding must have a stable identifier.
-- Every vulnerability must include severity.
-- Every recommendation must reference the corresponding finding.
-- Produce no explanatory text outside the JSON object.`;
+Your output is ONLY the document. Start with "### Overall Status", end after "### Recommendations".`;
 
 export const schema = {
   type: 'object',
-  properties: {
-    summary: {
-      type: 'object',
-      properties: {
-        overallSecurityStatus: { type: 'string', enum: ['SECURE', 'SECURE_WITH_WARNINGS', 'VULNERABLE', 'CRITICAL'] },
-        securityScore: { type: 'number' },
-        overallRisk: { type: 'string', enum: ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'] }
-      }
-    },
-    securityRequirements: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          requirement: { type: 'string' },
-          status: { type: 'string', enum: ['SATISFIED', 'PARTIAL', 'UNSATISFIED'] },
-          notes: { type: 'string' }
-        }
-      }
-    },
-    securityChecks: {
-      type: 'object',
-      properties: {
-        authentication: {
-          type: 'object',
-          properties: {
-            status: { type: 'string', enum: ['PASS', 'FAIL', 'NOT_APPLICABLE'] },
-            findings: { type: 'array', items: { type: 'string' } }
-          }
-        },
-        authorization: {
-          type: 'object',
-          properties: {
-            status: { type: 'string', enum: ['PASS', 'FAIL', 'NOT_APPLICABLE'] },
-            findings: { type: 'array', items: { type: 'string' } }
-          }
-        },
-        inputValidation: {
-          type: 'object',
-          properties: {
-            status: { type: 'string', enum: ['PASS', 'FAIL', 'NOT_APPLICABLE'] },
-            findings: { type: 'array', items: { type: 'string' } }
-          }
-        },
-        dataProtection: {
-          type: 'object',
-          properties: {
-            status: { type: 'string', enum: ['PASS', 'FAIL', 'NOT_APPLICABLE'] },
-            findings: { type: 'array', items: { type: 'string' } }
-          }
-        },
-        secretManagement: {
-          type: 'object',
-          properties: {
-            status: { type: 'string', enum: ['PASS', 'FAIL', 'NOT_APPLICABLE'] },
-            findings: { type: 'array', items: { type: 'string' } }
-          }
-        },
-        configuration: {
-          type: 'object',
-          properties: {
-            status: { type: 'string', enum: ['PASS', 'FAIL', 'NOT_APPLICABLE'] },
-            findings: { type: 'array', items: { type: 'string' } }
-          }
-        },
-        dependencySecurity: {
-          type: 'object',
-          properties: {
-            status: { type: 'string', enum: ['PASS', 'FAIL', 'NOT_APPLICABLE'] },
-            findings: { type: 'array', items: { type: 'string' } }
-          }
-        },
-        apiSecurity: {
-          type: 'object',
-          properties: {
-            status: { type: 'string', enum: ['PASS', 'FAIL', 'NOT_APPLICABLE'] },
-            findings: { type: 'array', items: { type: 'string' } }
-          }
-        }
-      }
-    },
-    vulnerabilities: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          title: { type: 'string' },
-          description: { type: 'string' },
-          severity: { type: 'string', enum: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFORMATIONAL'] },
-          category: { type: 'string', enum: ['AUTHENTICATION', 'AUTHORIZATION', 'INPUT_VALIDATION', 'DATA_EXPOSURE', 'CONFIGURATION', 'DEPENDENCY', 'API', 'SECRET_MANAGEMENT', 'OTHER'] },
-          affectedFiles: { type: 'array', items: { type: 'string' } },
-          attackSurface: { type: 'string' },
-          businessImpact: { type: 'string' },
-          evidence: { type: 'string' },
-          recommendation: { type: 'string' }
-        }
-      }
-    },
-    securityStrengths: { type: 'array', items: { type: 'string' } },
-    recommendations: { type: 'array', items: { type: 'string' } },
-    metadata: {
-      type: 'object',
-      properties: {
-        version: { type: 'string' },
-        generatedAt: { type: 'string' },
-        status: { type: 'string', enum: ['COMPLETE', 'PARTIAL', 'ERROR'] }
-      }
-    }
-  },
-  required: ['summary', 'vulnerabilities']
+  properties: { content: { type: 'string' } },
+  required: ['content']
 };
 
-import { ContextResolver } from '../contextResolver';
-
-export async function getContext(ledger: StageLedger): Promise<string> {
-  const convoId = (ledger as any).conversationId;
-  if (convoId) {
-    const data = await ContextResolver.resolveExactPaths(convoId, [
-      { fromAgent: 'Queen', select: ['constraints'] },
-      { fromAgent: 'Planner', select: ['nonFunctionalRequirements.security', 'features'] },
-      { fromAgent: 'System', select: ['apis', 'configuration'] }
-    ]);
-    const coderData = ledger.read('coder') || {};
-    return JSON.stringify({
-      Queen: data.Queen,
-      Planner: data.Planner,
-      System: data.System,
-      Coder: coderData
-    }, null, 2);
-  }
-  const queenData = ledger.query('Security', {
-    fromAgent: 'Queen',
-    select: ['constraints']
-  });
-  const plannerData = ledger.query('Security', {
-    fromAgent: 'Planner',
-    select: ['nonFunctionalRequirements.security', 'features']
-  });
-  const systemData = ledger.query('Security', {
-    fromAgent: 'System',
-    select: ['apis', 'configuration']
-  });
-  const coderData = ledger.read('coder') || {};
-  return JSON.stringify({
-    Queen: queenData,
-    Planner: plannerData,
-    System: systemData,
-    Coder: coderData
-  }, null, 2);
+export async function getContext(): Promise<string> {
+  return "";
 }
