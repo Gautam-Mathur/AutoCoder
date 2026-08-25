@@ -43,28 +43,137 @@ export const OWNERSHIP = Object.freeze({
 });
 
 export async function loadExecutiveMemory(conversationId: string): Promise<MemoryState> {
+  const rows = await prisma.executiveMemory.findMany({
+    where: { conversationId },
+    orderBy: { sequence: 'asc' },
+  });
+
+  const latestActive = (agentName: string): string | null => {
+    const matches = rows.filter(r => r.agentName === agentName && r.status === 'ACTIVE');
+    if (!matches.length) return null;
+    return matches[matches.length - 1].contentMd;
+  };
+
+  const coderMap: Record<string, any> = {};
+  const coderRows = rows.filter(r => r.agentName === 'Coder' && r.status === 'ACTIVE' && r.filePath);
+  for (const row of coderRows) {
+    coderMap[row.filePath!] = { content: row.contentMd };
+  }
+
+  const hashes: Record<string, string> = {};
+  const fileStateHistory: Record<string, string[]> = {};
+  const allCoderRows = rows.filter(r => r.agentName === 'Coder' && r.filePath && r.contentHash);
+  for (const row of allCoderRows) {
+    const fp = row.filePath!;
+    if (!fileStateHistory[fp]) fileStateHistory[fp] = [];
+    fileStateHistory[fp].push(row.contentHash!);
+    if (row.status === 'ACTIVE') {
+      hashes[fp] = row.contentHash!;
+    }
+  }
+
+  const invalidatedSet = new Set(
+    rows.filter(r => r.status === 'INVALIDATED').map(r => r.agentName)
+  );
+
+  const wrap = (md: string | null): any | null =>
+    md ? { content: md } : null;
+
   return {
     originalPrompt: '',
-    taskSpec: null,
-    planner: null,
-    architect: null,
-    system: null,
-    designer: null,
-    blueprinter: null,
-    coder: {},
-    debugger: null,
-    security: null,
-    reviewer: null,
-    tester: null,
-    invalidated: [],
-    hashes: {},
-    fileStateHistory: {},
-    decisions: [],
+    taskSpec:    wrap(latestActive('Queen')),
+    planner:     wrap(latestActive('Planner')),
+    architect:   wrap(latestActive('Architect')),
+    system:      wrap(latestActive('System')),
+    designer:    wrap(latestActive('Designer')),
+    blueprinter: wrap(latestActive('Blueprinter')),
+    coder:       coderMap,
+    debugger:    wrap(latestActive('Debugger')),
+    security:    wrap(latestActive('Security')),
+    reviewer:    wrap(latestActive('Reviewer')),
+    tester:      wrap(latestActive('Tester')),
+    invalidated: Array.from(invalidatedSet),
+    hashes,
+    fileStateHistory,
+    decisions:   [],
   };
 }
 
-export async function saveExecutiveMemory(conversationId: string, state: MemoryState) {
-  // Safe no-op: Stage outputs are persisted via StagePersistence + CorrelationService
+export async function saveExecutiveMemory(conversationId: string, state: MemoryState): Promise<void> {
+  // Legacy compatibility no-op. Actual writes are managed by writeExecutiveMemoryRecord().
+}
+
+export async function writeExecutiveMemoryRecord(params: {
+  conversationId: string;
+  agentName: string;
+  contentMd: string;
+  filePath?: string;
+  tokenCount?: number;
+  durationMs?: number;
+  consumedInferenceIds?: string[];
+}): Promise<string> {
+  const contentHash = crypto.createHash('md5').update(params.contentMd).digest('hex');
+
+  if (params.agentName === 'Coder' && params.filePath) {
+    await prisma.executiveMemory.updateMany({
+      where: {
+        conversationId: params.conversationId,
+        agentName: 'Coder',
+        filePath: params.filePath,
+        status: 'ACTIVE',
+      },
+      data: { status: 'SUPERSEDED' },
+    });
+  } else {
+    await prisma.executiveMemory.updateMany({
+      where: {
+        conversationId: params.conversationId,
+        agentName: params.agentName,
+        status: 'ACTIVE',
+      },
+      data: { status: 'SUPERSEDED' },
+    });
+  }
+
+  const lastRow = await prisma.executiveMemory.findFirst({
+    where: { conversationId: params.conversationId, agentName: params.agentName },
+    orderBy: { sequence: 'desc' },
+    select: { sequence: true },
+  });
+  const nextSeq = (lastRow?.sequence ?? 0) + 1;
+
+  const raw = `${params.conversationId}:${params.agentName}:${nextSeq}`;
+  const shortHash = crypto.createHash('sha256').update(raw).digest('hex').slice(0, 6);
+  const inferenceId = `${params.agentName}-${nextSeq}-${shortHash}`;
+
+  await prisma.executiveMemory.create({
+    data: {
+      conversationId: params.conversationId,
+      agentName:      params.agentName,
+      inferenceId,
+      sequence:       nextSeq,
+      contentMd:      params.contentMd,
+      filePath:       params.filePath ?? null,
+      tokenCount:     params.tokenCount ?? 0,
+      durationMs:     params.durationMs ?? 0,
+      consumedIds:    JSON.stringify(params.consumedInferenceIds ?? []),
+      status:         'ACTIVE',
+      contentHash,
+    },
+  });
+
+  return inferenceId;
+}
+
+export async function updateExecutiveMemoryStatus(
+  conversationId: string,
+  agentName: string,
+  status: 'INVALIDATED' | 'ACTIVE'
+): Promise<void> {
+  await prisma.executiveMemory.updateMany({
+    where: { conversationId, agentName, status: 'ACTIVE' },
+    data: { status },
+  });
 }
 
 function getNestedValue(obj: any, path: string): any {
@@ -254,8 +363,9 @@ export class StageLedger {
         this.state.fileStateHistory = {};
       }
       for (const filepath of Object.keys(value)) {
-        const content = value[filepath];
-        const hash = crypto.createHash('md5').update(content).digest('hex');
+        const rawVal = value[filepath];
+        const contentStr = typeof rawVal === 'string' ? rawVal : (rawVal?.content ?? '');
+        const hash = crypto.createHash('md5').update(contentStr).digest('hex');
 
         // If the file content is exactly the same as the last written state, skip history check
         if (this.state.hashes[filepath] === hash) {
@@ -278,25 +388,30 @@ export class StageLedger {
       }
     }
 
-    // 4. Persist
-    await saveExecutiveMemory(this.conversationId, this.state);
+    // 4. Persist agent output to ExecutiveMemory ledger
+    const contentMd = typeof value === 'string'
+      ? value
+      : (value?.content ?? JSON.stringify(value));
+    await writeExecutiveMemoryRecord({
+      conversationId: this.conversationId,
+      agentName,
+      contentMd,
+    });
   }
 
   async invalidate(agentNames: string[]): Promise<void> {
     this.state.invalidated = Array.from(new Set([...this.state.invalidated, ...agentNames]));
-    await saveExecutiveMemory(this.conversationId, this.state);
+    for (const name of agentNames) {
+      await updateExecutiveMemoryStatus(this.conversationId, name, 'INVALIDATED');
+    }
   }
 
   async clearInvalidation(agentName: string): Promise<void> {
     this.state.invalidated = this.state.invalidated.filter((name) => name !== agentName);
-    await saveExecutiveMemory(this.conversationId, this.state);
+    await updateExecutiveMemoryStatus(this.conversationId, agentName, 'ACTIVE');
   }
 
   async logDecision(decision: any): Promise<void> {
-    this.state.decisions.push({
-      ...decision,
-      timestamp: new Date().toISOString(),
-    });
-    await saveExecutiveMemory(this.conversationId, this.state);
+    console.log('[EM:Decision]', JSON.stringify({ ...decision, conversationId: this.conversationId }));
   }
 }

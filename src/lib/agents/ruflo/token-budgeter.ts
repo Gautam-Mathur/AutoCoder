@@ -12,6 +12,15 @@ export interface TokenBudgetResult {
   };
 }
 
+function countMarkdownItems(state: any): number {
+  if (!state) return 0;
+  const content = typeof state === 'string' ? state : state.content || '';
+  if (!content) return 0;
+  const lines = content.split('\n');
+  const bulletLines = lines.filter((l: string) => /^\s*[-*]\s+/.test(l));
+  return bulletLines.length || 3;
+}
+
 export function calculateTokenBudget(
   agentName: string,
   ledger: StageLedger
@@ -29,23 +38,23 @@ export function calculateTokenBudget(
   // 1. Task-based Scaling Math
   if (agentName === 'Planner') {
     const taskSpec = ledger.read('taskSpec');
-    const featuresCount = taskSpec?.mvpScope?.included?.length || 0;
+    const featuresCount = taskSpec?.mvpScope?.included?.length || countMarkdownItems(taskSpec);
     budget = 16384 + (featuresCount * 1024);
     breakdown.featuresCount = featuresCount;
     breakdown.formulaApplied = '16384 + (featuresCount * 1024)';
   } 
   else if (agentName === 'Architect') {
     const planner = ledger.read('planner');
-    const featuresCount = planner?.features?.length || 0;
+    const featuresCount = planner?.features?.length || countMarkdownItems(planner);
     budget = 16384 + (featuresCount * 1024);
     breakdown.featuresCount = featuresCount;
     breakdown.formulaApplied = '16384 + (featuresCount * 1024)';
   }
   else if (agentName === 'System' || agentName === 'Designer') {
     const planner = ledger.read('planner');
-    const featuresCount = planner?.features?.length || 0;
+    const featuresCount = planner?.features?.length || countMarkdownItems(planner);
     const architect = ledger.read('architect');
-    const fileCount = architect?.projectStructure?.files?.length || 0;
+    const fileCount = architect?.projectStructure?.files?.length || countMarkdownItems(architect);
     budget = 16384 + (featuresCount * 1024) + (fileCount * 1024);
     breakdown.featuresCount = featuresCount;
     breakdown.fileCount = fileCount;
@@ -53,7 +62,7 @@ export function calculateTokenBudget(
   } 
   else if (agentName === 'Coder') {
     const architect = ledger.read('architect');
-    const fileCount = architect?.projectStructure?.files?.length || 0;
+    const fileCount = architect?.projectStructure?.files?.length || countMarkdownItems(architect);
     budget = 32768 + (fileCount * 2048);
     breakdown.fileCount = fileCount;
     breakdown.formulaApplied = '32768 + (fileCount * 2048)';
@@ -62,9 +71,8 @@ export function calculateTokenBudget(
     const coderState = ledger.read('coder') || {};
     let totalChars = 0;
     Object.values(coderState).forEach((code: any) => {
-      if (typeof code === 'string') {
-        totalChars += code.length;
-      }
+      const codeStr = typeof code === 'string' ? code : (code?.content ?? '');
+      totalChars += codeStr.length;
     });
     const totalTokens = Math.round(totalChars / 4);
     budget = Math.max(16384, Math.round(totalTokens * 0.5));

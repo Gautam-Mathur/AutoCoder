@@ -117,6 +117,12 @@ export async function checkOllamaConnection(host: string): Promise<boolean> {
   return false;
 }
 
+export function cleanJsonResponse(text: string): string {
+  let cleaned = text.trim();
+  cleaned = cleaned.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '');
+  return cleaned.trim();
+}
+
 export async function runInference(
   messages: Message[],
   options: InferenceOptions = {}

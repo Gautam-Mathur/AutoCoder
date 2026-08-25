@@ -67,13 +67,21 @@ export async function GET(request: NextRequest) {
       request.signal.addEventListener('abort', abortHandler);
 
       // 4. Check if orchestrator is already running in background Node process.
-      // If NOT running and prompt is provided, start it detached!
+      // If NOT running, update status to 'Active' in DB and start orchestrator!
       if (!activePipelines.has(conversationId)) {
         const conversation = await prisma.conversation.findUnique({
           where: { id: conversationId },
         });
 
-        if (conversation && conversation.status === 'Active') {
+        if (conversation && conversation.status !== 'Completed' && conversation.status !== 'Failed') {
+          // Ensure conversation status is marked Active in SQLite
+          if (conversation.status !== 'Active') {
+            await prisma.conversation.update({
+              where: { id: conversationId },
+              data: { status: 'Active' },
+            });
+          }
+
           // Launch runOrchestrator detached in background Node process (NO request.signal attached!)
           runOrchestrator(
             conversationId,

@@ -16,7 +16,7 @@ model Conversation {
   updatedAt           DateTime               @updatedAt
   outputs             AgentOutput[]
   history             ExecutionHistory[]
-  executiveMemory     ExecutiveMemory?
+  executiveMemory     ExecutiveMemory[]
 
   // NEW Graph & Ledger Relations
   nodes               GraphNode[]
@@ -74,12 +74,41 @@ model ExecutionHistory {
 }
 
 model ExecutiveMemory {
-  id             String       @id @default(uuid())
-  conversationId String       @unique
+  id             String       @id @default(cuid())
+  conversationId String
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  state          String       // Stringified JSON state containing taskSpec, planner, etc.
+
+  // Readable unique inference identity per agent call
+  inferenceId    String       // e.g. "Queen-1-a3f8c2", "Coder-3-f70d9e"
+
+  // Per-agent write identity
+  agentName      String       // "Queen" | "Planner" | "Architect" | "System" | "Designer"
+                              // "Blueprinter" | "Coder" | "Debugger" | "Security" | "Reviewer" | "Tester"
+  sequence       Int          @default(1) // monotonically increasing per (conversation, agentName)
+
+  // Content & Provenance
+  contentMd      String       // raw sanitized markdown output
+  consumedIds    String       @default("[]") // JSON array of upstream inferenceId strings consumed
+
+  // File-level tracking (Coder & Debugger file writes)
+  filePath       String?      // e.g. "src/index.ts" (null for spec agents)
+
+  // Telemetry
+  tokenCount     Int          @default(0)
+  durationMs     Int          @default(0)
+
+  // Lifecycle & Oscillation Detection
+  status         String       @default("ACTIVE")  // "ACTIVE" | "SUPERSEDED" | "INVALIDATED"
+  contentHash    String?      // MD5 of contentMd — used for oscillation detection across runs
+
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+
+  @@unique([conversationId, inferenceId])
+  @@unique([conversationId, agentName, sequence])
+  @@index([conversationId, agentName, status])
+  @@index([conversationId, filePath])
+  @@index([conversationId, status])
 }
 
 // ====================================================

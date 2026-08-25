@@ -47,9 +47,11 @@ export async function runLinter(
     return runBracketBalanceCheck(content, filePath);
   }
 
-  if (!filePath.endsWith('.ts') && !filePath.endsWith('.tsx')) {
+  if (!filePath.endsWith('.ts') && !filePath.endsWith('.tsx') && !filePath.endsWith('.js') && !filePath.endsWith('.jsx')) {
     return runBracketBalanceCheck(content, filePath);
   }
+
+  const isJsOrJsx = filePath.endsWith('.js') || filePath.endsWith('.jsx');
 
   const cwd = process.cwd().replace(/\\/g, '/');
 
@@ -77,6 +79,7 @@ export async function runLinter(
     strict: false,
     noEmit: true,
     allowJs: true,
+    checkJs: true,
     skipLibCheck: true,
     moduleResolution: ts.ModuleResolutionKind.NodeJs,
   };
@@ -112,10 +115,21 @@ export async function runLinter(
   const allDiagnostics = ts.getPreEmitDiagnostics(program);
   const errors: LintResult['errors'] = [];
 
+  // Run bracket balance check for structural unclosed bracket validation
+  const bracketCheck = runBracketBalanceCheck(content, filePath);
+  if (!bracketCheck.success) {
+    errors.push(...bracketCheck.errors);
+  }
+
   allDiagnostics.forEach((diagnostic) => {
     if (diagnostic.file && diagnostic.start !== undefined) {
       const { line, character } = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
       const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n');
+
+      // For JS/JSX files, ignore external missing module errors (TS2307, TS1479, TS7016, TS2304 for globals) and focus on true syntax/parser errors
+      if (isJsOrJsx && (diagnostic.code === 2307 || diagnostic.code === 1479 || diagnostic.code === 7016 || diagnostic.code === 2304 || diagnostic.code === 2552)) {
+        return;
+      }
 
       errors.push({
         line: line + 1,

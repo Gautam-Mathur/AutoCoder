@@ -1,9 +1,9 @@
 import { EventEmitter } from 'events';
 import { prisma } from '../../db';
-import { runInference, getLLMConfig, startOllamaKeepAlive, stopOllamaKeepAlive } from '../inference';
+import { runInference, getLLMConfig, startOllamaKeepAlive, stopOllamaKeepAlive, cleanJsonResponse } from '../inference';
 import { writeAgentOutput, queryAgentOutput } from '../sml';
 import { AGENT_DEFS, AgentDef } from './agents';
-import { loadExecutiveMemory, saveExecutiveMemory, StageLedger } from './memory';
+import { loadExecutiveMemory, saveExecutiveMemory, writeExecutiveMemoryRecord, OWNERSHIP, StageLedger } from './memory';
 import { calculateTokenBudget } from './token-budgeter';
 import fs from 'fs';
 import path from 'path';
@@ -153,15 +153,15 @@ const VFS_OUTPUT_MAP: Record<string, string> = {
   'Reviewer':    'review_report.md',
 };
 
-const CONTEXT_MAP: Record<string, string[]> = {
+const UPSTREAM_AGENT_MAP: Record<string, string[]> = {
   'Queen':       [],
-  'Planner':     ['plan.md'],
-  'Architect':   ['plan.md', 'requirements.md'],
-  'System':      ['plan.md', 'requirements.md', 'architecture.md'],
-  'Designer':    ['plan.md', 'requirements.md', 'architecture.md', 'backend_spec.md'],
-  'Blueprinter': ['plan.md', 'requirements.md', 'architecture.md', 'backend_spec.md', 'ui_spec.md'],
-  'Security':    ['plan.md'],
-  'Reviewer':    ['plan.md', 'requirements.md', 'architecture.md'],
+  'Planner':     ['Queen'],
+  'Architect':   ['Queen', 'Planner'],
+  'System':      ['Queen', 'Planner', 'Architect'],
+  'Designer':    ['Queen', 'Planner', 'Architect'],
+  'Blueprinter': ['Queen', 'Planner', 'Architect', 'System', 'Designer'],
+  'Security':    ['Queen'],
+  'Reviewer':    ['Queen', 'Planner', 'Architect'],
 };
 
 const EXPECTED_FIRST_HEADERS: Record<string, string> = {
@@ -219,27 +219,69 @@ export async function extractSnapshot(conversationId: string, vfsPath: string): 
   return fullContent.substring(0, 800) + (fullContent.length > 800 ? '\n...[TRUNCATED]' : '');
 }
 
-export async function buildStageContext(conversationId: string, stage: string): Promise<string> {
-  const upstreamFiles = CONTEXT_MAP[stage] || [];
+function extractSnapshotFromContent(content: string): string {
+  if (!content) return '';
+  const exact = content.match(/### Context Snapshot[\s\S]*?(?=\n###[^#]|$)/i);
+  if (exact) {
+    let snapshotText = exact[0].trim();
+    if (snapshotText.length > MAX_SNAPSHOT_CHARS) {
+      snapshotText = snapshotText.substring(0, MAX_SNAPSHOT_CHARS) + '\n...[SNAPSHOT TRUNCATED]';
+    }
+    return snapshotText;
+  }
+  const fuzzy = content.match(/(#+)?\s*(context|snapshot|summary|overview)[\s\S]*?(?=\n###[^#]|$)/i);
+  if (fuzzy) {
+    let snapshotText = fuzzy[0].trim();
+    if (snapshotText.length > MAX_SNAPSHOT_CHARS) {
+      snapshotText = snapshotText.substring(0, MAX_SNAPSHOT_CHARS) + '\n...[SNAPSHOT TRUNCATED]';
+    }
+    return snapshotText;
+  }
+  return content.substring(0, 800) + (content.length > 800 ? '\n...[TRUNCATED]' : '');
+}
 
-  // Immutable Constraint Anchoring: Always inject Queen's plan.md snapshot first if present
+export async function buildStageContext(
+  conversationId: string,
+  stage: string
+): Promise<{ context: string; consumedInferenceIds: string[] }> {
+  const upstreamAgents = UPSTREAM_AGENT_MAP[stage] ?? [];
+  if (upstreamAgents.length === 0) return { context: '', consumedInferenceIds: [] };
+
+  const rows = await prisma.executiveMemory.findMany({
+    where: {
+      conversationId,
+      agentName: { in: upstreamAgents },
+      status: 'ACTIVE',
+    },
+    orderBy: { sequence: 'desc' },
+    select: { agentName: true, contentMd: true, inferenceId: true },
+  });
+
+  const seen = new Set<string>();
+  const latestPerAgent: { agentName: string; contentMd: string; inferenceId: string }[] = [];
+  for (const row of rows) {
+    if (!seen.has(row.agentName)) {
+      seen.add(row.agentName);
+      latestPerAgent.push(row);
+    }
+  }
+
   let context = '';
-  if (stage !== 'Queen') {
-    const queenSnapshot = await extractSnapshot(conversationId, 'plan.md');
-    if (queenSnapshot) {
-      context += `=== ORIGINAL USER INTENT (DO NOT OVERRIDE) ===\n${queenSnapshot}\n\n`;
-    }
+  const consumedInferenceIds: string[] = [];
+
+  for (const agentName of upstreamAgents) {
+    const row = latestPerAgent.find(r => r.agentName === agentName);
+    if (!row) continue;
+    const snapshot = extractSnapshotFromContent(row.contentMd);
+    if (!snapshot) continue;
+    const label = agentName === 'Queen'
+      ? '=== ORIGINAL USER INTENT (DO NOT OVERRIDE) ==='
+      : `--- [FROM ${agentName} / ${row.inferenceId}] ---`;
+    context += `${label}\n${snapshot}\n\n`;
+    consumedInferenceIds.push(row.inferenceId);
   }
 
-  for (const filename of upstreamFiles) {
-    if (filename === 'plan.md') continue; // Already anchored above
-    const snapshot = await extractSnapshot(conversationId, filename);
-    if (snapshot) {
-      context += `--- [FROM ${filename}] ---\n${snapshot}\n\n`;
-    }
-  }
-
-  return context.trim();
+  return { context: context.trim(), consumedInferenceIds };
 }
 
 // ─── Post-Hoc Snapshot Consistency Check ────────────────────────────────────
@@ -261,10 +303,15 @@ export function validateSnapshotConsistency(snapshot: string, fullBody: string):
 // ─── Header Anchoring & Sanitization ─────────────────────────────────────────
 
 export function sanitizeStageOutput(rawOutput: string, expectedFirstHeader?: string): string {
-  let cleaned = rawOutput;
+  let cleaned = rawOutput.trim();
 
-  // 1. Strip markdown fences
-  cleaned = cleaned.replace(/^```\w*\n?/gm, '').replace(/\n?```$/gm, '');
+  // 1. Strip outer code fences ONLY at start and end of output
+  if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```[a-zA-Z0-9_-]*\n?/, '');
+  }
+  if (cleaned.endsWith('```')) {
+    cleaned = cleaned.replace(/\n?```$/, '');
+  }
 
   if (!expectedFirstHeader) return cleaned.trim();
 
@@ -375,7 +422,8 @@ Rules:
       ],
       { temperature: 0.1, format: 'json', maxTokens: 100 }
     );
-    const parsed = JSON.parse(response.trim());
+    const cleaned = cleanJsonResponse(response);
+    const parsed = JSON.parse(cleaned);
     return {
       action: parsed.action || 'RETRY',
       targetFile: parsed.targetFile,
@@ -472,7 +520,17 @@ export function parseBlueprintFiles(blueprintText: string): BlueprintFileSection
 
   for (const block of fileBlocks) {
     const lines = block.trim().split('\n');
-    const file = lines[0].trim();
+    let rawFile = lines[0].trim();
+    if (!rawFile) continue;
+
+    // Clean file path from markdown wrappers (**file** or `file`), leading slashes (/file, ./file), and parenthetical comments
+    let file = rawFile
+      .replace(/[*`'"]/g, '')
+      .replace(/^\.\//, '')
+      .replace(/^\//, '')
+      .split(/\s*[\(\[\{]/)[0]
+      .trim();
+
     if (!file) continue;
 
     const rawSection = '### File: ' + block.trim();
@@ -483,7 +541,7 @@ export function parseBlueprintFiles(blueprintText: string): BlueprintFileSection
 
     const purpose = purposeMatch ? purposeMatch[1].trim() : '';
     const depsRaw = depsMatch ? depsMatch[1].trim() : 'None';
-    const dependencies = depsRaw.toLowerCase() === 'none' ? [] : depsRaw.split(',').map(d => d.trim()).filter(Boolean);
+    const dependencies = depsRaw.toLowerCase() === 'none' ? [] : depsRaw.split(',').map(d => d.trim().replace(/[*`'"]/g, '').replace(/^\.\//, '').replace(/^\//, '')).filter(Boolean);
     const specsRequired = parseSpecsRequired(rawSection).map(s => `${s.file}#${s.section}`);
     const exportsRaw = exportsMatch ? exportsMatch[1].trim() : 'None';
     const exportsList = exportsRaw.toLowerCase() === 'none' ? [] : exportsRaw.split(',').map(e => e.trim()).filter(Boolean);
@@ -547,7 +605,7 @@ export async function runAgent(
 
   const startTime = Date.now();
   const config = await getLLMConfig();
-  const upstreamContext = await buildStageContext(conversationId, agentName);
+  const { context: upstreamContext, consumedInferenceIds } = await buildStageContext(conversationId, agentName);
 
   const constraintsBlock = `\n\nActive System Constraints:
 - Output MUST be valid structured markdown matching the exact header specifications.
@@ -653,6 +711,29 @@ export async function runAgent(
     attempt,
   });
 
+  // 1. Write to ExecutiveMemory ledger
+  const inferenceId = await writeExecutiveMemoryRecord({
+    conversationId,
+    agentName,
+    contentMd: sanitized,
+    filePath: targetFile,
+    tokenCount: estimatedTokens,
+    durationMs,
+    consumedInferenceIds,
+  });
+
+  // 2. Synchronize in-flight ledger so subsequent stages in this run see fresh data
+  const fieldName = (OWNERSHIP as any)[agentName]?.[0];
+  if (fieldName && ledger) {
+    if (agentName === 'Coder' && targetFile) {
+      const currentCoder = ledger.read('coder') || {};
+      currentCoder[targetFile] = { content: sanitized };
+      (ledger.getState() as any).coder = currentCoder;
+    } else {
+      (ledger.getState() as any)[fieldName] = { content: sanitized };
+    }
+  }
+
   await writeHistoryLog(
     conversationId,
     agentName,
@@ -663,7 +744,7 @@ export async function runAgent(
   onEvent({
     type: 'AGENT_LOG',
     agent: agentName,
-    message: `Agent ${agentName} completed in ${durationMs}ms (${sanitized.length} bytes generated).`,
+    message: `Agent ${agentName} completed in ${durationMs}ms (${sanitized.length} bytes generated). [${inferenceId}]`,
   });
 
   return { content: sanitized, raw: rawResponse };
@@ -761,13 +842,13 @@ export async function runOrchestrator(
     for (const stageName of executionStages) {
       if (signal?.aborted) throw new Error('Pipeline compilation aborted by user.');
 
-      // Permanent Fast-Forward Guard: Check if stage has ALREADY completed in history
-      const isAlreadyCompleted = (await prisma.executionHistory.findFirst({
+      // Fast-Forward Guard: Only fast-forward when resuming mid-pipeline with an explicit startStage
+      const isAlreadyCompleted = startStage ? ((await prisma.executionHistory.findFirst({
         where: { conversationId, stage: stageName, status: 'Completed' }
-      })) !== null;
+      })) !== null) : false;
 
       if (isAlreadyCompleted && stageName !== startStage && stageName !== 'Coder') {
-        onEvent({
+        emit({
           type: 'AGENT_COMPLETE',
           agent: stageName,
           message: `Stage ${stageName} already completed in history. Fast-forwarding to next stage...`,
@@ -775,7 +856,7 @@ export async function runOrchestrator(
         continue;
       }
 
-      onEvent({
+      emit({
         type: 'STAGE_START',
         agent: stageName,
         message: `Entering Stage: ${stageName}...`,
@@ -823,9 +904,9 @@ export async function runOrchestrator(
       // ─── STAGE: DEBUGGER (Conditional Error Repair) ───────────────────────
       if (stageName === 'Debugger') {
         const testReport = (await readVirtualFile(conversationId, 'test_report.md')) || '';
-        const hasFailures = testReport.includes('FAILED');
+        const failingLines = testReport.split('\n').filter(l => l.includes('FAILED'));
 
-        if (!hasFailures) {
+        if (failingLines.length === 0) {
           await writeVirtualFile(conversationId, 'debug_report.md', '### Debug Report\nSKIPPED — All files passed Tester linter checks with 0 errors.');
           await writeHistoryLog(conversationId, 'Debugger', 'Skipped', 'Debugger skipped: All files passed linter verification cleanly. Estimated tokens: 0');
           onEvent({
@@ -849,37 +930,51 @@ export async function runOrchestrator(
           continue;
         }
 
-        // Attempt repair on reported failing file
-        const targetFile = triage.targetFile || 'src/index.ts';
-        const fileContent = (await readVirtualFile(conversationId, targetFile)) || '';
-        const repairPrompt = `File: ${targetFile}\nBroken Code:\n${fileContent}\n\nLinter Diagnostics:\n${testReport}`;
-
-        const repairResult = await runAgent(
-          conversationId,
-          'Debugger',
-          userPrompt,
-          onEvent,
-          ledger,
-          1,
-          repairPrompt,
-          signal
-        );
-
-        if (repairResult && repairResult.content) {
-          await writeVirtualFile(conversationId, targetFile, repairResult.content);
-          writeProjectFile(conversationId, targetFile, repairResult.content);
-          const reCheck = await runLinter(conversationId, targetFile);
-          await writeVirtualFile(
-            conversationId,
-            'debug_report.md',
-            `### Debug Report\nRepaired file "${targetFile}". Re-lint result: ${reCheck.summary}`
-          );
+        // Extract failing filenames from test report
+        const failingFiles: string[] = [];
+        for (const line of failingLines) {
+          const match = line.match(/- \*\*(.+?)\*\*/);
+          if (match && match[1]) {
+            failingFiles.push(match[1]);
+          }
         }
 
-        onEvent({
+        let repairedCount = 0;
+        for (const targetFile of failingFiles) {
+          const fileContent = (await readVirtualFile(conversationId, targetFile)) || '';
+          if (!fileContent) continue;
+
+          const repairPrompt = `File: ${targetFile}\nBroken Code:\n${fileContent}\n\nLinter Diagnostics:\n${testReport}`;
+          const repairResult = await runAgent(
+            conversationId,
+            'Debugger',
+            userPrompt,
+            onEvent,
+            ledger,
+            1,
+            repairPrompt,
+            signal,
+            undefined,
+            targetFile
+          );
+
+          if (repairResult && repairResult.content) {
+            await writeVirtualFile(conversationId, targetFile, repairResult.content);
+            writeProjectFile(conversationId, targetFile, repairResult.content);
+            repairedCount++;
+          }
+        }
+
+        await writeVirtualFile(
+          conversationId,
+          'debug_report.md',
+          `### Debug Report\nRepaired ${repairedCount}/${failingFiles.length} failing file(s): ${failingFiles.join(', ')}`
+        );
+
+        emit({
           type: 'AGENT_COMPLETE',
           agent: 'Debugger',
-          message: `Debugger completed repair attempt on ${targetFile}.`,
+          message: `Debugger completed repair attempt on ${failingFiles.length} failing file(s).`,
         });
         continue;
       }
@@ -890,14 +985,14 @@ export async function runOrchestrator(
         const fileSections = parseBlueprintFiles(blueprintText);
 
         if (fileSections.length === 0) {
-          onEvent({
+          emit({
             type: 'PIPELINE_ERROR',
             message: 'Blueprint contains no valid file sections. Unable to execute Coder stage.',
           });
           return;
         }
 
-        onEvent({
+        emit({
           type: 'AGENT_START',
           agent: 'Coder',
           message: `Coder loop starting: Synthesizing ${fileSections.length} files from blueprint...`,
@@ -921,7 +1016,7 @@ export async function runOrchestrator(
             conversationId,
             'Coder',
             userPrompt,
-            onEvent,
+            emit,
             ledger,
             1,
             coderPrompt,
@@ -945,20 +1040,46 @@ export async function runOrchestrator(
               `File ${fileSec.file} synthesized in ${fileDurationMs}ms (${coderOutput.content.length} bytes generated). Estimated tokens: ${estTokens}`
             );
 
-            // Automated Linter Check
-            const lCheck = await runLinter(conversationId, fileSec.file);
-            if (!lCheck.success) {
-              const errDetails = lCheck.errors.map(e => `L${e.line}:C${e.character} ${e.message}`).join('; ');
-              onEvent({
+            // Automated Linter Check & In-Loop Self-Healing (up to 2 repair attempts)
+            let lCheck = await runLinter(conversationId, fileSec.file);
+            let repairAttempt = 0;
+            while (!lCheck.success && repairAttempt < 2) {
+              repairAttempt++;
+              const errDetails = lCheck.errors.map(e => `Line ${e.line}: ${e.message}`).join('; ');
+              emit({
                 type: 'AGENT_LOG',
                 agent: 'Coder',
-                message: `⚠️ Linter warning on ${fileSec.file}: ${errDetails}`,
+                message: `⚠️ Linter detected errors on ${fileSec.file} (Repair Attempt ${repairAttempt}/2): ${errDetails}. Auto-repairing...`,
               });
+
+              const repairPrompt = `File: ${fileSec.file}\nBlueprint Specification:\n${fileSec.rawSection}\n\nCurrent Broken Code:\n${coderOutput.content}\n\nLinter Errors (MUST FIX):\n${errDetails}\n\nRewrite the COMPLETE corrected source code for ${fileSec.file}. Output ONLY raw source code.`;
+
+              const repairedOutput = await runAgent(
+                conversationId,
+                'Coder',
+                userPrompt,
+                emit,
+                ledger,
+                repairAttempt + 1,
+                repairPrompt,
+                signal,
+                errDetails,
+                fileSec.file
+              );
+
+              if (repairedOutput && repairedOutput.content) {
+                coderOutput.content = repairedOutput.content;
+                await writeVirtualFile(conversationId, fileSec.file, repairedOutput.content);
+                writeProjectFile(conversationId, fileSec.file, repairedOutput.content);
+                lCheck = await runLinter(conversationId, fileSec.file);
+              } else {
+                break;
+              }
             }
           }
         }
 
-        onEvent({
+        emit({
           type: 'AGENT_COMPLETE',
           agent: 'Coder',
           message: `Coder loop completed: Synthesized and verified ${fileSections.length} files.`,
@@ -971,14 +1092,14 @@ export async function runOrchestrator(
         conversationId,
         stageName,
         userPrompt,
-        onEvent,
+        emit,
         ledger,
         1,
         undefined,
         signal
       );
 
-      onEvent({
+      emit({
         type: 'AGENT_COMPLETE',
         agent: stageName,
         message: `Stage ${stageName} completed successfully.`,
@@ -995,7 +1116,7 @@ export async function runOrchestrator(
           data: { status: 'Paused', currentStage: 'Architect' },
         });
 
-        onEvent({
+        emit({
           type: 'QUALITY_GATE_PAUSE',
           agent: 'Architect',
           message: '📐 Architect stage completed. Paused for user approval before continuing to System, Designer, Blueprinter, and Coder stages.',
@@ -1008,14 +1129,14 @@ export async function runOrchestrator(
 
     // Flush all VFS files to disk workspace for preview execution
     await flushVfsToDisk(conversationId);
-    await launchVSCodePreview(conversationId, onEvent);
+    await launchVSCodePreview(conversationId, emit);
 
     await prisma.conversation.update({
       where: { id: conversationId },
       data: { status: 'Completed' },
     });
 
-    onEvent({
+    emit({
       type: 'PIPELINE_COMPLETE',
       message: '🎉 AutoCoder Hybrid v2 Pipeline executed successfully!',
     });
@@ -1031,10 +1152,10 @@ export async function runOrchestrator(
     ).catch(() => {});
 
     if (isInfrastructureError(err)) {
-      await handleInfrastructurePause(conversationId, onEvent, err.message);
+      await handleInfrastructurePause(conversationId, emit, err.message);
       return;
     }
-    onEvent({
+    emit({
       type: 'PIPELINE_ERROR',
       message: `Pipeline Execution Failed: ${err.message}`,
     });
