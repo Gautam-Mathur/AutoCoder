@@ -31,10 +31,12 @@ export async function GET(request: NextRequest) {
         const historyLogs = await prisma.executionHistory.findMany({
           where: { conversationId },
           orderBy: { createdAt: 'asc' },
-          take: 50,
+          take: 500,
+          select: { stage: true, status: true, logs: true, createdAt: true },
         });
 
         for (const logItem of historyLogs) {
+          if (logItem.status === 'Streaming') continue;
           sendEvent({
             type: 'HISTORY_REPLAY',
             agent: logItem.stage,
@@ -74,6 +76,14 @@ export async function GET(request: NextRequest) {
         });
 
         if (conversation && conversation.status !== 'Completed' && conversation.status !== 'Failed') {
+          // Save original prompt if available and not set
+          if (userPrompt && (!conversation.originalPrompt || userPrompt.length > conversation.originalPrompt.length)) {
+            await prisma.conversation.update({
+              where: { id: conversationId },
+              data: { originalPrompt: userPrompt },
+            });
+          }
+
           // Ensure conversation status is marked Active in SQLite
           if (conversation.status !== 'Active') {
             await prisma.conversation.update({
@@ -82,10 +92,12 @@ export async function GET(request: NextRequest) {
             });
           }
 
+          const promptToUse = userPrompt || conversation.originalPrompt || conversation.title || 'Software development request';
+
           // Launch runOrchestrator detached in background Node process (NO request.signal attached!)
           runOrchestrator(
             conversationId,
-            userPrompt || conversation.title || 'Software development request',
+            promptToUse,
             (evt) => sendEvent(evt),
             undefined, // Decoupled from browser request signal!
             conversation.currentStage !== 'Queen' ? conversation.currentStage : undefined

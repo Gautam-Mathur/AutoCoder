@@ -482,14 +482,26 @@ export async function runInference(
     throw new Error(`UAT Mock Inference: unknown agent prompt matching: ${sysPrompt.slice(0, 100)}`);
   }
 
+function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
+  const controller = new AbortController();
+  for (const sig of signals) {
+    if (!sig) continue;
+    if (sig.aborted) { controller.abort(sig.reason); return controller.signal; }
+    sig.addEventListener('abort', () => controller.abort(sig.reason), { once: true });
+  }
+  return controller.signal;
+}
+
   const config = await getLLMConfig();
   const temp = options.temperature ?? 0.2;
   const isJson = options.format === 'json';
 
   // Combine client abort signal with timeout signal (default fallback timeout 30 minutes / 1800s for large 30B models)
   const effectiveTimeout = options.timeoutMs || 1800000;
-  const timeoutSignal = AbortSignal.timeout(effectiveTimeout);
-  const combinedSignal: AbortSignal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
+  const timeoutSignal = typeof AbortSignal.timeout === 'function'
+    ? AbortSignal.timeout(effectiveTimeout)
+    : (() => { const c = new AbortController(); setTimeout(() => c.abort(), effectiveTimeout); return c.signal; })();
+  const combinedSignal: AbortSignal = options.signal ? combineAbortSignals(options.signal, timeoutSignal) : timeoutSignal;
 
   if (config.provider === 'ollama') {
     const host = config.ollamaHost;
@@ -504,7 +516,11 @@ export async function runInference(
       keep_alive: -1, // Force Ollama to keep model loaded in VRAM permanently during pipeline run!
       options: {
         temperature: temp,
-        num_ctx: 32768, // Request 32K context window to fit large specs and file histories
+        num_ctx: (() => {
+          const promptChars = messages.reduce((sum, m) => sum + (m.content || '').length, 0);
+          const needed = Math.ceil(promptChars / 4) + (options.maxTokens || 4096) + 512;
+          return Math.min(131072, Math.max(32768, needed));
+        })(),
       },
       stream: true,
     };

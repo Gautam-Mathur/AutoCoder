@@ -2,7 +2,7 @@ import { StageLedger } from '../memory';
 
 export const name = 'Queen';
 export const temperature = 0.2;
-export const maxTokens = 1024;
+export const maxTokens = 4096;
 
 export const systemPrompt = `You are a project analyst. You receive a user's software request and produce a structured project specification document.
 

@@ -2,7 +2,7 @@ import { StageLedger } from '../memory';
 
 export const name = 'Security';
 export const temperature = 0.2;
-export const maxTokens = 2048;
+export const maxTokens = 8192;
 export const allowedTools: string[] = [];
 
 export const systemPrompt = `You are a security auditor. You receive all source code files from a project and produce a security audit report.

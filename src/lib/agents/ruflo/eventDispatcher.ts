@@ -34,7 +34,7 @@ export function dispatchFailureEvent(
   ) {
     return {
       failureType: 'conflict',
-      specialistAgent: 'ConflictResolver', // Hypothetical cross-contract conflict agent
+      specialistAgent: 'Debugger',
       reproducibleLogs: logs,
       contextHint: 'Analyze conflicts between system specifications, requirements database mapping, or UI layout rules.'
     };
@@ -79,7 +79,7 @@ export function dispatchFailureEvent(
   ) {
     return {
       failureType: 'performance',
-      specialistAgent: 'OptimizationRefiner',
+      specialistAgent: 'Debugger',
       reproducibleLogs: logs,
       contextHint: 'Examine bundle optimization parameters, query indices, or memory leaking references.'
     };
@@ -94,7 +94,7 @@ export function dispatchFailureEvent(
   ) {
     return {
       failureType: 'quality',
-      specialistAgent: 'RefactoringAdvisor',
+      specialistAgent: 'Debugger',
       reproducibleLogs: logs,
       contextHint: 'Review code quality standards and apply clean code refactoring policies.'
     };

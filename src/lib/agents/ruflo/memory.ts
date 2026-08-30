@@ -281,7 +281,7 @@ export class ExecutiveMemoryGateway {
     } else if (normalized === 'system') {
       downstreamStages.push('designer', 'tester');
     } else if (normalized === 'designer') {
-      downstreamStages.push('tester');
+      downstreamStages.push('blueprinter', 'coder', 'tester');
     }
 
     // Flush in-memory node cache
@@ -387,16 +387,6 @@ export class StageLedger {
         this.state.hashes[filepath] = hash;
       }
     }
-
-    // 4. Persist agent output to ExecutiveMemory ledger
-    const contentMd = typeof value === 'string'
-      ? value
-      : (value?.content ?? JSON.stringify(value));
-    await writeExecutiveMemoryRecord({
-      conversationId: this.conversationId,
-      agentName,
-      contentMd,
-    });
   }
 
   async invalidate(agentNames: string[]): Promise<void> {

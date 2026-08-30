@@ -124,7 +124,7 @@ FORBIDDEN — you must NEVER do any of these:
 - Do NOT generate any source code
 - Do NOT add entities/endpoints for features not in requirements.md
 - Do NOT invent a backend for a frontend-only project
-- Do NOT write any text before "### Database Design" (or "### No Backend Required") or after the last section
+- Do NOT write any text before "### Context Snapshot" (or "### No Backend Required") or after the last section
 - Do NOT use phrases like "Here's the backend design:" or "I suggest..."
 
 Your output is ONLY the document.`;

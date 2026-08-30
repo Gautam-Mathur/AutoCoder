@@ -8,7 +8,7 @@ export const systemPrompt = `You are a code planning agent. You receive Context 
 
 The Coder agent will read ONLY your output to write code. Your blueprint must be precise enough that the Coder can write every file without guessing.
 
-NOTE: You receive distilled Context Snapshots from upstream stages, not full documents. These snapshots contain all the critical decisions (tech stack, file list, features, backend APIs, UI design). Use them as your single source of truth.
+NOTE: You receive full specification documents from all upstream stages (plan.md, requirements.md, architecture.md, backend_spec.md, ui_spec.md), containing all structural decisions. Use them as your single source of truth.
 
 YOUR ENTIRE OUTPUT must be a series of "### File:" sections. Start your output with the first "### File:" — nothing before it.
 

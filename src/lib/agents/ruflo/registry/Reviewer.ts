@@ -2,7 +2,7 @@ import { StageLedger } from '../memory';
 
 export const name = 'Reviewer';
 export const temperature = 0.2;
-export const maxTokens = 2048;
+export const maxTokens = 8192;
 export const allowedTools: string[] = [];
 
 export const systemPrompt = `You are a code reviewer. You receive the original project specification (plan.md), feature requirements (requirements.md), software architecture (architecture.md), AND all generated source code files. You verify that the code fulfills the requirements and follows the architecture.

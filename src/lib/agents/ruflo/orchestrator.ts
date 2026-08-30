@@ -168,14 +168,26 @@ const EXPECTED_FIRST_HEADERS: Record<string, string> = {
   'Queen':       'Context Snapshot',
   'Planner':     'Context Snapshot',
   'Architect':   'Context Snapshot',
-  'System':      'Context Snapshot',
+  // System intentionally excluded — has two valid first headers
   'Designer':    'Context Snapshot',
   'Blueprinter': 'File:',
   'Security':    'Overall Status',
   'Reviewer':    'Overall Assessment',
+  // Coder intentionally excluded — outputs raw code
 };
 
-const MAX_SNAPSHOT_CHARS = 600;
+const MAX_SNAPSHOT_CHARS = 2000;
+
+function truncateAtBullet(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  const lines = text.split('\n');
+  let result = '';
+  for (const line of lines) {
+    if ((result + '\n' + line).length > maxChars) break;
+    result += (result ? '\n' : '') + line;
+  }
+  return result + '\n...[SNAPSHOT TRUNCATED]';
+}
 
 // ─── Snapshot Extraction & Context Assembly ──────────────────────────────────
 
@@ -184,23 +196,17 @@ export async function extractSnapshot(conversationId: string, vfsPath: string): 
   if (!fullContent) return '';
 
   // Tier 1: Exact match
-  const exact = fullContent.match(/### Context Snapshot[\s\S]*?(?=\n###[^#]|$)/i);
+  const exact = fullContent.match(/#{1,4}\s*Context Snapshot[\s\S]*?(?=\n#{1,4}\s[^#]|$)/i);
   if (exact) {
     let snapshotText = exact[0].trim();
-    if (snapshotText.length > MAX_SNAPSHOT_CHARS) {
-      snapshotText = snapshotText.substring(0, MAX_SNAPSHOT_CHARS) + '\n...[SNAPSHOT TRUNCATED]';
-    }
-    return snapshotText;
+    return truncateAtBullet(snapshotText, MAX_SNAPSHOT_CHARS);
   }
 
   // Tier 2: Fuzzy match
-  const fuzzy = fullContent.match(/(#+)?\s*(context|snapshot|summary|overview)[\s\S]*?(?=\n###[^#]|$)/i);
+  const fuzzy = fullContent.match(/(#+)?\s*(context|snapshot|summary|overview)[\s\S]*?(?=\n#{1,4}\s[^#]|$)/i);
   if (fuzzy) {
     let snapshotText = fuzzy[0].trim();
-    if (snapshotText.length > MAX_SNAPSHOT_CHARS) {
-      snapshotText = snapshotText.substring(0, MAX_SNAPSHOT_CHARS) + '\n...[SNAPSHOT TRUNCATED]';
-    }
-    return snapshotText;
+    return truncateAtBullet(snapshotText, MAX_SNAPSHOT_CHARS);
   }
 
   // Tier 3: Synthetic fallback (first line of top 3 headers)
@@ -221,21 +227,15 @@ export async function extractSnapshot(conversationId: string, vfsPath: string): 
 
 function extractSnapshotFromContent(content: string): string {
   if (!content) return '';
-  const exact = content.match(/### Context Snapshot[\s\S]*?(?=\n###[^#]|$)/i);
+  const exact = content.match(/#{1,4}\s*Context Snapshot[\s\S]*?(?=\n#{1,4}\s[^#]|$)/i);
   if (exact) {
     let snapshotText = exact[0].trim();
-    if (snapshotText.length > MAX_SNAPSHOT_CHARS) {
-      snapshotText = snapshotText.substring(0, MAX_SNAPSHOT_CHARS) + '\n...[SNAPSHOT TRUNCATED]';
-    }
-    return snapshotText;
+    return truncateAtBullet(snapshotText, MAX_SNAPSHOT_CHARS);
   }
-  const fuzzy = content.match(/(#+)?\s*(context|snapshot|summary|overview)[\s\S]*?(?=\n###[^#]|$)/i);
+  const fuzzy = content.match(/(#+)?\s*(context|snapshot|summary|overview)[\s\S]*?(?=\n#{1,4}\s[^#]|$)/i);
   if (fuzzy) {
     let snapshotText = fuzzy[0].trim();
-    if (snapshotText.length > MAX_SNAPSHOT_CHARS) {
-      snapshotText = snapshotText.substring(0, MAX_SNAPSHOT_CHARS) + '\n...[SNAPSHOT TRUNCATED]';
-    }
-    return snapshotText;
+    return truncateAtBullet(snapshotText, MAX_SNAPSHOT_CHARS);
   }
   return content.substring(0, 800) + (content.length > 800 ? '\n...[TRUNCATED]' : '');
 }
@@ -323,9 +323,19 @@ export function sanitizeStageOutput(rawOutput: string, expectedFirstHeader?: str
   const headerMatch = cleaned.match(headerRegex);
 
   if (headerMatch && headerMatch.index !== undefined && headerMatch.index > 0) {
-    cleaned = '### ' + expectedFirstHeader + cleaned.substring(headerMatch.index + headerMatch[0].length);
+    cleaned = headerMatch[0].trimStart() + cleaned.substring(headerMatch.index + headerMatch[0].length);
   }
 
+  return cleaned.trim();
+}
+
+export function sanitizeCoderOutput(raw: string): string {
+  let cleaned = raw.trim();
+  cleaned = cleaned.replace(/^```[a-zA-Z0-9_+.-]*\r?\n?/gm, '').replace(/\r?\n?```\s*$/gm, '');
+  const codeStart = cleaned.search(/^(<[!a-zA-Z\/]|[a-zA-Z_$\/*{]|import |const |let |var |function |class |\/\/|\/\*|#!|\s*<!)/m);
+  if (codeStart > 5) cleaned = cleaned.substring(codeStart);
+  const trailingIdx = cleaned.search(/\n{2,}(?:I hope|This implementation|This code|Note:|The above|Feel free|Let me know)/i);
+  if (trailingIdx > 0) cleaned = cleaned.substring(0, trailingIdx);
   return cleaned.trim();
 }
 
@@ -347,10 +357,8 @@ export function parseSpecsRequired(blueprintSection: string): Array<{ file: stri
 
 export async function extractSection(conversationId: string, vfsPath: string, sectionName: string): Promise<string> {
   const fullContent = (await readVirtualFile(conversationId, vfsPath)) || '';
-  const regex = new RegExp(
-    `###\\s*${sectionName.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}[\\s\\S]*?(?=\\n###[^#]|$)`,
-    'i'
-  );
+  const escaped = sectionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`#{2,4}\\s*${escaped}[\\s\\S]*?(?=\\n#{2,4}\\s|$)`, 'i');
   const match = fullContent.match(regex);
   if (match) {
     return match[0].trim();
@@ -358,26 +366,62 @@ export async function extractSection(conversationId: string, vfsPath: string, se
   return `[Section "${sectionName}" not found in ${vfsPath}]`;
 }
 
+export function extractDependencyInterface(filePath: string, content: string): string {
+  if (filePath.endsWith('.html')) {
+    const ids = [...content.matchAll(/\bid=["']([^"']+)["']/g)].map(m => m[1]);
+    const cssLinks = [...content.matchAll(/href=["']([^"']+\.css)["']/g)].map(m => m[1]);
+    const jsLinks = [...content.matchAll(/src=["']([^"']+\.js)["']/g)].map(m => m[1]);
+    return `[HTML] IDs: ${[...new Set(ids)].join(', ') || 'none'} | CSS links: ${cssLinks.join(', ') || 'none'} | Scripts: ${jsLinks.join(', ') || 'none'}`;
+  }
+  if (filePath.endsWith('.css')) {
+    const selectors = [...content.matchAll(/^([.#][\w-]+)/gm)].map(m => m[1]);
+    const vars = [...content.matchAll(/(--[\w-]+)\s*:/g)].map(m => m[1]);
+    return `[CSS] Selectors: ${[...new Set(selectors)].join(', ') || 'none'} | Variables: ${[...new Set(vars)].join(', ') || 'none'}`;
+  }
+  if (/\.(js|ts|jsx|tsx)$/.test(filePath)) {
+    const named = [...content.matchAll(/export\s+(?:async\s+)?(?:function|const|class|let|var)\s+(\w+)/g)].map(m => m[1]);
+    const dflt = content.match(/export\s+default\s+(?:class|function)?\s*(\w+)/)?.[1];
+    return `[JS/TS] Exports: ${[...new Set([...named, ...(dflt ? [dflt] : [])])].join(', ') || 'none'}`;
+  }
+  return content.substring(0, 300);
+}
+
 export async function buildCoderContext(
   conversationId: string,
   blueprintSection: string,
-  dependencyCode: string
+  dependencyInterfaces: string
 ): Promise<string> {
-  let context = `=== BLUEPRINT ===\n${blueprintSection}\n\n`;
+  const fileMatch = blueprintSection.match(/###\s*File:\s*(.+)/i);
+  const fileName = fileMatch ? fileMatch[1].trim().replace(/[*`'"]/g, '').split(/\s*[(\[{]/)[0].trim() : 'unknown';
+  let context = `TARGET FILE: ${fileName}\n\n`;
 
-  if (dependencyCode) {
-    context += `=== DEPENDENCY CODE ===\n${dependencyCode}\n\n`;
+  // Inject Design System (Designer) — color palette, font, spacing
+  const uiSpec = await readVirtualFile(conversationId, 'ui_spec.md');
+  if (uiSpec) {
+    const dsMatch = uiSpec.match(/#{1,4}\s*Design System[\s\S]*?(?=\n#{1,4}\s|$)/i);
+    if (dsMatch) context += `=== DESIGN SYSTEM ===\n${dsMatch[0].trim()}\n\n`;
   }
+
+  // Inject API Endpoints (System)
+  const backendSpec = await readVirtualFile(conversationId, 'backend_spec.md');
+  if (backendSpec) {
+    const apiMatch = backendSpec.match(/#{1,4}\s*API Endpoints[\s\S]*?(?=\n#{1,4}\s|$)/i);
+    if (apiMatch) context += `=== API ENDPOINTS ===\n${apiMatch[0].trim()}\n\n`;
+  }
+
+  if (dependencyInterfaces) context += `=== DEPENDENCY INTERFACES ===\n${dependencyInterfaces}\n\n`;
 
   const specsNeeded = parseSpecsRequired(blueprintSection);
   if (specsNeeded.length > 0) {
     context += `=== REFERENCED SPECS ===\n`;
     for (const spec of specsNeeded) {
       const sectionText = await extractSection(conversationId, spec.file, spec.section);
-      context += `--- [FROM ${spec.file}#${spec.section}] ---\n${sectionText}\n\n`;
+      context += `--- [${spec.file}#${spec.section}] ---\n${sectionText}\n\n`;
     }
   }
 
+  // Blueprint at BOTTOM — highest LLM attention zone
+  context += `=== IMPLEMENTATION BLUEPRINT — FOLLOW EXACTLY ===\n${blueprintSection}`;
   return context.trim();
 }
 
@@ -562,14 +606,19 @@ export function parseBlueprintFiles(blueprintText: string): BlueprintFileSection
   const hasHtmlEntryPoint = sections.some((s) => s.file === 'index.html' || s.file === 'public/index.html' || s.file.endsWith('.html'));
 
   if (isWebProject && !hasHtmlEntryPoint) {
+    const cssFiles = sections.filter(s => s.file.endsWith('.css')).map(s => s.file);
+    const jsFiles = sections.filter(s => /\.(js|ts)$/.test(s.file)).map(s => s.file);
+    const primaryCss = cssFiles[0] || 'style.css';
+    const primaryJs = jsFiles[jsFiles.length - 1] || 'script.js';
+    const allDeps = [...cssFiles, ...jsFiles];
     const defaultHtmlSection: BlueprintFileSection = {
       file: 'index.html',
       purpose: 'Main web entry point mounting project layout and scripts',
-      dependencies: sections.map((s) => s.file).filter((f) => f.endsWith('.css') || f.endsWith('.js') || f.endsWith('.ts')),
+      dependencies: allDeps,
       specsRequired: [],
       exports: [],
-      details: 'HTML5 doctype with viewport meta, linking style.css and loading script.js',
-      rawSection: '### File: index.html\n- **Purpose**: Main web entry point\n- **Dependencies**: None\n- **Specs Required**: None\n- **Exports**: None\n- **Implementation Details**:\n  1. HTML5 Doctype lang="en"\n  2. Head with meta charset, viewport, title, link rel="stylesheet" href="style.css"\n  3. Body with main container div id="app"\n  4. Script tag loading script.js at end of body',
+      details: `HTML5 entry linking ${primaryCss} and loading ${primaryJs}`,
+      rawSection: `### File: index.html\n- **Purpose**: Main web entry point\n- **Dependencies**: ${allDeps.join(', ') || 'None'}\n- **Specs Required**: None\n- **Exports**: None\n- **Implementation Details**:\n  1. HTML5 Doctype lang="en"\n  2. Head with meta charset="UTF-8", viewport meta, descriptive title\n  3. Head: <link rel="stylesheet" href="${primaryCss}">\n  4. Body with main container div id="app"\n  5. End of body: <script src="${primaryJs}" defer></script>`,
     };
     sections.unshift(defaultHtmlSection);
   }
@@ -611,10 +660,10 @@ export async function runAgent(
 - Output MUST be valid structured markdown matching the exact header specifications.
 - Do NOT wrap your entire response in markdown code blocks (\`\`\`markdown). Return raw text directly.`;
 
-  const retryHint = attempt > 1 ? `\n\nRetry Repair Hint: Your previous output failed verification. Error: ${validationError || 'Ensure ALL required section headers are present.'}` : '';
-
-  const systemInstructions = agentDef.systemPrompt + constraintsBlock + retryHint;
-  const userContent = customUserContent || (upstreamContext ? `Upstream Specification Context:\n${upstreamContext}\n\nOriginal Request:\n"${userPromptText}"` : `Original Request:\n"${userPromptText}"`);
+  const systemInstructions = agentDef.systemPrompt + constraintsBlock;
+  const retryPrefix = attempt > 1 ? `[RETRY ${attempt}/3] Your previous output failed verification. Error: ${validationError || 'Ensure ALL required section headers are present.'}.\n\n` : '';
+  const baseUserContent = customUserContent || (upstreamContext ? `Upstream Specification Context:\n${upstreamContext}\n\nOriginal Request:\n"${userPromptText}"` : `Original Request:\n"${userPromptText}"`);
+  const userContent = retryPrefix + baseUserContent;
 
   const { budget, timeoutMs } = calculateTokenBudget(agentName, ledger);
 
@@ -673,15 +722,20 @@ export async function runAgent(
   );
 
   const sanitized = sanitizeStageOutput(rawResponse, EXPECTED_FIRST_HEADERS[agentName]);
+  let finalContent = sanitized;
+  if (agentName === 'Coder') {
+    const deepCleaned = sanitizeCoderOutput(sanitized);
+    if (deepCleaned.length > 10) finalContent = deepCleaned;
+  }
 
   // If agent specifies an output filename in VFS_OUTPUT_MAP, write to VFS
   const outputFilename = VFS_OUTPUT_MAP[agentName];
   if (outputFilename) {
-    await writeVirtualFile(conversationId, outputFilename, sanitized);
+    await writeVirtualFile(conversationId, outputFilename, finalContent);
   }
 
   const durationMs = Date.now() - startTime;
-  const estimatedTokens = Math.round((systemInstructions.length + userContent.length + sanitized.length) / 4);
+  const estimatedTokens = Math.round((systemInstructions.length + userContent.length + finalContent.length) / 4);
 
   await writeRichTelemetryLog({
     conversationId,
@@ -692,7 +746,7 @@ export async function runAgent(
       executionMemory: { stage: agentName },
       orchestration: { durationMs },
       inflow: { systemInstructions, userContent },
-      thought: sanitized,
+      thought: finalContent,
       model: config.ollamaModel,
       budget,
       timeoutMs,
@@ -705,7 +759,7 @@ export async function runAgent(
     stage: agentName,
     schemaVersion: '2.0.0',
     model: config.ollamaModel,
-    validatedJson: { content: sanitized },
+    validatedJson: { content: finalContent },
     executionTime: durationMs,
     tokenUsage: estimatedTokens,
     attempt,
@@ -715,7 +769,7 @@ export async function runAgent(
   const inferenceId = await writeExecutiveMemoryRecord({
     conversationId,
     agentName,
-    contentMd: sanitized,
+    contentMd: finalContent,
     filePath: targetFile,
     tokenCount: estimatedTokens,
     durationMs,
@@ -727,10 +781,10 @@ export async function runAgent(
   if (fieldName && ledger) {
     if (agentName === 'Coder' && targetFile) {
       const currentCoder = ledger.read('coder') || {};
-      currentCoder[targetFile] = { content: sanitized };
+      currentCoder[targetFile] = { content: finalContent };
       (ledger.getState() as any).coder = currentCoder;
     } else {
-      (ledger.getState() as any)[fieldName] = { content: sanitized };
+      (ledger.getState() as any)[fieldName] = { content: finalContent };
     }
   }
 
@@ -738,16 +792,16 @@ export async function runAgent(
     conversationId,
     agentName,
     'Completed',
-    `Agent ${agentName} completed in ${durationMs}ms (${sanitized.length} bytes generated). Estimated tokens: ${estimatedTokens}`
+    `Agent ${agentName} completed in ${durationMs}ms (${finalContent.length} bytes generated). Estimated tokens: ${estimatedTokens}`
   );
 
   onEvent({
     type: 'AGENT_LOG',
     agent: agentName,
-    message: `Agent ${agentName} completed in ${durationMs}ms (${sanitized.length} bytes generated). [${inferenceId}]`,
+    message: `Agent ${agentName} completed in ${durationMs}ms (${finalContent.length} bytes generated). [${inferenceId}]`,
   });
 
-  return { content: sanitized, raw: rawResponse };
+  return { content: finalContent, raw: rawResponse };
 }
 
 // ─── Main Pipeline Orchestrator Loop (11 Stages) ───────────────────────────
@@ -840,7 +894,7 @@ export async function runOrchestrator(
     const executionStages = startIndex >= 0 ? STAGES.slice(startIndex) : STAGES;
 
     for (const stageName of executionStages) {
-      if (signal?.aborted) throw new Error('Pipeline compilation aborted by user.');
+      if (executionSignal.aborted) throw new Error('Pipeline compilation aborted by user.');
 
       // Fast-Forward Guard: Only fast-forward when resuming mid-pipeline with an explicit startStage
       const isAlreadyCompleted = startStage ? ((await prisma.executionHistory.findFirst({
@@ -944,7 +998,10 @@ export async function runOrchestrator(
           const fileContent = (await readVirtualFile(conversationId, targetFile)) || '';
           if (!fileContent) continue;
 
-          const repairPrompt = `File: ${targetFile}\nBroken Code:\n${fileContent}\n\nLinter Diagnostics:\n${testReport}`;
+          const relevantErrors = testReport.split('\n')
+            .filter(l => l.includes(targetFile) || l.startsWith('###') || l.startsWith('- **Total'))
+            .join('\n');
+          const repairPrompt = `File to fix: ${targetFile}\n\nCurrent source code:\n${fileContent}\n\nLinter errors for THIS file:\n${relevantErrors}\n\nOutput ONLY the complete corrected file. No markdown fences. No explanation.`;
           const repairResult = await runAgent(
             conversationId,
             'Debugger',
@@ -953,15 +1010,22 @@ export async function runOrchestrator(
             ledger,
             1,
             repairPrompt,
-            signal,
+            executionSignal,
             undefined,
             targetFile
           );
 
           if (repairResult && repairResult.content) {
-            await writeVirtualFile(conversationId, targetFile, repairResult.content);
-            writeProjectFile(conversationId, targetFile, repairResult.content);
-            repairedCount++;
+            const repairedContent = sanitizeCoderOutput(repairResult.content) || repairResult.content;
+            await writeVirtualFile(conversationId, targetFile, repairedContent);
+            writeProjectFile(conversationId, targetFile, repairedContent);
+            const postLint = await runLinter(conversationId, targetFile);
+            if (postLint.success) {
+              repairedCount++;
+              emit({ type: 'AGENT_LOG', agent: 'Debugger', message: `✅ ${targetFile} repair verified clean.` });
+            } else {
+              emit({ type: 'AGENT_LOG', agent: 'Debugger', message: `⚠️ ${targetFile} repair still has errors: ${postLint.summary}` });
+            }
           }
         }
 
@@ -999,14 +1063,14 @@ export async function runOrchestrator(
         });
 
         for (const fileSec of fileSections) {
-          if (signal?.aborted) throw new Error('Pipeline compilation aborted by user.');
+          if (executionSignal.aborted) throw new Error('Pipeline compilation aborted by user.');
 
           // Build dependency code context
           let depCodeText = '';
           for (const depFile of fileSec.dependencies) {
             const depContent = await readVirtualFile(conversationId, depFile);
             if (depContent) {
-              depCodeText += `--- [${depFile}] ---\n${depContent}\n\n`;
+              depCodeText += `--- [${depFile}] ---\n${extractDependencyInterface(depFile, depContent)}\n\n`;
             }
           }
 
@@ -1020,7 +1084,7 @@ export async function runOrchestrator(
             ledger,
             1,
             coderPrompt,
-            signal,
+            executionSignal,
             undefined,
             fileSec.file
           );
@@ -1062,7 +1126,7 @@ export async function runOrchestrator(
                 ledger,
                 repairAttempt + 1,
                 repairPrompt,
-                signal,
+                executionSignal,
                 errDetails,
                 fileSec.file
               );
@@ -1079,15 +1143,85 @@ export async function runOrchestrator(
           }
         }
 
+        // R3-2: Cross-file DOM coherence check after Coder loop
+        const allVfs = await listVirtualFiles(conversationId);
+        const htmlFiles = allVfs.filter(f => f.endsWith('.html'));
+        const jsFiles = allVfs.filter(f => /\.(js|ts|jsx|tsx)$/.test(f));
+        let domWarnings = 0;
+        for (const htmlFile of htmlFiles) {
+          const htmlContent = (await readVirtualFile(conversationId, htmlFile)) || '';
+          const definedIds = new Set([...htmlContent.matchAll(/\bid=["']([^"']+)["']/g)].map(m => m[1]));
+          for (const jsFile of jsFiles) {
+            const jsContent = (await readVirtualFile(conversationId, jsFile)) || '';
+            const referencedIds = [...jsContent.matchAll(/getElementById\(["']([^"']+)["']\)|querySelector\(["']#([^"']+)["']\)/g)]
+              .map(m => m[1] || m[2]);
+            for (const refId of referencedIds) {
+              if (!definedIds.has(refId)) {
+                domWarnings++;
+                emit({
+                  type: 'AGENT_LOG',
+                  agent: 'Coder',
+                  message: `⚠️ DOM Coherence Warning: "${jsFile}" references ID "${refId}" which is missing in "${htmlFile}".`,
+                });
+              }
+            }
+          }
+        }
+
         emit({
           type: 'AGENT_COMPLETE',
           agent: 'Coder',
-          message: `Coder loop completed: Synthesized and verified ${fileSections.length} files.`,
+          message: `Coder loop completed: Synthesized and verified ${fileSections.length} files (${domWarnings} DOM warning(s)).`,
         });
         continue;
       }
 
-      // ─── STAGES: Queen, Planner, Architect, System, Designer, Blueprinter, Security, Reviewer ───
+      // ─── STAGE: BLUEPRINTER (Full Spec Context) ───────────────────────────
+      if (stageName === 'Blueprinter') {
+        const specFiles = ['plan.md', 'requirements.md', 'architecture.md', 'backend_spec.md', 'ui_spec.md'];
+        let fullContext = '';
+        for (const sf of specFiles) {
+          const sc = await readVirtualFile(conversationId, sf);
+          if (sc) fullContext += `=== ${sf.toUpperCase()} ===\n${sc}\n\n`;
+        }
+        const bpOut = await runAgent(conversationId, 'Blueprinter', userPrompt, emit, ledger, 1, fullContext.trim(), executionSignal);
+        emit({ type: 'AGENT_COMPLETE', agent: 'Blueprinter', message: 'Blueprinter completed.', data: bpOut.content });
+        await flushVfsToDisk(conversationId);
+        continue;
+      }
+
+      // ─── STAGES: SECURITY & REVIEWER (Spec + Source Code Context) ─────────
+      if (stageName === 'Security' || stageName === 'Reviewer') {
+        const specFiles = ['plan.md', 'requirements.md', 'architecture.md', 'backend_spec.md', 'ui_spec.md'];
+        let specContext = '';
+        for (const sf of specFiles) {
+          const sc = await readVirtualFile(conversationId, sf);
+          if (sc) specContext += `=== ${sf.toUpperCase()} ===\n${sc}\n\n`;
+        }
+        const allVfsFiles = await listVirtualFiles(conversationId);
+        const codeFiles = allVfsFiles.filter(f => /\.(js|ts|jsx|tsx|html|css|py|go|java|rs|sh)$/.test(f));
+        let codeContext = '';
+        let totalChars = 0;
+        const CODE_CHAR_LIMIT = 60000;
+        for (const f of codeFiles) {
+          if (totalChars >= CODE_CHAR_LIMIT) {
+            codeContext += `\n[Remaining ${codeFiles.length - codeFiles.indexOf(f)} files omitted for size]\n`;
+            break;
+          }
+          const fc = await readVirtualFile(conversationId, f);
+          if (fc) {
+            codeContext += `\n--- FILE: ${f} ---\n${fc}\n`;
+            totalChars += fc.length;
+          }
+        }
+        const fullCtx = specContext + (codeContext ? `\n=== GENERATED SOURCE CODE ===\n${codeContext}` : '\n=== NOTE: No source code files found ===');
+        const srOut = await runAgent(conversationId, stageName, userPrompt, emit, ledger, 1, fullCtx, executionSignal);
+        emit({ type: 'AGENT_COMPLETE', agent: stageName, message: `Stage ${stageName} completed.`, data: srOut.content });
+        await flushVfsToDisk(conversationId);
+        continue;
+      }
+
+      // ─── STAGES: Queen, Planner, Architect, System, Designer ───────────────
       const stageOutput = await runAgent(
         conversationId,
         stageName,
@@ -1096,7 +1230,7 @@ export async function runOrchestrator(
         ledger,
         1,
         undefined,
-        signal
+        executionSignal
       );
 
       emit({

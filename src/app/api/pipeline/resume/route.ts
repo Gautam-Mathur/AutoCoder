@@ -73,8 +73,8 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Derive prompt from conversation title or fallback
-    const userPrompt = conversation.title || 'Resume software development pipeline';
+    // Derive prompt from stored original prompt, title or fallback
+    const userPrompt = conversation.originalPrompt || conversation.title || 'Resume software development pipeline';
 
     // Asynchronously resume orchestrator from nextStage
     runOrchestrator(

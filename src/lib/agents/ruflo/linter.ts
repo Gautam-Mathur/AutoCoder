@@ -47,6 +47,10 @@ export async function runLinter(
     return runBracketBalanceCheck(content, filePath);
   }
 
+  if (filePath.endsWith('.css')) {
+    return runCssPropertyCheck(content, filePath);
+  }
+
   if (!filePath.endsWith('.ts') && !filePath.endsWith('.tsx') && !filePath.endsWith('.js') && !filePath.endsWith('.jsx')) {
     return runBracketBalanceCheck(content, filePath);
   }
@@ -327,4 +331,48 @@ function runHtmlLinkCheck(content: string, filePath: string, fileMap: Map<string
   }
 
   return { success: true, errors: [], summary: 'HTML links verified.' };
+}
+
+export function runCssPropertyCheck(content: string, filePath: string): LintResult {
+  const bracketCheck = runBracketBalanceCheck(content, filePath);
+  if (!bracketCheck.success) return bracketCheck;
+
+  const COMMON_CSS_PROPS = new Set([
+    'color', 'background', 'background-color', 'background-image', 'background-size', 'background-position', 'background-repeat',
+    'font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'text-align', 'text-decoration', 'text-transform',
+    'margin', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+    'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+    'width', 'min-width', 'max-width', 'height', 'min-height', 'max-height',
+    'display', 'position', 'top', 'right', 'bottom', 'left', 'flex', 'flex-direction', 'flex-wrap', 'justify-content', 'align-items',
+    'gap', 'grid', 'grid-template-columns', 'grid-template-rows', 'grid-column', 'grid-row',
+    'border', 'border-radius', 'border-top', 'border-right', 'border-bottom', 'border-left', 'border-color', 'border-style', 'border-width',
+    'box-shadow', 'opacity', 'visibility', 'z-index', 'overflow', 'overflow-x', 'overflow-y', 'cursor', 'transition', 'transform',
+    'box-sizing', 'list-style', 'outline', 'pointer-events', 'user-select'
+  ]);
+
+  const errors: LintResult['errors'] = [];
+  const lines = content.split('\n');
+
+  lines.forEach((lineText, idx) => {
+    const trimmed = lineText.trim();
+    if (!trimmed || trimmed.startsWith('/*') || trimmed.startsWith('*') || trimmed.startsWith('//') || trimmed.startsWith('@')) return;
+    const propMatch = trimmed.match(/^([a-zA-Z-]+)\s*:/);
+    if (propMatch) {
+      const propName = propMatch[1].toLowerCase();
+      if (!propName.startsWith('--') && !propName.startsWith('-webkit-') && !propName.startsWith('-moz-') && !COMMON_CSS_PROPS.has(propName)) {
+        errors.push({
+          line: idx + 1,
+          character: 1,
+          message: `Unknown or misspelled CSS property "${propName}".`,
+          severity: 'warning',
+        });
+      }
+    }
+  });
+
+  return {
+    success: true, // Warnings do not cause lint failure
+    errors,
+    summary: errors.length > 0 ? `CSS property check found ${errors.length} warning(s) in "${filePath}".` : `CSS properties verified cleanly for "${filePath}".`
+  };
 }

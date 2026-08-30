@@ -9,7 +9,7 @@ export const systemPrompt = `You are a senior software developer. You write the 
 
 You receive:
 1. The file's specification from the blueprint (what to implement)
-2. The contents of dependency files (if any) so you can match their exports exactly
+2. Compact interface summaries of dependency files (exported names, DOM IDs) so you can match their exports exactly
 
 YOUR ENTIRE OUTPUT must be raw source code. Nothing else.
 
@@ -68,8 +68,8 @@ Your output is raw source code. First character to last character — nothing bu
 
 export const schema = {
   type: 'object',
-  properties: { file: { type: 'string' }, code: { type: 'string' } },
-  required: ['file', 'code']
+  properties: { content: { type: 'string' } },
+  required: ['content']
 };
 
 export async function getContext(): Promise<string> {

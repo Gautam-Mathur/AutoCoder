@@ -79,8 +79,12 @@ export function calculateTokenBudget(
     breakdown.totalCodeChars = totalChars;
     breakdown.formulaApplied = 'max(16384, round((totalCodeChars / 4) * 0.5))';
   } 
+  else if (agentName === 'Security' || agentName === 'Reviewer') {
+    budget = 8192;
+    breakdown.formulaApplied = 'fixed_8192_for_audit_agents';
+  } 
   else {
-    // For other agents (Queen, Reviewer, Security), fall back to metadata configurations
+    // For other agents (Queen, etc.), fall back to metadata configurations
     const def = AGENT_DEFS[agentName];
     if (def && typeof def.maxTokens === 'number') {
       budget = Math.max(16384, def.maxTokens);
@@ -88,8 +92,8 @@ export function calculateTokenBudget(
     breakdown.formulaApplied = 'agent_def_max_tokens_fallback';
   }
 
-  // Clamp budget to a safe upper limit matching local LLM context window (32768)
-  const MAX_BUDGET = 32768;
+  // Clamp budget to a safe upper limit matching local LLM context window
+  const MAX_BUDGET = (agentName === 'Coder' || agentName === 'Debugger') ? 65536 : 32768;
   budget = Math.min(budget, MAX_BUDGET);
 
   // 2. Timeout Scaling Math: scale timeout linearly to calculated token budget (600s / 10m to 3600s / 60m)

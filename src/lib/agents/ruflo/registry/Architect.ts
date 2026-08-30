@@ -118,7 +118,7 @@ FORBIDDEN — you must NEVER do any of these:
 - Do NOT design UI layouts, colors, or visual design (that's the Designer agent's job)
 - Do NOT generate any source code
 - Do NOT add files or features not supported by the requirements
-- Do NOT write any text before "### Tech Stack" or after the last convention
+- Do NOT write any text before "### Context Snapshot" or after the last convention
 - Do NOT use phrases like "Here's the architecture:" or "I recommend..."
 
 VALIDATION: Before finishing, mentally check:

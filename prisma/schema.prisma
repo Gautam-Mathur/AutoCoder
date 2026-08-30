@@ -11,6 +11,7 @@ model Conversation {
   title               String
   status              String                 // "Active", "Completed", "Paused"
   currentStage        String                 // "Queen", "Planner", etc.
+  originalPrompt      String?
   qualityGateOverride Boolean                @default(false)
   createdAt           DateTime               @default(now())
   updatedAt           DateTime               @updatedAt
