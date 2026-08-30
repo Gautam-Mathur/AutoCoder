@@ -27,17 +27,47 @@ async function acquireLock(conversationId: string, filePath: string): Promise<()
 }
 
 /**
+ * Safely writes a file to physical disk.
+ * Guards against directory collisions (EISDIR) and ensures parent directory exists.
+ */
+export function safeWriteFileSync(fullPath: string, content: string): boolean {
+  try {
+    const cleanFullPath = fullPath.replace(/\\/g, '/').replace(/\/+$/, '');
+    
+    // Guard 1: Do not attempt to write to an existing directory
+    if (fs.existsSync(cleanFullPath) && fs.statSync(cleanFullPath).isDirectory()) {
+      console.warn(`[VFS Guard] Skipped write operation to directory path: ${cleanFullPath}`);
+      return false;
+    }
+
+    const dirName = path.dirname(cleanFullPath);
+    if (!fs.existsSync(dirName)) {
+      fs.mkdirSync(dirName, { recursive: true });
+    }
+
+    fs.writeFileSync(cleanFullPath, content, 'utf8');
+    return true;
+  } catch (err: any) {
+    if (err.code === 'EISDIR') {
+      console.warn(`[VFS Guard] EISDIR caught on ${fullPath}: target path is a directory.`);
+      return false;
+    }
+    throw err;
+  }
+}
+
+/**
  * Sanitizes a path to prevent directory traversal attacks (../) and absolute path manipulation.
  * Throws an error if the path is unsafe.
  */
 export function sanitizePath(filePath: string): string {
-  let cleanPath = filePath.replace(/\\/g, '/');
+  let cleanPath = filePath.replace(/\\/g, '/').trim();
 
   if (path.isAbsolute(cleanPath) || cleanPath.startsWith('/') || cleanPath.includes('..')) {
     throw new Error(`Security Exception: Invalid or unsafe file path traversal detected: "${filePath}"`);
   }
 
-  cleanPath = path.normalize(cleanPath).replace(/\\/g, '/');
+  cleanPath = path.normalize(cleanPath).replace(/\\/g, '/').replace(/\/+$/, '');
 
   if (cleanPath === '.' || cleanPath === '' || cleanPath.startsWith('.')) {
     throw new Error(`Security Exception: Invalid file path: "${filePath}"`);
@@ -93,11 +123,11 @@ export async function writeVirtualFile(
     try {
       const projectDir = path.join(process.cwd(), 'projects', conversationId);
       const fullPath = path.join(projectDir, safePath);
-      const dirName = path.dirname(fullPath);
-      if (!fs.existsSync(dirName)) {
-        fs.mkdirSync(dirName, { recursive: true });
+      let normalizedContent = content;
+      if (safePath.endsWith('.html')) {
+        normalizedContent = normalizedContent.replace(/UTF-[\u4e00-\u9fa5]8/g, 'UTF-8');
       }
-      fs.writeFileSync(fullPath, content, 'utf8');
+      safeWriteFileSync(fullPath, normalizedContent);
     } catch (diskErr) {
       console.error(`Failed instant disk write for ${safePath}:`, diskErr);
     }
@@ -142,16 +172,17 @@ export async function applyDiff(
     }
 
     const lines = existing.split('\n');
+    const startLineNum = Math.max(1, startLine);
+    const endLineNum = Math.max(startLineNum, endLine);
 
-    // Bounds checking allowing append operations (up to lines.length + 1)
-    if (startLine < 1 || startLine > lines.length + 1 || startLine > endLine) {
+    if (startLineNum > lines.length + 1) {
       throw new Error(
-        `applyDiff failed: Line range ${startLine}-${endLine} is out of bounds for file "${safePath}" which has ${lines.length} lines.`
+        `applyDiff failed: startLine ${startLineNum} exceeds total lines (${lines.length}) in "${safePath}".`
       );
     }
 
-    const start = startLine - 1;
-    const end = Math.min(endLine - 1, lines.length - 1);
+    const start = startLineNum - 1;
+    const end = Math.min(endLineNum - 1, lines.length - 1);
 
     if (start === lines.length) {
       // Append content to the end of the file
@@ -189,16 +220,18 @@ export async function flushVfsToDisk(conversationId: string): Promise<number> {
   const projectDir = path.join(process.cwd(), 'projects', conversationId);
 
   for (const record of records) {
-    const fullPath = path.join(projectDir, record.filePath);
-    const dirName = path.dirname(fullPath);
-
-    if (!fs.existsSync(dirName)) {
-      fs.mkdirSync(dirName, { recursive: true });
+    try {
+      const safePath = sanitizePath(record.filePath);
+      const fullPath = path.join(projectDir, safePath);
+      let normalizedContent = record.content;
+      if (safePath.endsWith('.html')) {
+        normalizedContent = normalizedContent.replace(/UTF-[\u4e00-\u9fa5]8/g, 'UTF-8');
+      }
+      safeWriteFileSync(fullPath, normalizedContent);
+    } catch {
+      // Skip invalid or directory paths cleanly
     }
-
-    fs.writeFileSync(fullPath, record.content, 'utf8');
   }
 
   return records.length;
 }
-

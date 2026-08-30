@@ -8,7 +8,7 @@ import { calculateTokenBudget } from './token-budgeter';
 import fs from 'fs';
 import path from 'path';
 import { exec } from 'child_process';
-import { writeVirtualFile, readVirtualFile, listVirtualFiles, flushVfsToDisk } from './vfs';
+import { writeVirtualFile, readVirtualFile, listVirtualFiles, flushVfsToDisk, safeWriteFileSync } from './vfs';
 import { runLinter } from './linter';
 
 // Global Event Emitter for decoupling browser SSE streams from background Node pipeline compilation
@@ -502,8 +502,7 @@ function writeProjectFile(conversationId: string, filePath: string, content: str
   if (filePath.endsWith('.html')) {
     normalizedContent = normalizedContent.replace(/UTF-[\u4e00-\u9fa5]8/g, 'UTF-8');
   }
-  fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-  fs.writeFileSync(fullPath, normalizedContent, 'utf8');
+  safeWriteFileSync(fullPath, normalizedContent);
 }
 
 export async function launchVSCodePreview(conversationId: string, onEvent: PipelineEventCallback) {
@@ -573,9 +572,10 @@ export function parseBlueprintFiles(blueprintText: string): BlueprintFileSection
       .replace(/^\.\//, '')
       .replace(/^\//, '')
       .split(/\s*[\(\[\{]/)[0]
-      .trim();
+      .trim()
+      .replace(/\/+$/, '');
 
-    if (!file) continue;
+    if (!file || rawFile.trim().endsWith('/') || rawFile.trim().endsWith('/`')) continue;
 
     const rawSection = '### File: ' + block.trim();
     const purposeMatch = block.match(/\*\*Purpose\*\*:\s*(.+)/i);
