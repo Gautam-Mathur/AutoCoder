@@ -324,6 +324,16 @@ export default function WorkspaceContent() {
           const normalizedDiskFiles = diskFiles.map(normalizeFilePath).filter(Boolean);
           setFiles(normalizedDiskFiles);
           
+          // Auto-expand all folder paths in tree view so code files are immediately visible
+          const autoExpand: Record<string, boolean> = {};
+          normalizedDiskFiles.forEach((f: string) => {
+            const parts = f.split('/');
+            for (let i = 1; i < parts.length; i++) {
+              autoExpand[parts.slice(0, i).join('/')] = true;
+            }
+          });
+          setExpandedDirs((prev) => ({ ...autoExpand, ...prev }));
+          
           // Auto-select first file if none selected, or restore from localStorage
           const savedFile = localStorage.getItem(`selectedFile_${id}`);
           if (savedFile && normalizedDiskFiles.includes(savedFile)) {

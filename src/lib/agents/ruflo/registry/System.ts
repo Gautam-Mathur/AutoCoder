@@ -55,6 +55,13 @@ RULES:
 - Field types must be one of: string, number, boolean, Date, string[] (array)
 - Do NOT add entities for features that aren't in the requirements
 
+### Seed Data
+If the project uses a database, include 3-5 realistic seed records for the primary entity. Example:
+- Product: { name: "Classic Leather Wallet", price: 49.99, category: "Accessories" }
+- Product: { name: "Wireless Earbuds Pro", price: 129.99, category: "Electronics" }
+- Product: { name: "Organic Cotton T-Shirt", price: 34.99, category: "Apparel" }
+The Coder will use this to create a seed script or initial data file.
+
 ### API Endpoints
 For each endpoint, write using this EXACT format:
 

@@ -51,6 +51,10 @@ export async function runLinter(
     return runCssPropertyCheck(content, filePath);
   }
 
+  if (filePath.endsWith('.prisma')) {
+    return runPrismaSchemaCheck(content, filePath);
+  }
+
   if (!filePath.endsWith('.ts') && !filePath.endsWith('.tsx') && !filePath.endsWith('.js') && !filePath.endsWith('.jsx')) {
     return runBracketBalanceCheck(content, filePath);
   }
@@ -123,6 +127,20 @@ export async function runLinter(
   const bracketCheck = runBracketBalanceCheck(content, filePath);
   if (!bracketCheck.success) {
     errors.push(...bracketCheck.errors);
+  }
+
+  // Next.js App Router 'use client' directive check
+  if ((filePath.startsWith('app/') || filePath.includes('/app/')) &&
+      /\.(tsx|jsx)$/.test(filePath)) {
+    const hasClientHooks = /\b(useState|useEffect|useRef|useCallback|useMemo|useContext)\b/.test(content);
+    const hasUseClient = content.trimStart().startsWith("'use client'") || content.trimStart().startsWith('"use client"');
+    if (hasClientHooks && !hasUseClient) {
+      errors.push({
+        line: 1, character: 1,
+        message: `File uses React hooks but missing 'use client' directive (required for Next.js App Router).`,
+        severity: 'error',
+      });
+    }
   }
 
   allDiagnostics.forEach((diagnostic) => {
@@ -288,7 +306,7 @@ function runHtmlLinkCheck(content: string, filePath: string, fileMap: Map<string
 
   lines.forEach((lineText, idx) => {
     // Check <link href="...">
-    const cssMatches = lineText.matchAll(/<link[^>]+href=["']([^"']+)["']/gi);
+    const cssMatches = [...lineText.matchAll(/<link[^>]+href=["']([^"']+)["']/gi)];
     for (const match of cssMatches) {
       const ref = match[1];
       if (!ref.startsWith('http://') && !ref.startsWith('https://') && !ref.startsWith('//')) {
@@ -297,7 +315,7 @@ function runHtmlLinkCheck(content: string, filePath: string, fileMap: Map<string
           errors.push({
             line: idx + 1,
             character: match.index || 1,
-            message: `HTML <link> tag references CSS file "${ref}" which does not exist in workspace.`,
+            message: `HTML <link> references "${ref}" which does not exist in workspace.`,
             severity: 'warning',
           });
         }
@@ -305,7 +323,7 @@ function runHtmlLinkCheck(content: string, filePath: string, fileMap: Map<string
     }
 
     // Check <script src="...">
-    const scriptMatches = lineText.matchAll(/<script[^>]+src=["']([^"']+)["']/gi);
+    const scriptMatches = [...lineText.matchAll(/<script[^>]+src=["']([^"']+)["']/gi)];
     for (const match of scriptMatches) {
       const ref = match[1];
       if (!ref.startsWith('http://') && !ref.startsWith('https://') && !ref.startsWith('//')) {
@@ -314,23 +332,35 @@ function runHtmlLinkCheck(content: string, filePath: string, fileMap: Map<string
           errors.push({
             line: idx + 1,
             character: match.index || 1,
-            message: `HTML <script> tag references JavaScript file "${ref}" which does not exist in workspace.`,
+            message: `HTML <script> references "${ref}" which does not exist in workspace.`,
             severity: 'warning',
           });
+        } else {
+          // ES module check: if the JS file uses import/export, script tag needs type="module"
+          const jsContent = fileMap.get(cleanRef) || fileMap.get('public/' + cleanRef);
+          if (jsContent && /\b(import\s+|export\s+)/.test(jsContent)) {
+            if (!match[0].includes('type="module"')) {
+              errors.push({
+                line: idx + 1,
+                character: match.index || 1,
+                message: `Script "${ref}" uses ES module syntax but loaded without type="module".`,
+                severity: 'error',
+              });
+            }
+          }
         }
       }
     }
   });
 
-  if (errors.length > 0) {
-    return {
-      success: false,
-      errors,
-      summary: `HTML Link Verification found ${errors.length} unlinked script/CSS tags in "${filePath}".`,
-    };
-  }
-
-  return { success: true, errors: [], summary: 'HTML links verified.' };
+  const hardErrors = errors.filter(e => e.severity === 'error');
+  return {
+    success: hardErrors.length === 0,
+    errors,
+    summary: errors.length > 0
+      ? `HTML check found ${hardErrors.length} error(s) and ${errors.length - hardErrors.length} warning(s) in "${filePath}".`
+      : 'HTML links verified.',
+  };
 }
 
 export function runCssPropertyCheck(content: string, filePath: string): LintResult {
@@ -347,7 +377,19 @@ export function runCssPropertyCheck(content: string, filePath: string): LintResu
     'gap', 'grid', 'grid-template-columns', 'grid-template-rows', 'grid-column', 'grid-row',
     'border', 'border-radius', 'border-top', 'border-right', 'border-bottom', 'border-left', 'border-color', 'border-style', 'border-width',
     'box-shadow', 'opacity', 'visibility', 'z-index', 'overflow', 'overflow-x', 'overflow-y', 'cursor', 'transition', 'transform',
-    'box-sizing', 'list-style', 'outline', 'pointer-events', 'user-select'
+    'box-sizing', 'list-style', 'outline', 'pointer-events', 'user-select',
+    'inset', 'aspect-ratio', 'place-items', 'place-content', 'backdrop-filter',
+    'animation', 'animation-name', 'animation-duration', 'animation-delay',
+    'animation-fill-mode', 'animation-timing-function', 'animation-iteration-count',
+    'content', 'white-space', 'word-break', 'word-wrap', 'overflow-wrap',
+    'letter-spacing', 'object-fit', 'object-position', 'resize', 'scroll-behavior',
+    'flex-grow', 'flex-shrink', 'flex-basis', 'align-self', 'align-content', 'order',
+    'column-gap', 'row-gap', 'appearance', 'accent-color', 'caret-color',
+    'will-change', 'contain', 'isolation', 'mix-blend-mode', 'filter',
+    'clip-path', 'writing-mode', 'text-overflow', 'vertical-align',
+    'text-indent', 'text-shadow', 'outline-offset', 'outline-style',
+    'outline-color', 'outline-width', 'table-layout', 'border-collapse',
+    'border-spacing', 'empty-cells', 'float', 'clear',
   ]);
 
   const errors: LintResult['errors'] = [];
@@ -374,5 +416,117 @@ export function runCssPropertyCheck(content: string, filePath: string): LintResu
     success: true, // Warnings do not cause lint failure
     errors,
     summary: errors.length > 0 ? `CSS property check found ${errors.length} warning(s) in "${filePath}".` : `CSS properties verified cleanly for "${filePath}".`
+  };
+}
+
+/**
+ * Validates Prisma schema files for LLM-generated preamble contamination.
+ */
+export function runPrismaSchemaCheck(content: string, filePath: string): LintResult {
+  const errors: LintResult['errors'] = [];
+  const lines = content.split('\n');
+
+  const firstValidLine = lines.findIndex(l =>
+    /^\s*(generator|datasource|model|enum)\s+/.test(l)
+  );
+
+  if (firstValidLine > 0) {
+    errors.push({
+      line: 1, character: 1,
+      message: `Prisma schema contains ${firstValidLine} lines of non-Prisma preamble before first valid keyword.`,
+      severity: 'error',
+    });
+  }
+
+  return {
+    success: errors.length === 0,
+    errors,
+    summary: errors.length === 0
+      ? `Prisma schema "${filePath}" validated cleanly.`
+      : `Found ${errors.length} issue(s) in Prisma schema "${filePath}".`,
+  };
+}
+
+/**
+ * Cross-file import resolution check.
+ * Validates that all relative imports resolve to existing files in the workspace
+ * and that named imports correspond to actual exports.
+ */
+export function runCrossFileImportCheck(
+  fileMap: Map<string, string>
+): LintResult {
+  const errors: LintResult['errors'] = [];
+
+  // Path normalizer that handles ../ traversal
+  function resolveImportPath(currentFile: string, importPath: string): string {
+    if (!importPath.startsWith('.')) return importPath;
+    const dir = currentFile.includes('/') ? currentFile.substring(0, currentFile.lastIndexOf('/')) : '';
+    const parts = (dir ? dir + '/' + importPath : importPath).split('/');
+    const normalized: string[] = [];
+    for (const part of parts) {
+      if (part === '..') normalized.pop();
+      else if (part !== '.' && part !== '') normalized.push(part);
+    }
+    return normalized.join('/');
+  }
+
+  for (const [filePath, content] of fileMap.entries()) {
+    if (!/\.(js|ts|jsx|tsx)$/.test(filePath)) continue;
+
+    const importMatches = [...content.matchAll(
+      /import\s+(?:\{([^}]+)\}|(\w+))\s+from\s+['"](\.[\w./-]+)['"]/g
+    )];
+
+    for (const match of importMatches) {
+      const namedImports = match[1]?.split(',').map(s => s.trim().split(/\s+as\s+/)[0].trim()).filter(Boolean) || [];
+      const importPath = match[3];
+      const resolvedBase = resolveImportPath(filePath, importPath);
+
+      // Try common extensions
+      const extensions = ['', '.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.js'];
+      let targetContent: string | undefined;
+
+      for (const ext of extensions) {
+        const candidate = resolvedBase + ext;
+        if (fileMap.has(candidate)) {
+          targetContent = fileMap.get(candidate);
+          break;
+        }
+      }
+
+      if (!targetContent) {
+        const lineNum = content.substring(0, match.index).split('\n').length;
+        errors.push({
+          line: lineNum, character: 1,
+          message: `[${filePath}] Import "${importPath}" resolves to a file that does not exist in the workspace.`,
+          severity: 'error',
+        });
+        continue;
+      }
+
+      // Verify named imports exist as exports
+      for (const namedImport of namedImports) {
+        const exportPatterns = [
+          new RegExp(`export\\s+(?:async\\s+)?(?:function|const|class|let|var|type|interface|enum)\\s+${namedImport}\\b`),
+          new RegExp(`export\\s*\\{[^}]*\\b${namedImport}\\b[^}]*\\}`),
+        ];
+        if (!exportPatterns.some(p => p.test(targetContent!))) {
+          const lineNum = content.substring(0, match.index).split('\n').length;
+          errors.push({
+            line: lineNum, character: 1,
+            message: `[${filePath}] Named import "${namedImport}" is not exported from resolved target.`,
+            severity: 'error',
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    success: errors.length === 0,
+    errors,
+    summary: errors.length === 0
+      ? 'Cross-file import validation passed.'
+      : `Found ${errors.length} cross-file import error(s).`,
   };
 }

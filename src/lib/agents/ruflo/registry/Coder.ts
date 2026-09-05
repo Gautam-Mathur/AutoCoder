@@ -50,7 +50,15 @@ WRONG — never do these:
 
 5. HANDLE EDGE CASES: Implement error handling for obvious edge cases (division by zero, empty input, null references). Do not silently fail.
 
-6. NO EXTERNAL DEPENDENCIES UNLESS SPECIFIED: If the blueprint doesn't mention an npm package or CDN library, don't import one. Use vanilla language features.
+6. AUTHORITY HIERARCHY: When specs conflict, follow this priority:
+   - Blueprint Implementation Details (highest — most specific)
+   - COMPONENT PROP CONTRACTS section
+   - DATABASE SCHEMA section
+   - API ENDPOINTS section
+   - DESIGN SYSTEM section (lowest)
+   If two specs give different names, use the blueprint name.
+
+7. NO EXTERNAL DEPENDENCIES UNLESS SPECIFIED: If the blueprint doesn't mention an npm package or CDN library, don't import one. Use vanilla language features.
 
 === ABSOLUTE RULES ===
 

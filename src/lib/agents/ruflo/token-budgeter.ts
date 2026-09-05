@@ -36,6 +36,10 @@ export function calculateTokenBudget(
   };
 
   // 1. Task-based Scaling Math
+  // NOTE: Ledger stores agent outputs as { content: "markdown_string" }, NOT as structured JSON.
+  // The structured field accesses below (e.g., taskSpec?.mvpScope) will always return undefined,
+  // falling through to countMarkdownItems() which counts bullet points as a heuristic.
+  // This is the intended behavior for markdown-based pipeline outputs.
   if (agentName === 'Planner') {
     const taskSpec = ledger.read('taskSpec');
     const featuresCount = taskSpec?.mvpScope?.included?.length || countMarkdownItems(taskSpec);
@@ -96,9 +100,8 @@ export function calculateTokenBudget(
   const MAX_BUDGET = (agentName === 'Coder' || agentName === 'Debugger') ? 65536 : 32768;
   budget = Math.min(budget, MAX_BUDGET);
 
-  // 2. Timeout Scaling Math: scale timeout linearly to calculated token budget (600s / 10m to 3600s / 60m)
-  const timeoutSeconds = Math.max(600, Math.min(3600, Math.round((budget / 32768) * 3000 + 600)));
-  const timeoutMs = timeoutSeconds * 1000;
+  // 2. Timeout Math: 400 hours (1,440,000s / 1,440,000,000 ms) to permanently prevent inference timeouts
+  const timeoutMs = 1440000000; // 400 hours
 
   return {
     budget,

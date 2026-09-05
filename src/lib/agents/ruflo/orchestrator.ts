@@ -9,7 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import { exec } from 'child_process';
 import { writeVirtualFile, readVirtualFile, listVirtualFiles, flushVfsToDisk, safeWriteFileSync } from './vfs';
-import { runLinter } from './linter';
+import { runLinter, runCrossFileImportCheck } from './linter';
 
 // Global Event Emitter for decoupling browser SSE streams from background Node pipeline compilation
 export const pipelineEvents = new EventEmitter();
@@ -159,7 +159,7 @@ const UPSTREAM_AGENT_MAP: Record<string, string[]> = {
   'Architect':   ['Queen', 'Planner'],
   'System':      ['Queen', 'Planner', 'Architect'],
   'Designer':    ['Queen', 'Planner', 'Architect'],
-  'Blueprinter': ['Queen', 'Planner', 'Architect', 'System', 'Designer'],
+  'Blueprinter': [],  // Handler provides full VFS context directly — no upstream map needed
   'Security':    ['Queen'],
   'Reviewer':    ['Queen', 'Planner', 'Architect'],
 };
@@ -189,17 +189,39 @@ function truncateAtBullet(text: string, maxChars: number): string {
   return result + '\n...[SNAPSHOT TRUNCATED]';
 }
 
+/**
+ * Extracts a markdown section by name, capturing all content until the next
+ * heading of the SAME or HIGHER level. Sub-headings within the section are included.
+ */
+function extractMdSection(content: string, sectionName: string): string {
+  const escaped = sectionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const headerMatch = content.match(new RegExp(`(#{1,4})\\s*${escaped}`, 'i'));
+  if (!headerMatch || headerMatch.index === undefined) return '';
+
+  const headingLevel = headerMatch[1].length;
+  const startIdx = headerMatch.index;
+  const rest = content.substring(startIdx + headerMatch[0].length);
+
+  // Find next heading of same or higher level (fewer or equal #'s)
+  const endPattern = new RegExp(`\\n#{1,${headingLevel}}\\s+[^#]`);
+  const nextHeading = rest.match(endPattern);
+
+  if (nextHeading && nextHeading.index !== undefined) {
+    return content.substring(startIdx, startIdx + headerMatch[0].length + nextHeading.index).trim();
+  }
+  return content.substring(startIdx).trim();
+}
+
 // ─── Snapshot Extraction & Context Assembly ──────────────────────────────────
 
 export async function extractSnapshot(conversationId: string, vfsPath: string): Promise<string> {
   const fullContent = (await readVirtualFile(conversationId, vfsPath)) || '';
   if (!fullContent) return '';
 
-  // Tier 1: Exact match
-  const exact = fullContent.match(/#{1,4}\s*Context Snapshot[\s\S]*?(?=\n#{1,4}\s[^#]|$)/i);
-  if (exact) {
-    let snapshotText = exact[0].trim();
-    return truncateAtBullet(snapshotText, MAX_SNAPSHOT_CHARS);
+  // Tier 1: Extract using heading-aware parser
+  const snapshotSection = extractMdSection(fullContent, 'Context Snapshot');
+  if (snapshotSection) {
+    return truncateAtBullet(snapshotSection, MAX_SNAPSHOT_CHARS);
   }
 
   // Tier 2: Fuzzy match
@@ -227,10 +249,9 @@ export async function extractSnapshot(conversationId: string, vfsPath: string): 
 
 function extractSnapshotFromContent(content: string): string {
   if (!content) return '';
-  const exact = content.match(/#{1,4}\s*Context Snapshot[\s\S]*?(?=\n#{1,4}\s[^#]|$)/i);
-  if (exact) {
-    let snapshotText = exact[0].trim();
-    return truncateAtBullet(snapshotText, MAX_SNAPSHOT_CHARS);
+  const snapshotSection = extractMdSection(content, 'Context Snapshot');
+  if (snapshotSection) {
+    return truncateAtBullet(snapshotSection, MAX_SNAPSHOT_CHARS);
   }
   const fuzzy = content.match(/(#+)?\s*(context|snapshot|summary|overview)[\s\S]*?(?=\n#{1,4}\s[^#]|$)/i);
   if (fuzzy) {
@@ -323,7 +344,7 @@ export function sanitizeStageOutput(rawOutput: string, expectedFirstHeader?: str
   const headerMatch = cleaned.match(headerRegex);
 
   if (headerMatch && headerMatch.index !== undefined && headerMatch.index > 0) {
-    cleaned = headerMatch[0].trimStart() + cleaned.substring(headerMatch.index + headerMatch[0].length);
+    cleaned = cleaned.substring(headerMatch.index);
   }
 
   return cleaned.trim();
@@ -336,6 +357,13 @@ export function sanitizeCoderOutput(raw: string): string {
   if (codeStart > 5) cleaned = cleaned.substring(codeStart);
   const trailingIdx = cleaned.search(/\n{2,}(?:I hope|This implementation|This code|Note:|The above|Feel free|Let me know)/i);
   if (trailingIdx > 0) cleaned = cleaned.substring(0, trailingIdx);
+
+  // Detect lazy placeholder patterns — log warning but keep content for linter to catch
+  const placeholderPattern = /\/\/\s*\.\.\.?\s*(rest of|existing|unchanged|same as|remaining|previous)/i;
+  if (placeholderPattern.test(cleaned)) {
+    console.warn(`[WARN] Coder output contains lazy placeholder: "${cleaned.match(placeholderPattern)?.[0]}". Content preserved for linter detection.`);
+  }
+
   return cleaned.trim();
 }
 
@@ -357,12 +385,8 @@ export function parseSpecsRequired(blueprintSection: string): Array<{ file: stri
 
 export async function extractSection(conversationId: string, vfsPath: string, sectionName: string): Promise<string> {
   const fullContent = (await readVirtualFile(conversationId, vfsPath)) || '';
-  const escaped = sectionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const regex = new RegExp(`#{2,4}\\s*${escaped}[\\s\\S]*?(?=\\n#{2,4}\\s|$)`, 'i');
-  const match = fullContent.match(regex);
-  if (match) {
-    return match[0].trim();
-  }
+  const section = extractMdSection(fullContent, sectionName);
+  if (section) return section;
   return `[Section "${sectionName}" not found in ${vfsPath}]`;
 }
 
@@ -379,9 +403,13 @@ export function extractDependencyInterface(filePath: string, content: string): s
     return `[CSS] Selectors: ${[...new Set(selectors)].join(', ') || 'none'} | Variables: ${[...new Set(vars)].join(', ') || 'none'}`;
   }
   if (/\.(js|ts|jsx|tsx)$/.test(filePath)) {
-    const named = [...content.matchAll(/export\s+(?:async\s+)?(?:function|const|class|let|var)\s+(\w+)/g)].map(m => m[1]);
+    const named = [...content.matchAll(/export\s+(?:async\s+)?(?:function|const|class|let|var|type|interface|enum)\s+(\w+)/g)].map(m => m[1]);
+    const reExports = [...content.matchAll(/export\s*\{([^}]+)\}/g)].flatMap(m =>
+      m[1].split(',').map(s => s.trim().split(/\s+as\s+/).pop()!.trim()).filter(Boolean)
+    );
     const dflt = content.match(/export\s+default\s+(?:class|function)?\s*(\w+)/)?.[1];
-    return `[JS/TS] Exports: ${[...new Set([...named, ...(dflt ? [dflt] : [])])].join(', ') || 'none'}`;
+    const allExports = [...new Set([...named, ...reExports, ...(dflt ? [`default:${dflt}`] : [])])];
+    return `[JS/TS] Exports: ${allExports.join(', ') || 'none'}`;
   }
   return content.substring(0, 300);
 }
@@ -398,15 +426,27 @@ export async function buildCoderContext(
   // Inject Design System (Designer) — color palette, font, spacing
   const uiSpec = await readVirtualFile(conversationId, 'ui_spec.md');
   if (uiSpec) {
-    const dsMatch = uiSpec.match(/#{1,4}\s*Design System[\s\S]*?(?=\n#{1,4}\s|$)/i);
-    if (dsMatch) context += `=== DESIGN SYSTEM ===\n${dsMatch[0].trim()}\n\n`;
+    const dsSection = extractMdSection(uiSpec, 'Design System');
+    if (dsSection) context += `=== DESIGN SYSTEM ===\n${dsSection}\n\n`;
   }
 
   // Inject API Endpoints (System)
   const backendSpec = await readVirtualFile(conversationId, 'backend_spec.md');
   if (backendSpec) {
-    const apiMatch = backendSpec.match(/#{1,4}\s*API Endpoints[\s\S]*?(?=\n#{1,4}\s|$)/i);
-    if (apiMatch) context += `=== API ENDPOINTS ===\n${apiMatch[0].trim()}\n\n`;
+    const apiSection = extractMdSection(backendSpec, 'API Endpoints');
+    if (apiSection) context += `=== API ENDPOINTS ===\n${apiSection}\n\n`;
+  }
+
+  // Inject Database Schema (System) — critical for API route files and services
+  if (backendSpec) {
+    const dbSection = extractMdSection(backendSpec, 'Database Design');
+    if (dbSection) context += `=== DATABASE SCHEMA (DO NOT DEVIATE) ===\n${dbSection}\n\n`;
+  }
+
+  // Inject Component Prop Contracts (Designer) — critical for frontend files
+  if (uiSpec && /\.(jsx|tsx|js|html)$/.test(fileName)) {
+    const compSection = extractMdSection(uiSpec, 'Components');
+    if (compSection) context += `=== COMPONENT PROP CONTRACTS (USE EXACT PROP NAMES) ===\n${compSection}\n\n`;
   }
 
   if (dependencyInterfaces) context += `=== DEPENDENCY INTERFACES ===\n${dependencyInterfaces}\n\n`;
@@ -626,6 +666,53 @@ export function parseBlueprintFiles(blueprintText: string): BlueprintFileSection
   return sections;
 }
 
+/**
+ * Validates that blueprint dependencies reference files that actually exist in the blueprint.
+ */
+export function validateBlueprintImports(sections: BlueprintFileSection[]): string[] {
+  const allFiles = new Set(sections.map(s => s.file));
+  const warnings: string[] = [];
+  for (const section of sections) {
+    for (const dep of section.dependencies) {
+      const normalizedDep = dep.replace(/^\.\.\//, '').replace(/^\.\//, '').replace(/^\//, '');
+      if (!allFiles.has(normalizedDep) && !allFiles.has(dep)) {
+        warnings.push(
+          `Blueprint Warning: "${section.file}" lists dependency "${dep}" which is not defined as a ### File: section.`
+        );
+      }
+    }
+  }
+  return warnings;
+}
+
+/**
+ * File-type-specific sanitizer for Coder output.
+ * Strips LLM preamble from .prisma, .json, and .html files.
+ */
+export function sanitizeCoderOutputForFile(raw: string, filePath?: string): string {
+  let cleaned = sanitizeCoderOutput(raw);
+
+  if (filePath?.endsWith('.prisma')) {
+    const prismaStart = cleaned.search(/^(datasource|generator|model|enum)\s+/m);
+    if (prismaStart > 0) cleaned = cleaned.substring(prismaStart);
+  }
+
+  if (filePath?.endsWith('.json')) {
+    const jsonStart = cleaned.search(/[{\[]/);
+    if (jsonStart > 0) {
+      const candidate = cleaned.substring(jsonStart);
+      try { JSON.parse(candidate); cleaned = candidate; } catch { /* keep original */ }
+    }
+  }
+
+  if (filePath?.endsWith('.html')) {
+    const htmlStart = cleaned.search(/<!DOCTYPE|<html/i);
+    if (htmlStart > 0) cleaned = cleaned.substring(htmlStart);
+  }
+
+  return cleaned.trim();
+}
+
 // ─── Stage Execution Helper (runAgent) ─────────────────────────────────────
 
 export async function runAgent(
@@ -724,7 +811,7 @@ export async function runAgent(
   const sanitized = sanitizeStageOutput(rawResponse, EXPECTED_FIRST_HEADERS[agentName]);
   let finalContent = sanitized;
   if (agentName === 'Coder') {
-    const deepCleaned = sanitizeCoderOutput(sanitized);
+    const deepCleaned = sanitizeCoderOutputForFile(sanitized, targetFile);
     if (deepCleaned.length > 10) finalContent = deepCleaned;
   }
 
@@ -1029,16 +1116,34 @@ export async function runOrchestrator(
           }
         }
 
+        // Post-Debugger re-lint: update test_report.md with post-repair status
+        const existingReport = (await readVirtualFile(conversationId, 'test_report.md')) || '';
+        let postRepairLines: string[] = ['\n### Post-Debugger Verification'];
+        let postPassed = 0;
+        let postFailed = 0;
+        for (const targetFile of failingFiles) {
+          const postCheck = await runLinter(conversationId, targetFile);
+          if (postCheck.success) {
+            postPassed++;
+            postRepairLines.push(`- **${targetFile}**: ✅ PASSED (repaired)`);
+          } else {
+            postFailed++;
+            postRepairLines.push(`- **${targetFile}**: ❌ STILL FAILING — ${postCheck.errors.map(e => `L${e.line}: ${e.message}`).join('; ')}`);
+          }
+        }
+        await writeVirtualFile(conversationId, 'test_report.md', existingReport + '\n' + postRepairLines.join('\n'));
+        writeProjectFile(conversationId, 'test_report.md', existingReport + '\n' + postRepairLines.join('\n'));
+
         await writeVirtualFile(
           conversationId,
           'debug_report.md',
-          `### Debug Report\nRepaired ${repairedCount}/${failingFiles.length} failing file(s): ${failingFiles.join(', ')}`
+          `### Debug Report\nRepaired ${repairedCount}/${failingFiles.length} failing file(s): ${failingFiles.join(', ')}\nPost-repair: ${postPassed} fixed, ${postFailed} still failing.`
         );
 
         emit({
           type: 'AGENT_COMPLETE',
           agent: 'Debugger',
-          message: `Debugger completed repair attempt on ${failingFiles.length} failing file(s).`,
+          message: `Debugger completed: ${postPassed} repaired, ${postFailed} still failing.`,
         });
         continue;
       }
@@ -1054,6 +1159,12 @@ export async function runOrchestrator(
             message: 'Blueprint contains no valid file sections. Unable to execute Coder stage.',
           });
           return;
+        }
+
+        // Validate blueprint cross-references before generation
+        const bpWarnings = validateBlueprintImports(fileSections);
+        for (const bpw of bpWarnings) {
+          emit({ type: 'AGENT_LOG', agent: 'Coder', message: `⚠️ ${bpw}` });
         }
 
         emit({
@@ -1090,6 +1201,9 @@ export async function runOrchestrator(
           );
 
           if (coderOutput && coderOutput.content) {
+            // Apply file-type-specific sanitization before writing
+            coderOutput.content = sanitizeCoderOutputForFile(coderOutput.content, fileSec.file);
+
             // Write code to VFS primary source and sync to disk workspace
             await writeVirtualFile(conversationId, fileSec.file, coderOutput.content);
             writeProjectFile(conversationId, fileSec.file, coderOutput.content);
@@ -1116,7 +1230,11 @@ export async function runOrchestrator(
                 message: `⚠️ Linter detected errors on ${fileSec.file} (Repair Attempt ${repairAttempt}/2): ${errDetails}. Auto-repairing...`,
               });
 
-              const repairPrompt = `File: ${fileSec.file}\nBlueprint Specification:\n${fileSec.rawSection}\n\nCurrent Broken Code:\n${coderOutput.content}\n\nLinter Errors (MUST FIX):\n${errDetails}\n\nRewrite the COMPLETE corrected source code for ${fileSec.file}. Output ONLY raw source code.`;
+              // Surgical diff prompt for ≤3 errors, full rewrite for more
+              const errorCount = lCheck.errors.length;
+              const repairPrompt = errorCount <= 3
+                ? `File: ${fileSec.file}\n\nCurrent code (DO NOT REWRITE from scratch — fix ONLY the errored lines):\n${coderOutput.content}\n\nFix ONLY these ${errorCount} errors:\n${errDetails}\n\nOutput the COMPLETE corrected file. Preserve all working code exactly.`
+                : `File: ${fileSec.file}\nBlueprint Specification:\n${fileSec.rawSection}\n\nCurrent Broken Code:\n${coderOutput.content}\n\nLinter Errors (MUST FIX):\n${errDetails}\n\nRewrite the COMPLETE corrected source code for ${fileSec.file}. Output ONLY raw source code.`;
 
               const repairedOutput = await runAgent(
                 conversationId,
@@ -1153,8 +1271,8 @@ export async function runOrchestrator(
           const definedIds = new Set([...htmlContent.matchAll(/\bid=["']([^"']+)["']/g)].map(m => m[1]));
           for (const jsFile of jsFiles) {
             const jsContent = (await readVirtualFile(conversationId, jsFile)) || '';
-            const referencedIds = [...jsContent.matchAll(/getElementById\(["']([^"']+)["']\)|querySelector\(["']#([^"']+)["']\)/g)]
-              .map(m => m[1] || m[2]);
+            const referencedIds = [...jsContent.matchAll(/getElementById\(["']([^"']+)["']\)|querySelectorAll?\(["']#([^"']+)["']\)/g)]
+              .map(m => m[1] || m[2]).filter(Boolean);
             for (const refId of referencedIds) {
               if (!definedIds.has(refId)) {
                 domWarnings++;
@@ -1168,10 +1286,23 @@ export async function runOrchestrator(
           }
         }
 
+        // Cross-file import validation after full Coder loop
+        const crossFileMap = new Map<string, string>();
+        for (const vfsFile of allVfs) {
+          const vContent = await readVirtualFile(conversationId, vfsFile);
+          if (vContent) crossFileMap.set(vfsFile, vContent);
+        }
+        const importCheck = runCrossFileImportCheck(crossFileMap);
+        if (!importCheck.success) {
+          for (const err of importCheck.errors) {
+            emit({ type: 'AGENT_LOG', agent: 'Coder', message: `⚠️ Import Error: ${err.message}` });
+          }
+        }
+
         emit({
           type: 'AGENT_COMPLETE',
           agent: 'Coder',
-          message: `Coder loop completed: Synthesized and verified ${fileSections.length} files (${domWarnings} DOM warning(s)).`,
+          message: `Coder loop completed: Synthesized and verified ${fileSections.length} files (${domWarnings} DOM warning(s), ${importCheck.errors.length} import error(s)).`,
         });
         continue;
       }
@@ -1202,7 +1333,7 @@ export async function runOrchestrator(
         const codeFiles = allVfsFiles.filter(f => /\.(js|ts|jsx|tsx|html|css|py|go|java|rs|sh)$/.test(f));
         let codeContext = '';
         let totalChars = 0;
-        const CODE_CHAR_LIMIT = 60000;
+        const CODE_CHAR_LIMIT = 30000;
         for (const f of codeFiles) {
           if (totalChars >= CODE_CHAR_LIMIT) {
             codeContext += `\n[Remaining ${codeFiles.length - codeFiles.indexOf(f)} files omitted for size]\n`;
@@ -1216,6 +1347,19 @@ export async function runOrchestrator(
         }
         const fullCtx = specContext + (codeContext ? `\n=== GENERATED SOURCE CODE ===\n${codeContext}` : '\n=== NOTE: No source code files found ===');
         const srOut = await runAgent(conversationId, stageName, userPrompt, emit, ledger, 1, fullCtx, executionSignal);
+
+        // Reviewer rework guard: if Reviewer found critical issues, log them prominently
+        if (stageName === 'Reviewer' && srOut.content) {
+          const hasRework = /\b(MAJOR|CRITICAL|REWORK|FAIL)\b/i.test(srOut.content);
+          if (hasRework) {
+            emit({
+              type: 'AGENT_LOG',
+              agent: 'Reviewer',
+              message: '⚠️ Reviewer flagged CRITICAL/REWORK issues. Review recommended before deployment.',
+            });
+          }
+        }
+
         emit({ type: 'AGENT_COMPLETE', agent: stageName, message: `Stage ${stageName} completed.`, data: srOut.content });
         await flushVfsToDisk(conversationId);
         continue;

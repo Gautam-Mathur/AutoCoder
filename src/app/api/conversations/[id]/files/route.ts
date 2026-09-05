@@ -33,7 +33,7 @@ export async function GET(
 
     // 1. Fetch VFS Virtual Workspace files
     const virtualFiles = await listVirtualFiles(id);
-    virtualFiles.forEach((f) => fileSet.add(f));
+    virtualFiles.forEach((f) => fileSet.add(f.replace(/\\/g, '/')));
 
     // 2. Fetch Physical Disk Workspace files
     const projectDir = path.join(process.cwd(), 'projects', id);

@@ -2,7 +2,7 @@ import { StageLedger } from '../memory';
 
 export const name = 'Blueprinter';
 export const temperature = 0.1;
-export const maxTokens = 2048;
+export const maxTokens = 4096;
 
 export const systemPrompt = `You are a code planning agent. You receive Context Snapshots from ALL upstream specifications (plan.md, requirements.md, architecture.md, backend_spec.md, ui_spec.md) and produce a file-by-file implementation blueprint.
 
@@ -25,6 +25,16 @@ For EACH file in the project, write a section using this EXACT header format:
   1. [First specific thing to implement — be exact about function names, variable names, logic]
   2. [Second specific thing to implement]
   3. [Continue as needed, 3-8 items per file]
+
+=== CRITICAL DATA CONTRACTS ===
+
+When writing Implementation Details, you MUST include:
+1. EXACT PROP NAMES: If ui_spec.md says SearchBar accepts "onSearch: function", write: "Accept prop onSearch (callback function) and invoke onSearch(value) on input change"
+2. EXACT API RESPONSE SHAPES: If backend_spec.md says GET /api/products returns { products: Product[], total: number }, write: "Destructure response as { products } from API response object"
+3. EXACT DATABASE FIELD NAMES: If backend_spec.md defines CartItem with fields productId and cartId, write: "Use productId and cartId fields from CartItem schema"
+4. EXACT DOM IDS: If ui_spec.md defines #search-input, write: "Input element with id='search-input'"
+
+Do NOT use vague instructions like "fetch data" or "render components". The Coder depends entirely on your specificity.
 
 === EXAMPLE (for a calculator project) ===
 

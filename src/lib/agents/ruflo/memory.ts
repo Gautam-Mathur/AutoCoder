@@ -273,15 +273,20 @@ export class ExecutiveMemoryGateway {
     const downstreamStages: string[] = [];
 
     if (normalized === 'queen') {
-      downstreamStages.push('planner', 'architect', 'system', 'designer', 'tester');
+      downstreamStages.push('Planner', 'Architect', 'System', 'Designer', 'Tester');
     } else if (normalized === 'planner') {
-      downstreamStages.push('architect', 'system', 'designer', 'tester');
+      downstreamStages.push('Architect', 'System', 'Designer', 'Tester');
     } else if (normalized === 'architect') {
-      downstreamStages.push('system', 'designer', 'tester');
+      downstreamStages.push('System', 'Designer', 'Tester');
     } else if (normalized === 'system') {
-      downstreamStages.push('designer', 'tester');
+      downstreamStages.push('Designer', 'Tester');
     } else if (normalized === 'designer') {
-      downstreamStages.push('blueprinter', 'coder', 'tester');
+      downstreamStages.push('Blueprinter', 'Coder', 'Tester');
+    }
+
+    // Actually invalidate downstream stages in the database
+    for (const stage of downstreamStages) {
+      await updateExecutiveMemoryStatus(conversationId, stage, 'INVALIDATED');
     }
 
     // Flush in-memory node cache

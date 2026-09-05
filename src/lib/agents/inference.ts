@@ -8,12 +8,12 @@ const undici = typeof window === 'undefined' ? require('undici') : null;
 const undiciAgent = undici ? undici.Agent : null;
 const undiciFetch = undici ? undici.fetch : fetch;
 
-// Reusable Undici Agent with a 30-minute idle socket timeout (cached globally to survive dev server hot-reloads)
+// Reusable Undici Agent with a 400-hour timeout (1,440,000,000 ms, cached globally)
 const globalForAgent = global as unknown as { ollamaAgent: any };
 const longTimeoutDispatcher = globalForAgent.ollamaAgent ?? (undiciAgent ? new undiciAgent({
-  headersTimeout: 1800000,   // 30 minutes in ms
-  bodyTimeout: 1800000,      // 30 minutes in ms
-  keepAliveTimeout: 1800000, // 30 minutes in ms
+  headersTimeout: 1440000000,   // 400 hours in ms
+  bodyTimeout: 1440000000,      // 400 hours in ms
+  keepAliveTimeout: 1440000000, // 400 hours in ms
 }) : null);
 if (process.env.NODE_ENV !== 'production' && typeof window === 'undefined') {
   globalForAgent.ollamaAgent = longTimeoutDispatcher;
@@ -496,8 +496,8 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
   const temp = options.temperature ?? 0.2;
   const isJson = options.format === 'json';
 
-  // Combine client abort signal with timeout signal (default fallback timeout 30 minutes / 1800s for large 30B models)
-  const effectiveTimeout = options.timeoutMs || 1800000;
+  // Combine client abort signal with timeout signal (400 hours / 1,440,000s)
+  const effectiveTimeout = options.timeoutMs || 1440000000; // 400 hours in ms
   const timeoutSignal = typeof AbortSignal.timeout === 'function'
     ? AbortSignal.timeout(effectiveTimeout)
     : (() => { const c = new AbortController(); setTimeout(() => c.abort(), effectiveTimeout); return c.signal; })();
