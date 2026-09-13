@@ -18,6 +18,7 @@ export interface AgentDef {
   schema: any;
   getContext?: (ledger: any, targetFile?: string) => Promise<string>;
   tools: string[];
+  model?: string;
 }
 
 export const AGENT_DEFS: Record<string, AgentDef> = {
@@ -27,9 +28,9 @@ export const AGENT_DEFS: Record<string, AgentDef> = {
   System:      { ...System, tools: [] },
   Designer:    { ...Designer, tools: [] },
   Blueprinter: { ...Blueprinter, tools: [] },
-  Coder:       { ...Coder, tools: [] },
+  Coder:       { ...Coder, tools: ['read_file', 'write_file', 'apply_diff', 'list_files', 'check_syntax', 'typecheck', 'build_project'] },
   Tester:      { ...Tester, tools: [] },
-  Debugger:    { ...Debugger, tools: [] },
+  Debugger:    { ...Debugger, tools: ['read_file', 'write_file', 'apply_diff', 'list_files', 'check_syntax', 'typecheck', 'build_project'] },
   Security:    { ...Security, tools: [] },
   Reviewer:    { ...Reviewer, tools: [] },
 };

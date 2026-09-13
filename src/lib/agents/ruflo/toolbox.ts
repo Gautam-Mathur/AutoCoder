@@ -1,5 +1,33 @@
 import { readVirtualFile, writeVirtualFile, listVirtualFiles, applyDiff } from './vfs';
 import { runLinter } from './linter';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import fs from 'fs';
+import path from 'path';
+
+const execFileAsync = promisify(execFile);
+
+async function runProjectCommand(command: string, conversationId: string, timeoutMs: number = 60000) {
+  const projectDir = path.join(process.cwd(), 'projects', conversationId);
+  if (!fs.existsSync(projectDir)) {
+    return { success: false, exitCode: 1, stdout: '', stderr: `Project directory does not exist for conversation ${conversationId}.` };
+  }
+  try {
+    const { stdout, stderr } = await execFileAsync('sh', ['-c', command], {
+      cwd: projectDir,
+      timeout: timeoutMs,
+      env: { ...process.env, NODE_ENV: 'development' },
+    });
+    return { success: true, exitCode: 0, stdout: (stdout || '').trim(), stderr: (stderr || '').trim() };
+  } catch (err: any) {
+    return {
+      success: false,
+      exitCode: err.code || 1,
+      stdout: (err.stdout || '').trim(),
+      stderr: (err.stderr || err.message || '').trim(),
+    };
+  }
+}
 
 export interface ToolParameter {
   type: 'string' | 'number' | 'integer' | 'boolean';
@@ -135,6 +163,53 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
     execute: async (args, conversationId) => {
       const result = await runLinter(conversationId, args.file_path);
       return result;
+    },
+  },
+
+  {
+    name: 'npm_install',
+    description:
+      'Runs npm install inside the project workspace directory to install dependencies specified in package.json.',
+    parameters: {
+      package_name: {
+        type: 'string',
+        description: 'Optional package name to install, e.g. "lucide-react". Omit to install all dependencies.',
+        required: false,
+      },
+    },
+    execute: async (args, conversationId) => {
+      const cmd = args.package_name ? `npm install ${args.package_name}` : 'npm install';
+      return await runProjectCommand(cmd, conversationId, 120000);
+    },
+  },
+
+  {
+    name: 'typecheck',
+    description:
+      'Runs full project TypeScript typechecking (tsc --noEmit) across all files in the workspace.',
+    parameters: {},
+    execute: async (_args, conversationId) => {
+      return await runProjectCommand('npx tsc --noEmit', conversationId, 60000);
+    },
+  },
+
+  {
+    name: 'build_project',
+    description:
+      'Runs the production build command (npm run build) for the generated project and returns success status and logs.',
+    parameters: {},
+    execute: async (_args, conversationId) => {
+      return await runProjectCommand('npm run build', conversationId, 120000);
+    },
+  },
+
+  {
+    name: 'run_tests',
+    description:
+      'Runs test suite (npm test) for the generated project and returns test results.',
+    parameters: {},
+    execute: async (_args, conversationId) => {
+      return await runProjectCommand('npm test', conversationId, 60000);
     },
   },
 ];

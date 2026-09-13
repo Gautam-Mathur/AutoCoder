@@ -27,39 +27,40 @@ export async function writeAgentOutput(params: WriteAgentOutputParams) {
 
   const jsonStr = JSON.stringify(validatedJson);
 
-  // 1. Save main output
-  const output = await prisma.agentOutput.create({
-    data: {
-      conversationId,
-      agentName,
-      stage,
-      schemaVersion,
-      model,
-      validatedJson: jsonStr,
-      executionTime,
-      tokenUsage,
-      attempt,
-    },
-  });
-
-  // 2. Generate indexes for top-level keys
-  if (validatedJson && typeof validatedJson === 'object') {
-    const indexPromises = Object.keys(validatedJson).map((key) => {
-      const path = `${agentName}.${key}`;
-      const value = JSON.stringify(validatedJson[key]);
-      return prisma.agentIndex.create({
-        data: {
-          conversationId,
-          outputId: output.id,
-          path,
-          value,
-        },
-      });
+  return await prisma.$transaction(async (tx) => {
+    // 1. Save main output
+    const output = await tx.agentOutput.create({
+      data: {
+        conversationId,
+        agentName,
+        stage,
+        schemaVersion,
+        model,
+        validatedJson: jsonStr,
+        executionTime,
+        tokenUsage,
+        attempt,
+      },
     });
-    await Promise.all(indexPromises);
-  }
 
-  return output;
+    // 2. Generate indexes for top-level keys
+    if (validatedJson && typeof validatedJson === 'object') {
+      for (const key of Object.keys(validatedJson)) {
+        const path = `${agentName}.${key}`;
+        const value = JSON.stringify(validatedJson[key]);
+        await tx.agentIndex.create({
+          data: {
+            conversationId,
+            outputId: output.id,
+            path,
+            value,
+          },
+        });
+      }
+    }
+
+    return output;
+  });
 }
 
 export async function queryAgentOutput(

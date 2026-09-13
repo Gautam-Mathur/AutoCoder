@@ -1,4 +1,4 @@
-import { runInference } from '../inference';
+import { runInference, cleanJsonResponse } from '../inference';
 import { writeHistoryLog, writeRichTelemetryLog } from './orchestrator';
 import { StageLedger } from './memory';
 
@@ -134,7 +134,8 @@ Provide a targeted patch code to fix the defect. Output only JSON: {"file": "${f
       format: 'json'
     });
 
-    const parsed = JSON.parse(responseText.trim());
+    const cleaned = cleanJsonResponse(responseText);
+    const parsed = JSON.parse(cleaned);
     if (!parsed || typeof parsed !== 'object') {
       throw new Error('Specialist recovery output is not a valid object');
     }

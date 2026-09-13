@@ -44,4 +44,7 @@ next-env.d.ts
 
 # local test workspaces
 /module/
+dev.db*
+/projects/
+
 

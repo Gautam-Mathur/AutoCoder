@@ -16,11 +16,12 @@ async function acquireLock(conversationId: string, filePath: string): Promise<()
     release = resolve;
   });
   const currentLock = fileLocks.get(lockKey) || Promise.resolve();
-  fileLocks.set(lockKey, currentLock.then(() => newLock));
+  const chainedLock = currentLock.then(() => newLock);
+  fileLocks.set(lockKey, chainedLock);
   await currentLock;
   return () => {
     release();
-    if (fileLocks.get(lockKey) === newLock) {
+    if (fileLocks.get(lockKey) === chainedLock) {
       fileLocks.delete(lockKey);
     }
   };
@@ -69,7 +70,7 @@ export function sanitizePath(filePath: string): string {
 
   cleanPath = path.normalize(cleanPath).replace(/\\/g, '/').replace(/\/+$/, '');
 
-  if (cleanPath === '.' || cleanPath === '' || cleanPath.startsWith('.')) {
+  if (cleanPath === '.' || cleanPath === '' || cleanPath === '..') {
     throw new Error(`Security Exception: Invalid file path: "${filePath}"`);
   }
 
@@ -192,6 +193,7 @@ export async function applyDiff(
       lines.splice(start, end - start + 1, newContent);
     }
 
+    const updatedContent = lines.join('\n');
     await prisma.virtualFile.update({
       where: {
         conversationId_filePath: {
@@ -199,8 +201,21 @@ export async function applyDiff(
           filePath: safePath,
         },
       },
-      data: { content: lines.join('\n') },
+      data: { content: updatedContent },
     });
+
+    // Instant Physical Disk Sync
+    try {
+      const projectDir = path.join(process.cwd(), 'projects', conversationId);
+      const fullPath = path.join(projectDir, safePath);
+      let normalizedContent = updatedContent;
+      if (safePath.endsWith('.html')) {
+        normalizedContent = normalizedContent.replace(/UTF-[\u4e00-\u9fa5]8/g, 'UTF-8');
+      }
+      safeWriteFileSync(fullPath, normalizedContent);
+    } catch (diskErr) {
+      console.error(`Failed instant disk write for diff on ${safePath}:`, diskErr);
+    }
   } finally {
     release();
   }

@@ -23,7 +23,7 @@ export default function Sidebar() {
 
   const menuItems = [
     { name: 'Dashboard', path: '/', icon: LayoutDashboard },
-    { name: 'Workspace', path: '/workspace', icon: Terminal },
+    { name: 'Workspace', path: activeId ? `/workspace?id=${activeId}` : '/workspace', icon: Terminal },
     { name: 'Telemetry', path: '/telemetry', icon: Activity },
     { name: 'Health', path: '/health', icon: HeartPulse },
     { name: 'Settings', path: '/settings', icon: Settings },

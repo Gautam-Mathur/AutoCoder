@@ -25,6 +25,7 @@ interface Message {
 }
 
 interface InferenceOptions {
+  model?: string;
   temperature?: number;
   format?: 'json' | 'text';
   maxTokens?: number;
@@ -497,11 +498,20 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
   const isJson = options.format === 'json';
 
   // Combine client abort signal with timeout signal (400 hours / 1,440,000s)
+  const startTime = Date.now();
+  if (options.model) {
+    if (config.provider === 'ollama') config.ollamaModel = options.model;
+    else if (config.provider === 'openai') config.openaiModel = options.model;
+    else if (config.provider === 'anthropic') config.anthropicModel = options.model;
+  }
+
   const effectiveTimeout = options.timeoutMs || 1440000000; // 400 hours in ms
   const timeoutSignal = typeof AbortSignal.timeout === 'function'
     ? AbortSignal.timeout(effectiveTimeout)
     : (() => { const c = new AbortController(); setTimeout(() => c.abort(), effectiveTimeout); return c.signal; })();
   const combinedSignal: AbortSignal = options.signal ? combineAbortSignals(options.signal, timeoutSignal) : timeoutSignal;
+
+  let result = '';
 
   if (config.provider === 'ollama') {
     const host = config.ollamaHost;
@@ -591,11 +601,11 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
       } finally {
         reader.releaseLock();
       }
+      result = accumulatedContent;
     } else {
       const data = (await res.json()) as any;
-      return data.message.content;
+      result = data.message.content;
     }
-    return accumulatedContent;
   } else if (config.provider === 'openai') {
     if (!config.openaiApiKey) {
       throw new Error('OpenAI API Key is not configured.');
@@ -631,7 +641,7 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
     }
 
     const data = await res.json();
-    return data.choices[0].message.content;
+    result = data.choices[0].message.content;
   } else if (config.provider === 'anthropic') {
     if (!config.anthropicApiKey) {
       throw new Error('Anthropic API Key is not configured.');
@@ -672,10 +682,23 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
     }
 
     const data = await res.json();
-    return data.content[0].text;
+    result = data.content[0].text;
   } else {
     throw new Error(`Unsupported LLM provider: ${config.provider}`);
   }
+
+  const durationMs = Date.now() - startTime;
+  const resolvedModel = config.provider === 'ollama' ? config.ollamaModel : (config.provider === 'openai' ? config.openaiModel : config.anthropicModel);
+  console.log('[InferenceTrace]', JSON.stringify({
+    provider: config.provider,
+    requestedModel: options.model || resolvedModel,
+    resolvedModel,
+    durationMs,
+    outputLength: result.length,
+    timestamp: new Date().toISOString(),
+  }));
+
+  return result;
 }
 
 let ollamaHeartbeatTimer: NodeJS.Timeout | null = null;

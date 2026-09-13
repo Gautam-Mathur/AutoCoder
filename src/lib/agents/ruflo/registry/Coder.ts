@@ -3,7 +3,7 @@ import { StageLedger } from '../memory';
 export const name = 'Coder';
 export const temperature = 0.1;
 export const maxTokens = 4096;
-export const allowedTools: string[] = [];
+export const allowedTools: string[] = ['read_file', 'write_file', 'apply_diff', 'list_files', 'check_syntax', 'typecheck', 'build_project'];
 
 export const systemPrompt = `You are a senior software developer. You write the COMPLETE source code for ONE file at a time.
 

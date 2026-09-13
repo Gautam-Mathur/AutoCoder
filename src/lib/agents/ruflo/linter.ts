@@ -148,9 +148,14 @@ export async function runLinter(
       const { line, character } = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
       const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n');
 
-      // For JS/JSX files, ignore external missing module errors (TS2307, TS1479, TS7016, TS2304 for globals) and focus on true syntax/parser errors
-      if (isJsOrJsx && (diagnostic.code === 2307 || diagnostic.code === 1479 || diagnostic.code === 7016 || diagnostic.code === 2304 || diagnostic.code === 2552)) {
-        return;
+      // For JS/JSX files, ignore external missing npm module errors, but retain broken local import errors (./, ../, @/)
+      if (isJsOrJsx) {
+        if (diagnostic.code === 2307 || diagnostic.code === 7016) {
+          const isLocalImport = /['"](\.|\/|@\/)/i.test(message);
+          if (!isLocalImport) return;
+        } else if (diagnostic.code === 1479 || diagnostic.code === 2304 || diagnostic.code === 2552) {
+          return;
+        }
       }
 
       errors.push({

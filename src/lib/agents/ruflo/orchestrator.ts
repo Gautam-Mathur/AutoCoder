@@ -8,7 +8,7 @@ import { calculateTokenBudget } from './token-budgeter';
 import fs from 'fs';
 import path from 'path';
 import { exec } from 'child_process';
-import { writeVirtualFile, readVirtualFile, listVirtualFiles, flushVfsToDisk, safeWriteFileSync } from './vfs';
+import { writeVirtualFile, readVirtualFile, listVirtualFiles, applyDiff, flushVfsToDisk, safeWriteFileSync } from './vfs';
 import { runLinter, runCrossFileImportCheck } from './linter';
 
 // Global Event Emitter for decoupling browser SSE streams from background Node pipeline compilation
@@ -18,11 +18,26 @@ pipelineEvents.setMaxListeners(100);
 export const activePipelines = new Set<string>();
 export const pipelineAbortControllers = new Map<string, AbortController>();
 
-export function abortPipelineExecution(conversationId: string) {
+export async function abortPipelineExecution(conversationId: string): Promise<void> {
   const controller = pipelineAbortControllers.get(conversationId);
   if (controller) {
     controller.abort();
     pipelineAbortControllers.delete(conversationId);
+  }
+  activePipelines.delete(conversationId);
+
+  try {
+    await prisma.conversation.update({
+      where: { id: conversationId },
+      data: { status: 'Cancelled' },
+    });
+    await prisma.pipelineRun.upsert({
+      where: { conversationId },
+      update: { state: 'CANCELLED' },
+      create: { conversationId, state: 'CANCELLED' },
+    });
+  } catch (e) {
+    console.error(`Failed to update database status to Cancelled for ${conversationId}:`, e);
   }
 }
 
@@ -87,7 +102,8 @@ Do not output any markdown code blocks, explanation text, or extra characters. R
       }
     );
 
-    const parsed = JSON.parse(responseText.trim());
+    const cleaned = cleanJsonResponse(responseText);
+    const parsed = JSON.parse(cleaned);
     return {
       isSoftware: !!parsed.isSoftware,
       reason: parsed.reason || null
@@ -261,6 +277,25 @@ function extractSnapshotFromContent(content: string): string {
   return content.substring(0, 800) + (content.length > 800 ? '\n...[TRUNCATED]' : '');
 }
 
+async function getTypedStageContext(conversationId: string, agentName: string): Promise<string | null> {
+  try {
+    if (agentName === 'Queen') {
+      const q = await prisma.queenStageOutput.findUnique({ where: { conversationId } });
+      if (q) return `=== ORIGINAL USER INTENT ===\nProject: ${q.projectName}\nGoal: ${q.goal || q.summary || ''}\nProblem: ${q.problemStatement || ''}`;
+    } else if (agentName === 'Planner') {
+      const p = await prisma.plannerStageOutput.findUnique({ where: { conversationId } });
+      if (p) return `--- [FROM Planner] ---\nFeatures: ${p.features || ''}\nRequirements: ${p.functionalRequirements || ''}`;
+    } else if (agentName === 'Architect') {
+      const a = await prisma.architectStageOutput.findUnique({ where: { conversationId } });
+      if (a) return `--- [FROM Architect] ---\nStyle: ${a.architectureStyle || ''}\nStructure: ${a.projectStructure || ''}`;
+    } else if (agentName === 'System') {
+      const s = await prisma.systemStageOutput.findUnique({ where: { conversationId } });
+      if (s) return `--- [FROM System] ---\nDB: ${s.databaseType || ''}\nAPIs: ${s.apis || ''}`;
+    }
+  } catch (e) {}
+  return null;
+}
+
 export async function buildStageContext(
   conversationId: string,
   stage: string
@@ -291,6 +326,14 @@ export async function buildStageContext(
   const consumedInferenceIds: string[] = [];
 
   for (const agentName of upstreamAgents) {
+    // Tier 0: Attempt to read structured typed context from dedicated DB tables first
+    const typedContext = await getTypedStageContext(conversationId, agentName);
+    if (typedContext) {
+      context += `${typedContext}\n\n`;
+      continue;
+    }
+
+    // Tier 1: Fallback to reading executive memory markdown snapshot
     const row = latestPerAgent.find(r => r.agentName === agentName);
     if (!row) continue;
     const snapshot = extractSnapshotFromContent(row.contentMd);
@@ -685,6 +728,100 @@ export function validateBlueprintImports(sections: BlueprintFileSection[]): stri
   return warnings;
 }
 
+export function extractFilesFromArchitecture(archContent: string): string[] {
+  const files: string[] = [];
+  if (!archContent) return files;
+
+  const ownedMatches = archContent.matchAll(/Owned Files:\s*([^\n]+)/gi);
+  for (const match of ownedMatches) {
+    const parts = match[1].split(/[,;]/).map((s) => s.trim());
+    for (const p of parts) {
+      const clean = p.replace(/[*`'"]/g, '').replace(/^\.\//, '').replace(/^\//, '').split(/\s*[\(\[\{]/)[0].trim();
+      if (clean && clean.toLowerCase() !== 'none' && !clean.endsWith('/') && !files.includes(clean)) {
+        files.push(clean);
+      }
+    }
+  }
+
+  if (files.length === 0) {
+    const treeMatch = archContent.match(/### Project Folder Structure([\s\S]*?)(###|$)/i);
+    if (treeMatch) {
+      const lines = treeMatch[1].split('\n');
+      for (const line of lines) {
+        const clean = line.replace(/[│├└─\s]/g, '').replace(/[*`'"]/g, '').trim();
+        if (clean && !clean.startsWith('#') && !clean.startsWith('project-root') && clean !== 'project-root/') {
+          const fileOnly = clean.split(/\s*[\(\[\{]/)[0].replace(/^\.\//, '').replace(/^\//, '').trim();
+          if (fileOnly && !fileOnly.endsWith('/') && fileOnly.includes('.') && !files.includes(fileOnly)) {
+            files.push(fileOnly);
+          }
+        }
+      }
+    }
+  }
+
+  return files;
+}
+
+/**
+ * Post-Pass HTML Asset Link Synchronizer.
+ * Inspects generated HTML files and ensures all created CSS and JS files in VFS
+ * are properly linked (<link rel="stylesheet"> and <script src="...">).
+ */
+export function syncHtmlAssetLinks(
+  htmlContent: string,
+  allFiles: string[]
+): { updatedHtml: string; syncedLinks: string[] } {
+  let updatedHtml = htmlContent;
+  const syncedLinks: string[] = [];
+
+  const cssFiles = allFiles.filter((f) => f.endsWith('.css'));
+  const jsFiles = allFiles.filter(
+    (f) =>
+      /\.(js|ts|jsx|tsx)$/.test(f) &&
+      !f.endsWith('.d.ts') &&
+      !f.includes('config') &&
+      !f.includes('test')
+  );
+
+  const lowerHtml = updatedHtml.toLowerCase();
+
+  // 1. Sync CSS files
+  for (const cssFile of cssFiles) {
+    const cssBasename = cssFile.split('/').pop() || cssFile;
+    const isLinked = updatedHtml.includes(cssFile) || updatedHtml.includes(cssBasename);
+
+    if (!isLinked) {
+      const linkTag = `  <link rel="stylesheet" href="${cssFile}">\n`;
+      if (lowerHtml.includes('</head>')) {
+        updatedHtml = updatedHtml.replace(/<\/head>/i, `${linkTag}</head>`);
+      } else {
+        updatedHtml = `${linkTag}` + updatedHtml;
+      }
+      syncedLinks.push(`Connected stylesheet <link rel="stylesheet" href="${cssFile}"> to <head>`);
+    }
+  }
+
+  // 2. Sync JS / TS script files
+  for (const jsFile of jsFiles) {
+    const jsBasename = jsFile.split('/').pop() || jsFile;
+    const isLinked = updatedHtml.includes(jsFile) || updatedHtml.includes(jsBasename);
+
+    if (!isLinked) {
+      const scriptTag = `  <script src="${jsFile}" defer></script>\n`;
+      if (lowerHtml.includes('</body>')) {
+        updatedHtml = updatedHtml.replace(/<\/body>/i, `${scriptTag}</body>`);
+      } else if (lowerHtml.includes('</head>')) {
+        updatedHtml = updatedHtml.replace(/<\/head>/i, `${scriptTag}</head>`);
+      } else {
+        updatedHtml = updatedHtml + `\n${scriptTag}`;
+      }
+      syncedLinks.push(`Connected script <script src="${jsFile}" defer></script> before </body>`);
+    }
+  }
+
+  return { updatedHtml, syncedLinks };
+}
+
 /**
  * File-type-specific sanitizer for Coder output.
  * Strips LLM preamble from .prisma, .json, and .html files.
@@ -777,6 +914,7 @@ export async function runAgent(
       { role: 'user', content: userContent },
     ],
     {
+      model: agentDef.model,
       temperature: agentDef.temperature,
       maxTokens: budget,
       timeoutMs,
@@ -784,13 +922,21 @@ export async function runAgent(
       onChunk: (chunk: string) => {
         tokenCount += Math.max(1, Math.round(chunk.length / 4));
         chunkBuffer += chunk;
-        if (chunkBuffer.length > 600) {
-          chunkBuffer = chunkBuffer.slice(-600); // rolling 600-char window of live generated markdown/text
+        if (chunkBuffer.length > 4000) {
+          chunkBuffer = chunkBuffer.slice(-4000); // rolling 4000-char window of live generated code/markdown
         }
 
         const now = Date.now();
         if (now - lastEmittedTime > 120) {
           lastEmittedTime = now;
+
+          const speculativeApis = Array.from(chunkBuffer.matchAll(/(GET|POST|PUT|DELETE|PATCH)\s+(\/[a-zA-Z0-9_\-\/]+)/gi))
+            .map(m => ({ method: m[1].toUpperCase(), route: m[2] }));
+          const speculativeEntities = Array.from(chunkBuffer.matchAll(/(?:model|entity|table|struct)\s+([A-Z][a-zA-Z0-9]+)/gi))
+            .map(m => m[1]);
+          const speculativeFiles = Array.from(chunkBuffer.matchAll(/(?:File:|Path:|`)([a-zA-Z0-9_\-\/]+\.(?:html|css|js|ts|jsx|tsx|json|md))/gi))
+            .map(m => m[1]);
+
           const evt = {
             type: 'AGENT_STREAM_PROGRESS',
             agent: agentName,
@@ -799,6 +945,10 @@ export async function runAgent(
               tokenCount,
               maxTokens: budget,
               latestText: chunkBuffer,
+              targetFile: targetFile || undefined,
+              apis: speculativeApis.slice(-5),
+              entities: Array.from(new Set(speculativeEntities)).slice(-6),
+              files: Array.from(new Set(speculativeFiles)).slice(-8),
             },
           };
           onEvent(evt);
@@ -917,11 +1067,8 @@ export async function runOrchestrator(
   pipelineAbortControllers.set(conversationId, internalController);
   const executionSignal = internalController.signal;
 
-  // Dual Event Wrapper: Sends event to direct callback AND emits to global EventEmitter for reloaded browser tabs
+  // Single Event Emission: Emits to global EventEmitter for browser SSE streams
   const emit = (event: any) => {
-    try {
-      onEvent(event);
-    } catch (e) {}
     pipelineEvents.emit(`event:${conversationId}`, event);
   };
 
@@ -1081,7 +1228,19 @@ export async function runOrchestrator(
         }
 
         let repairedCount = 0;
+        const fileRepairAttemptsMap = new Map<string, number>();
         for (const targetFile of failingFiles) {
+          const attempts = (fileRepairAttemptsMap.get(targetFile) || 0) + 1;
+          fileRepairAttemptsMap.set(targetFile, attempts);
+          if (attempts > 2) {
+            emit({
+              type: 'AGENT_LOG',
+              agent: 'Debugger',
+              message: `⚠️ Max repair attempts (2) reached for ${targetFile}. Skipping further repair to prevent infinite loop.`,
+            });
+            continue;
+          }
+
           const fileContent = (await readVirtualFile(conversationId, targetFile)) || '';
           if (!fileContent) continue;
 
@@ -1103,9 +1262,30 @@ export async function runOrchestrator(
           );
 
           if (repairResult && repairResult.content) {
-            const repairedContent = sanitizeCoderOutput(repairResult.content) || repairResult.content;
-            await writeVirtualFile(conversationId, targetFile, repairedContent);
-            writeProjectFile(conversationId, targetFile, repairedContent);
+            let appliedPatches = false;
+            try {
+              const cleaned = cleanJsonResponse(repairResult.content);
+              const parsed = JSON.parse(cleaned);
+              if (parsed && Array.isArray(parsed.patches) && parsed.patches.length > 0) {
+                for (const patch of parsed.patches) {
+                  const patchTarget = patch.file || targetFile;
+                  if (patchTarget && patch.startLine && patch.endLine && patch.replacement !== undefined) {
+                    await applyDiff(conversationId, patchTarget, patch.startLine, patch.endLine, patch.replacement);
+                    emit({ type: 'AGENT_LOG', agent: 'Debugger', message: `🛠️ Applied diff patch to ${patchTarget} (L${patch.startLine}-L${patch.endLine}): ${patch.reason}` });
+                  }
+                }
+                appliedPatches = true;
+              }
+            } catch (e) {
+              // Fallback for full file response
+            }
+
+            if (!appliedPatches) {
+              const repairedContent = sanitizeCoderOutput(repairResult.content) || repairResult.content;
+              await writeVirtualFile(conversationId, targetFile, repairedContent);
+              writeProjectFile(conversationId, targetFile, repairedContent);
+            }
+
             const postLint = await runLinter(conversationId, targetFile);
             if (postLint.success) {
               repairedCount++;
@@ -1286,6 +1466,25 @@ export async function runOrchestrator(
           }
         }
 
+        // R3-3: Post-Pass HTML Asset Link Synchronization & Auto-Connection
+        for (const htmlFile of htmlFiles) {
+          const rawHtml = (await readVirtualFile(conversationId, htmlFile)) || '';
+          if (rawHtml) {
+            const { updatedHtml, syncedLinks } = syncHtmlAssetLinks(rawHtml, allVfs);
+            if (syncedLinks.length > 0) {
+              await writeVirtualFile(conversationId, htmlFile, updatedHtml);
+              writeProjectFile(conversationId, htmlFile, updatedHtml);
+              for (const linkMsg of syncedLinks) {
+                emit({
+                  type: 'AGENT_LOG',
+                  agent: 'Coder',
+                  message: `🔗 HTML Link Sync (${htmlFile}): ${linkMsg}`,
+                });
+              }
+            }
+          }
+        }
+
         // Cross-file import validation after full Coder loop
         const crossFileMap = new Map<string, string>();
         for (const vfsFile of allVfs) {
@@ -1307,17 +1506,104 @@ export async function runOrchestrator(
         continue;
       }
 
-      // ─── STAGE: BLUEPRINTER (Full Spec Context) ───────────────────────────
+      // ─── STAGE: BLUEPRINTER (Parallel / Batched Per-File Synthesis + Context Pruning) ───
       if (stageName === 'Blueprinter') {
         const specFiles = ['plan.md', 'requirements.md', 'architecture.md', 'backend_spec.md', 'ui_spec.md'];
-        let fullContext = '';
+        const specContents: Record<string, string> = {};
         for (const sf of specFiles) {
           const sc = await readVirtualFile(conversationId, sf);
-          if (sc) fullContext += `=== ${sf.toUpperCase()} ===\n${sc}\n\n`;
+          if (sc) specContents[sf] = sc;
         }
-        const bpOut = await runAgent(conversationId, 'Blueprinter', userPrompt, emit, ledger, 1, fullContext.trim(), executionSignal);
-        emit({ type: 'AGENT_COMPLETE', agent: 'Blueprinter', message: 'Blueprinter completed.', data: bpOut.content });
+
+        const archContent = specContents['architecture.md'] || '';
+        const targetFiles = extractFilesFromArchitecture(archContent);
+
+        // Build pruned spec context
+        let prunedContext = '';
+        for (const [name, content] of Object.entries(specContents)) {
+          const match = content.match(/### Context Snapshot([\s\S]*?)(###|$)/i);
+          if (match) {
+            prunedContext += `=== ${name.toUpperCase()} (SNAPSHOT) ===\n### Context Snapshot\n${match[1].trim()}\n\n`;
+          } else {
+            prunedContext += `=== ${name.toUpperCase()} (SUMMARY) ===\n${content.slice(0, 1200).trim()}\n\n`;
+          }
+        }
+
+        let finalBlueprintText = '';
+
+        if (targetFiles.length > 0) {
+          emit({
+            type: 'AGENT_LOG',
+            agent: 'Blueprinter',
+            message: `📐 Blueprinter: Parallelizing blueprint synthesis across ${targetFiles.length} target file(s)...`,
+          });
+
+          // Batch files into concurrent clusters of up to 3 files
+          const BATCH_SIZE = 3;
+          const batches: string[][] = [];
+          for (let i = 0; i < targetFiles.length; i += BATCH_SIZE) {
+            batches.push(targetFiles.slice(i, i + BATCH_SIZE));
+          }
+
+          const batchPromises = batches.map(async (batchFiles) => {
+            const batchPrompt = `${userPrompt}\n\n=== TARGET FILES TO BLUEPRINT ===\nSynthesize blueprint sections ONLY for the following file(s):\n${batchFiles.map(f => `- ${f}`).join('\n')}\n\nStart your output immediately with ### File: ${batchFiles[0]}`;
+            const batchContext = `${prunedContext}\n=== BATCH TARGET FILES ===\n${batchFiles.join(', ')}`;
+            const res = await runAgent(
+              conversationId,
+              'Blueprinter',
+              batchPrompt,
+              emit,
+              ledger,
+              1,
+              batchContext,
+              executionSignal
+            );
+            return res ? res.content : '';
+          });
+
+          const batchOutputs = await Promise.all(batchPromises);
+          const rawJoined = batchOutputs.join('\n\n');
+
+          // Parse generated sections and sort by dependency order
+          const parsedSections = parseBlueprintFiles(rawJoined);
+          if (parsedSections.length > 0) {
+            // Sort: index.html or entry points first, then files with no deps, then others
+            parsedSections.sort((a, b) => {
+              if (a.file === 'index.html' || a.file === 'public/index.html') return -1;
+              if (b.file === 'index.html' || b.file === 'public/index.html') return 1;
+              if (a.dependencies.length === 0 && b.dependencies.length > 0) return -1;
+              if (b.dependencies.length === 0 && a.dependencies.length > 0) return 1;
+              return 0;
+            });
+
+            finalBlueprintText = parsedSections.map((s) => s.rawSection).join('\n\n');
+          } else {
+            // Fallback to raw output if parseBlueprintFiles returned empty
+            finalBlueprintText = rawJoined;
+          }
+        }
+
+        // Fallback if targetFiles was empty or parallel execution yielded no content
+        if (!finalBlueprintText.trim()) {
+          emit({
+            type: 'AGENT_LOG',
+            agent: 'Blueprinter',
+            message: `⚠️ Blueprinter fallback: running full single-pass synthesis...`,
+          });
+          let fullContext = '';
+          for (const [sf, sc] of Object.entries(specContents)) {
+            fullContext += `=== ${sf.toUpperCase()} ===\n${sc}\n\n`;
+          }
+          const bpOut = await runAgent(conversationId, 'Blueprinter', userPrompt, emit, ledger, 1, fullContext.trim(), executionSignal);
+          finalBlueprintText = bpOut.content;
+        }
+
+        // Save blueprint.md to VFS and flush to disk
+        await writeVirtualFile(conversationId, 'blueprint.md', finalBlueprintText);
+        writeProjectFile(conversationId, 'blueprint.md', finalBlueprintText);
         await flushVfsToDisk(conversationId);
+
+        emit({ type: 'AGENT_COMPLETE', agent: 'Blueprinter', message: 'Blueprinter completed.', data: finalBlueprintText });
         continue;
       }
 

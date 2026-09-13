@@ -13,37 +13,52 @@ export async function GET(request: NextRequest) {
     return new Response('conversationId is required', { status: 400 });
   }
 
+  const lastEventIdHeader = request.headers.get('Last-Event-ID') || searchParams.get('lastEventId');
+  const lastSeq = lastEventIdHeader ? parseInt(lastEventIdHeader, 10) : 0;
+
   const encoder = new TextEncoder();
 
   // Create SSE stream
   const responseStream = new ReadableStream({
     async start(controller) {
-      const sendEvent = (event: any) => {
+      let seqCounter = isNaN(lastSeq) ? 0 : lastSeq;
+
+      const sendEvent = (event: any, customId?: number) => {
         try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+          const eventId = customId !== undefined ? customId : ++seqCounter;
+          const eventType = event.type || 'message';
+          controller.enqueue(
+            encoder.encode(`id: ${eventId}\nevent: ${eventType}\ndata: ${JSON.stringify(event)}\n\n`)
+          );
         } catch (e) {
           // Stream closed
         }
       };
 
-      // 1. Replay past history logs from SQLite so reloaded tab immediately catches up!
+      // 1. Replay past history logs from SQLite filtering by sequence > lastSeq
       try {
         const historyLogs = await prisma.executionHistory.findMany({
-          where: { conversationId },
-          orderBy: { createdAt: 'asc' },
+          where: {
+            conversationId,
+            ...(lastSeq > 0 ? { sequence: { gt: lastSeq } } : {}),
+          },
+          orderBy: { sequence: 'asc' },
           take: 500,
-          select: { stage: true, status: true, logs: true, createdAt: true },
+          select: { sequence: true, stage: true, status: true, logs: true, createdAt: true },
         });
 
         for (const logItem of historyLogs) {
           if (logItem.status === 'Streaming') continue;
-          sendEvent({
-            type: 'HISTORY_REPLAY',
-            agent: logItem.stage,
-            status: logItem.status,
-            message: logItem.logs,
-            timestamp: logItem.createdAt,
-          });
+          sendEvent(
+            {
+              type: 'HISTORY_REPLAY',
+              agent: logItem.stage,
+              status: logItem.status,
+              message: logItem.logs,
+              timestamp: logItem.createdAt,
+            },
+            logItem.sequence
+          );
         }
       } catch (e) {
         // Ignore DB read errors during replay

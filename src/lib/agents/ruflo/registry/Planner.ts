@@ -114,8 +114,28 @@ Your output is ONLY the document. Start with "### Context Snapshot", end after t
 
 export const schema = {
   type: 'object',
-  properties: { content: { type: 'string' } },
-  required: ['content']
+  properties: {
+    content: { type: 'string' },
+    requirements: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          title: { type: 'string' },
+          category: { type: 'string' },
+          description: { type: 'string' },
+          priority: { type: 'string' },
+          acceptanceCriteria: {
+            type: 'array',
+            items: { type: 'string' },
+          },
+        },
+        required: ['id', 'title', 'category', 'description', 'priority'],
+      },
+    },
+  },
+  required: ['content'],
 };
 
 export async function getContext(): Promise<string> {

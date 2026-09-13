@@ -120,7 +120,7 @@ export async function writeExecutiveMemoryRecord(params: {
         conversationId: params.conversationId,
         agentName: 'Coder',
         filePath: params.filePath,
-        status: 'ACTIVE',
+        status: { in: ['ACTIVE', 'INVALIDATED'] },
       },
       data: { status: 'SUPERSEDED' },
     });
@@ -129,7 +129,7 @@ export async function writeExecutiveMemoryRecord(params: {
       where: {
         conversationId: params.conversationId,
         agentName: params.agentName,
-        status: 'ACTIVE',
+        status: { in: ['ACTIVE', 'INVALIDATED'] },
       },
       data: { status: 'SUPERSEDED' },
     });
@@ -370,7 +370,10 @@ export class StageLedger {
       for (const filepath of Object.keys(value)) {
         const rawVal = value[filepath];
         const contentStr = typeof rawVal === 'string' ? rawVal : (rawVal?.content ?? '');
-        const hash = crypto.createHash('md5').update(contentStr).digest('hex');
+        const normalizedStr = contentStr
+          .replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, '')
+          .replace(/\s+/g, '');
+        const hash = crypto.createHash('md5').update(normalizedStr || contentStr).digest('hex');
 
         // If the file content is exactly the same as the last written state, skip history check
         if (this.state.hashes[filepath] === hash) {

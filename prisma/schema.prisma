@@ -9,12 +9,13 @@ generator client {
 model Conversation {
   id                  String                 @id @default(uuid())
   title               String
-  status              String                 // "Active", "Completed", "Paused"
+  status              String                 // "Active", "Completed", "Paused", "Cancelled"
   currentStage        String                 // "Queen", "Planner", etc.
   originalPrompt      String?
   qualityGateOverride Boolean                @default(false)
   createdAt           DateTime               @default(now())
   updatedAt           DateTime               @updatedAt
+  pipelineRun         PipelineRun?
   outputs             AgentOutput[]
   history             ExecutionHistory[]
   executiveMemory     ExecutiveMemory[]
@@ -68,10 +69,27 @@ model ExecutionHistory {
   id             String       @id @default(uuid())
   conversationId String
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sequence       Int          @default(1)
   stage          String
   status         String       // "Success", "Failed", "Retrying"
   logs           String       // Stringified array of logs or raw text logs
   createdAt      DateTime     @default(now())
+
+  @@index([conversationId, sequence])
+}
+
+model PipelineRun {
+  id             String       @id @default(uuid())
+  conversationId String       @unique
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  state          String       // "QUEUED" | "RUNNING" | "PAUSED" | "COMPLETED" | "FAILED" | "CANCELLED"
+  currentStage   String?
+  attempt        Int          @default(1)
+  version        Int          @default(1)
+  leaseOwner     String?
+  leaseExpiresAt DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 }
 
 model ExecutiveMemory {

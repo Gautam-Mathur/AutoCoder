@@ -162,6 +162,154 @@ function getSimpleFileExplanation(fileName: string, moduleResp?: string) {
   };
 }
 
+function unwrapStageData(raw: any): any {
+  if (!raw) return null;
+  let data = raw;
+  if (data.outflow && typeof data.outflow === 'object') data = data.outflow;
+  if (data.validatedJson) {
+    if (typeof data.validatedJson === 'object') data = data.validatedJson;
+    else if (typeof data.validatedJson === 'string') {
+      try { data = JSON.parse(data.validatedJson); } catch {}
+    }
+  }
+
+  if (data && typeof data === 'object' && typeof data.content === 'string') {
+    const trimmed = data.content.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        return { ...data, ...parsed };
+      } catch {}
+    }
+    const codeBlockMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (codeBlockMatch) {
+      try {
+        const parsed = JSON.parse(codeBlockMatch[1]);
+        return { ...data, ...parsed };
+      } catch {}
+    }
+  }
+  return data;
+}
+
+function extractStageMetrics(stage: string, rawData: any, promptText: string, allFiles: string[] = []) {
+  if (!rawData) return null;
+  const data = unwrapStageData(rawData);
+  const text = typeof data === 'string' ? data : (data?.content || JSON.stringify(data || {}));
+
+  switch (stage) {
+    case 'Queen': {
+      const rawProjName = data?.projectName || data?.project?.name || text.match(/Project Name:\s*(.+)/i)?.[1] || text.match(/Project:\s*(.+)/i)?.[1];
+      const cleanedProjName = rawProjName ? rawProjName.replace(/^#+\s*/, '').replace(/Context Snapshot/i, '').trim() : '';
+      const projName = cleanedProjName || 'Defined';
+      const includedCount = Array.isArray(data?.mvpScope?.included) ? data.mvpScope.included.length : (text.match(/[-*]\s+Include/gi) || text.match(/^[-*]\s+.+$/gm) || []).length;
+      return {
+        inflow: promptText ? `Prompt (${promptText.length} chars)` : 'Natural User Prompt',
+        outflow: `Project: ${projName} | ${includedCount > 0 ? `${includedCount} Scope Items` : 'MVP Scope Defined'}`,
+      };
+    }
+    case 'Planner': {
+      let featuresCount = Array.isArray(data?.features) ? data.features.length : 0;
+      if (featuresCount === 0) {
+        featuresCount = (text.match(/^[-*]\s+.+$/gm) || text.match(/Feature\s*\d+/gi) || text.match(/-\s*Priority:/gi) || []).length;
+      }
+      const tech = data?.recommendedTechStack?.frontend || text.match(/Frontend:\s*(.+)/i)?.[1] || text.match(/Tech Stack:\s*(.+)/i)?.[1] || 'HTML5/JS/CSS';
+      return {
+        inflow: `Queen Spec & Scope`,
+        outflow: `${featuresCount || 3} Features Planned | Tech: ${tech}`,
+      };
+    }
+    case 'Architect': {
+      let modulesCount = Array.isArray(data?.modules) ? data.modules.length : 0;
+      if (modulesCount === 0) {
+        const parsed = parseModulesFromMarkdown(text);
+        const moduleHeaders = (text.match(/###?\s+(?:Module\s*\d+:?|[A-Za-z0-9_]+\s+Module|System Module|UI Module|[A-Z][a-zA-Z0-9_\s]+Module)/gi) || []).length;
+        const boldModules = (text.match(/\*\*(?:Module\s*\d+:?|[A-Z][a-zA-Z0-9_\s]+Module|[A-Z][a-zA-Z0-9_\s]+Service|Frontend|Backend|Database)\*\*/gi) || []).length;
+        modulesCount = Math.max(parsed.length, moduleHeaders, boldModules, (text.match(/-\s*Responsibility:/gi) || []).length);
+      }
+      return {
+        inflow: `Planner Reqs & Features`,
+        outflow: `${modulesCount || 3} Architectural Modules & Dependency Hierarchy`,
+      };
+    }
+    case 'System': {
+      let entityMatches = Array.isArray(data?.entities) ? data.entities.length : 0;
+      if (entityMatches === 0) {
+        const prismaModels = (text.match(/model\s+[A-Z][a-zA-Z0-9_]+/gi) || []).length;
+        const entityBullets = (text.match(/(?:Entity|Table|Model|Schema):\s*[A-Z][a-zA-Z0-9_]+/gi) || []).length;
+        const bulletEntities = (text.match(/^[-*]\s+\*\*([A-Z][a-zA-Z0-9_]+)\*\*/gm) || []).length;
+        entityMatches = Math.max(prismaModels, entityBullets, bulletEntities, (text.match(/model\s+[A-Z]/gi) || []).length);
+      }
+      const apiMatches = Array.isArray(data?.apis) ? data.apis.length : (text.match(/(GET|POST|PUT|DELETE|PATCH)\s+\/[^\s\n]+/gi) || text.match(/Route:\s*\/[^\s\n]+/gi) || []).length;
+      return {
+        inflow: `Architect Structure & Modules`,
+        outflow: `${entityMatches || 2} DB Entities | ${apiMatches || 3} API Routes`,
+      };
+    }
+    case 'Designer': {
+      let compMatches = Array.isArray(data?.components) ? data.components.length : 0;
+      if (compMatches === 0) {
+        const componentHeaders = (text.match(/###?\s+(?:[A-Z][a-zA-Z0-9_]+ Component|[A-Z][a-zA-Z0-9_]+ Screen|[A-Z][a-zA-Z0-9_]+ Page|[A-Z][a-zA-Z0-9_]+ Modal)/gi) || []).length;
+        const boldComponents = (text.match(/\*\*([A-Z][a-zA-Z0-9_]+ (?:Component|Screen|Page|View|Modal))\*\*/gi) || []).length;
+        const bulletComponents = (text.match(/-\s*(?:Component|Screen|Page|Modal):\s*.+/gi) || []).length;
+        compMatches = Math.max(componentHeaders, boldComponents, bulletComponents, (text.match(/Component\s*\d+/gi) || []).length);
+      }
+      return {
+        inflow: `System DB Schema & API Spec`,
+        outflow: `${compMatches || 4} UI Components | Design Tokens & Layouts`,
+      };
+    }
+    case 'Blueprinter': {
+      const fileMatches = Array.isArray(data?.fileManifest) ? data.fileManifest.length : (text.match(/^File:\s*([^\s\n]+)/gm) || text.match(/```[a-z]*\s*file:\s*([^\s\n]+)/gi) || text.match(/=== [A-Z._]+ ===/g) || []).length;
+      return {
+        inflow: `Full Spec Suite (Plan, Reqs, Arch, System, UI)`,
+        outflow: `${fileMatches || 5} Files Planned with Code Specifications`,
+      };
+    }
+    case 'Coder': {
+      const generatedCount = allFiles.length > 0 ? allFiles.length : (text.match(/Completed/gi) || []).length;
+      return {
+        inflow: `Blueprint Manifest & Code Specifications`,
+        outflow: `${generatedCount || 5} Source Code Files Synthesized & VFS Synced`,
+      };
+    }
+    case 'Tester': {
+      const passed = data?.passed ?? (text.match(/PASSED/g) || []).length;
+      const failed = data?.failed ?? (text.match(/FAILED/g) || []).length;
+      return {
+        inflow: `Synthesized Source Code & AST Linter Rules`,
+        outflow: `${passed} Passed, ${failed} Failed | Diagnostics Complete`,
+      };
+    }
+    case 'Debugger': {
+      const repaired = data?.repairedCount ?? (text.match(/repaired|fixed/gi) || []).length;
+      return {
+        inflow: `Linter Diagnostics & Failing Source Code`,
+        outflow: `${repaired || 0} Files Repaired via Differential Patches`,
+      };
+    }
+    case 'Security': {
+      const status = data?.overallStatus || (text.includes('PASSED') ? 'PASSED' : 'REVIEW');
+      return {
+        inflow: `Full Specification Suite & Synthesized Source Code`,
+        outflow: `Security Status: ${status}`,
+      };
+    }
+    case 'Reviewer': {
+      const assessment = data?.overallAssessment || (text.includes('APPROVED') || text.includes('PASSED') ? 'PASSED' : 'QUALITY GATE');
+      return {
+        inflow: `Security Report & Synthesized Source Code`,
+        outflow: `Quality Gate Decision: ${assessment}`,
+      };
+    }
+    default:
+      return {
+        inflow: 'Upstream Pipeline Context',
+        outflow: 'Stage execution completed',
+      };
+  }
+}
+
 export default function WorkspaceContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -212,6 +360,7 @@ export default function WorkspaceContent() {
   const eventSourceRef = useRef<EventSource | null>(null);
   const logEndRef = useRef<HTMLDivElement | null>(null);
   const didConnectRef = useRef(false);
+  const reconnectAttemptsRef = useRef(0);
 
   // Sync conversation ID to global context
   useEffect(() => {
@@ -244,6 +393,17 @@ export default function WorkspaceContent() {
       }
     }
   }, [detailsLoaded, pipelineStatus, initialPrompt]);
+
+  // Live polling effect during active pipeline execution to keep file tree and active code view updated without manual reloads
+  useEffect(() => {
+    if (!conversationId || pipelineStatus !== 'Active') return;
+
+    const pollInterval = setInterval(() => {
+      fetchConversationDetails(conversationId);
+    }, 2500);
+
+    return () => clearInterval(pollInterval);
+  }, [conversationId, pipelineStatus, selectedFile]);
 
   // Handle scroll to bottom of logs
   useEffect(() => {
@@ -334,14 +494,20 @@ export default function WorkspaceContent() {
           });
           setExpandedDirs((prev) => ({ ...autoExpand, ...prev }));
           
-          // Auto-select first file if none selected, or restore from localStorage
-          const savedFile = localStorage.getItem(`selectedFile_${id}`);
-          if (savedFile && normalizedDiskFiles.includes(savedFile)) {
-            setSelectedFile(savedFile);
-            handleSelectFile(savedFile);
-          } else {
-            setSelectedFile(normalizedDiskFiles[0]);
-            handleSelectFile(normalizedDiskFiles[0]);
+          // Auto-select first file if none selected, or restore from localStorage / refresh open file
+          const targetFile = selectedFile || localStorage.getItem(`selectedFile_${id}`) || normalizedDiskFiles[0];
+          if (targetFile && normalizedDiskFiles.includes(targetFile)) {
+            if (selectedFile !== targetFile) {
+              setSelectedFile(targetFile);
+            }
+            // Fetch live content for open file
+            const diskRes = await fetch(`/api/conversations/${id}/files/read?file=${encodeURIComponent(targetFile)}`);
+            if (diskRes.ok) {
+              const fileData = await diskRes.json();
+              if (fileData.content !== undefined) {
+                setFileContent(fileData.content);
+              }
+            }
           }
         }
       }
@@ -482,6 +648,7 @@ export default function WorkspaceContent() {
       const data = JSON.parse(event.data);
 
       if (data.type === 'PING') return;
+      reconnectAttemptsRef.current = 0;
 
       if (data.type === 'HISTORY_REPLAY') {
         if (data.message && data.message.trim()) {
@@ -514,18 +681,20 @@ export default function WorkspaceContent() {
         setCurrentStage(data.agent);
       }
 
-      if (data.type === 'AGENT_COMPLETE') {
-        setStreamProgress(null);
-        if (data.agent && data.data) {
-          setAgentOutputs((prev) => ({
-            ...prev,
-            [data.agent]: data.data,
-          }));
+      if (data.type === 'AGENT_COMPLETE' || data.type === 'AGENT_LOG') {
+        if (data.type === 'AGENT_COMPLETE') {
+          setStreamProgress(null);
+          if (data.agent && data.data) {
+            setAgentOutputs((prev) => ({
+              ...prev,
+              [data.agent]: data.data,
+            }));
+          }
         }
         fetchConversationDetails(conversationId);
       }
 
-      if (data.type === 'PAUSE_APPROVAL_GATE') {
+      if (data.type === 'QUALITY_GATE_PAUSE' || data.type === 'PAUSE_APPROVAL_GATE') {
         setPipelineStatus('Paused');
         fetchConversationDetails(conversationId);
         eventSource.close();
@@ -546,8 +715,8 @@ export default function WorkspaceContent() {
         eventSource.close();
       }
 
-      if (data.type === 'PIPELINE_SUCCESS' || data.type === 'PIPELINE_ERROR') {
-        setPipelineStatus(data.type === 'PIPELINE_SUCCESS' ? 'Completed' : 'Failed');
+      if (data.type === 'PIPELINE_COMPLETE' || data.type === 'PIPELINE_SUCCESS' || data.type === 'PIPELINE_ERROR') {
+        setPipelineStatus(data.type === 'PIPELINE_ERROR' ? 'Failed' : 'Completed');
         fetchConversationDetails(conversationId);
         eventSource.close();
       }
@@ -556,18 +725,29 @@ export default function WorkspaceContent() {
     eventSource.onerror = async () => {
       eventSource.close();
 
+      reconnectAttemptsRef.current += 1;
+      const attempts = reconnectAttemptsRef.current;
+      const MAX_RECONNECT_ATTEMPTS = 5;
+
+      if (attempts > MAX_RECONNECT_ATTEMPTS) {
+        addLog({ type: 'PIPELINE_ERROR', message: `Max compiler connection reconnect attempts (${MAX_RECONNECT_ATTEMPTS}) reached. Stopping stream reconnect loop.` });
+        setPipelineStatus('Failed');
+        return;
+      }
+
       // Check database to see if pipeline is still actively compiling
       try {
         const res = await fetch(`/api/conversations/${conversationId}`);
         if (res.ok) {
           const data = await res.json();
           if (data.status === 'Active') {
-            addLog({ type: 'SYSTEM', message: 'Stream connection tickle detected. Re-connecting to compiler loop...' });
+            const backoffMs = Math.min(1000 * Math.pow(2, attempts - 1), 16000);
+            addLog({ type: 'SYSTEM', message: `Stream connection tickle detected (Attempt ${attempts}/${MAX_RECONNECT_ATTEMPTS}). Re-connecting in ${backoffMs / 1000}s...` });
             setTimeout(() => {
               handleStartPipeline(true);
-            }, 1000);
+            }, backoffMs);
             return;
-          } else if (data.status === 'Paused' || data.status === 'Completed') {
+          } else if (data.status === 'Paused' || data.status === 'Completed' || data.status === 'Failed') {
             setPipelineStatus(data.status);
             return;
           }
@@ -1259,17 +1439,34 @@ export default function WorkspaceContent() {
         </div>
 
         {streamProgress && (
-          <div className="bg-slate-950 border-b border-slate-800 px-3 py-2 flex flex-col gap-1.5 select-none animate-pulse">
-            <div className="flex justify-between text-[9px] font-mono text-slate-400">
-              <span className="text-electric-indigo font-bold">{currentStage} Specifying</span>
-              <span>{streamProgress.tokenCount} / {streamProgress.maxTokens} tkn</span>
+          <div className="bg-slate-950 border-b border-slate-800 px-3 py-2 flex flex-col gap-1.5 select-none transition-all">
+            <div className="flex justify-between items-center text-[9px] font-mono text-slate-400">
+              <span className="text-electric-indigo font-bold flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-electric-indigo animate-ping" />
+                🧠 {currentStage} Agent Thinking & Generating...
+              </span>
+              <span className="bg-slate-900 border border-slate-700 px-1.5 py-0.5 rounded text-slate-300 font-mono font-bold">
+                {streamProgress.tokenCount} / {streamProgress.maxTokens} tkn
+              </span>
             </div>
-            <div className="w-full bg-slate-900 rounded-full h-1 overflow-hidden border border-slate-850">
+            <div className="w-full bg-slate-900 rounded-full h-1.5 overflow-hidden border border-slate-800">
               <div 
-                className="bg-gradient-to-r from-electric-indigo to-purple-500 h-full transition-all duration-300"
-                style={{ width: `${Math.min(100, (streamProgress.tokenCount / streamProgress.maxTokens) * 100)}%` }}
+                className="bg-gradient-to-r from-electric-indigo via-purple-500 to-emerald-400 h-full transition-all duration-300"
+                style={{ width: `${Math.min(100, (streamProgress.tokenCount / (streamProgress.maxTokens || 1)) * 100)}%` }}
               />
             </div>
+            {streamProgress.latestText && (
+              <div className="mt-1 bg-slate-900/90 border border-indigo-500/30 rounded p-2.5 text-[10px] font-mono text-slate-300 max-h-36 overflow-y-auto whitespace-pre-wrap font-mono scrollbar-thin shadow-inner">
+                <div className="flex justify-between items-center text-[8px] uppercase tracking-wider mb-1.5 text-indigo-400 font-bold border-b border-slate-800 pb-1">
+                  <span>⚡ LIVE REASONING & TOKEN FEED {streamProgress.targetFile ? `(Target: ${streamProgress.targetFile})` : `(${currentStage})`}</span>
+                  <span className="text-slate-500 font-normal">{(streamProgress.latestText || '').length} bytes</span>
+                </div>
+                <div className="text-slate-200 leading-relaxed font-mono">
+                  {streamProgress.latestText.slice(-800)}
+                  <span className="inline-block w-1.5 h-3 bg-electric-indigo ml-0.5 animate-pulse" />
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1377,98 +1574,246 @@ export default function WorkspaceContent() {
           {/* Flowchart Tab */}
           {activeTab === 'flowchart' && (
             <div className="w-full h-full overflow-y-auto p-6 flex flex-col gap-6 items-center justify-start">
-              {streamProgress ? (
-                <div className="w-full max-w-2xl bg-slate-900/60 border border-slate-700/80 rounded-xl p-6 flex flex-col gap-6 shadow-[0_4px_30px_rgba(0,0,0,0.3)] backdrop-blur-md relative overflow-hidden">
-                  <div className="absolute inset-0 bg-gradient-to-r from-electric-indigo/5 to-purple-500/5 pointer-events-none" />
-                  
-                  <div className="flex justify-between items-center border-b border-slate-800 pb-3">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2.5 h-2.5 rounded-full bg-electric-indigo animate-ping" />
-                      <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">Live Spec Compiler HUD</span>
-                    </div>
-                    <div className="text-[10px] text-indigo-400 font-mono">
-                      {streamProgress.tokenCount} / {streamProgress.maxTokens} tokens
-                    </div>
+              {/* RuFlo 11-Stage Live Agent Inflow ➔ Outflow Pipeline Data Flow Map */}
+              <div className="w-full max-w-4xl bg-slate-900/80 border border-electric-indigo/40 rounded-xl p-5 shadow-[0_0_30px_rgba(99,102,241,0.15)] flex flex-col gap-4">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <div className="flex items-center gap-2">
+                    <Compass className="w-5 h-5 text-electric-indigo" />
+                    <h4 className="text-sm font-bold text-slate-100 uppercase tracking-wider">RuFlo Multi-Agent Live Data Flow (Inflow ➔ Outflow Map)</h4>
                   </div>
-
-                  {/* Progress Bar */}
-                  <div className="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden border border-slate-800">
-                    <div 
-                      className="bg-gradient-to-r from-electric-indigo to-purple-500 h-full transition-all duration-300 ease-out" 
-                      style={{ width: `${Math.min(100, (streamProgress.tokenCount / streamProgress.maxTokens) * 100)}%` }} 
-                    />
-                  </div>
-
-                  {/* Speculative elements visualization */}
-                  <div className="flex flex-col gap-4">
-                    {/* Live API endpoints list */}
-                    {Array.isArray(streamProgress.apis) && streamProgress.apis.length > 0 && (
-                      <div className="flex flex-col gap-2">
-                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                          <TerminalIcon className="w-3.5 h-3.5 text-electric-indigo" /> Speculatively Mapped API Routes
-                        </div>
-                        <div className="flex flex-col gap-1.5 max-h-40 overflow-y-auto">
-                          {streamProgress.apis.map((api: any, idx: number) => (
-                            <div key={idx} className="flex gap-2 items-center bg-slate-950/80 border border-slate-850 p-2 rounded-lg font-mono text-[10px] animate-pulse">
-                              <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${
-                                api.method === 'GET' ? 'bg-blue-955 text-blue-300 border border-blue-800' : 'bg-green-955 text-green-300 border border-green-800'
-                              }`}>{api.method}</span>
-                              <span className="text-slate-300">{api.route}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Live Entities list */}
-                    {Array.isArray(streamProgress.entities) && streamProgress.entities.length > 0 && (
-                      <div className="flex flex-col gap-2 mt-2">
-                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                          <Database className="w-3.5 h-3.5 text-cyan-400" /> Speculatively Designed DB Entities
-                        </div>
-                        <div className="grid grid-cols-3 gap-2 max-h-40 overflow-y-auto">
-                          {streamProgress.entities.map((name: string, idx: number) => (
-                            <div key={idx} className="bg-slate-950 border border-slate-850 p-2 rounded-lg text-[10px] text-center font-bold text-cyan-300 animate-pulse">
-                              {name}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Live Files list */}
-                    {Array.isArray(streamProgress.files) && streamProgress.files.length > 0 && (
-                      <div className="flex flex-col gap-2 mt-2">
-                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                          <Cpu className="w-3.5 h-3.5 text-emerald-400" /> Speculatively Planned Files
-                        </div>
-                        <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto">
-                          {streamProgress.files.map((file: string, idx: number) => (
-                            <code key={idx} className="px-1.5 py-0.5 bg-slate-950 border border-slate-855 rounded text-[9px] text-emerald-300 font-mono animate-pulse">
-                              {getFileBasename(file)}
-                            </code>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Miniature terminal output */}
-                  {streamProgress.latestText && (
-                    <div className="bg-slate-950 border border-slate-850 rounded-lg p-3 font-mono text-[9px] text-slate-400 overflow-hidden max-h-24 select-none relative">
-                      <div className="absolute top-2 right-3 px-1.5 py-0.5 rounded bg-slate-900 border border-slate-850 text-[7px] text-slate-550 uppercase tracking-wider">Stream Ticker</div>
-                      <div className="whitespace-pre-wrap leading-relaxed opacity-60">
-                        ...{streamProgress.latestText}
-                      </div>
-                    </div>
-                  )}
+                  <span className="bg-electric-indigo/10 border border-electric-indigo/30 text-electric-indigo text-[10px] px-2.5 py-0.5 rounded font-mono font-bold">
+                    11-Stage Pipeline
+                  </span>
                 </div>
-              ) : modules.length === 0 && files.length === 0 ? (
-                <div className="text-xs text-slate-500 py-12 flex flex-col items-center gap-2 justify-center h-full">
-                  <Database className="w-12 h-12 text-slate-800" />
-                  <span>Architecture flowchart will load here after the Architect stage compiles.</span>
+
+                <p className="text-xs text-slate-400">
+                  Live data flow tracking showing what context enters each agent (<strong>Inflow</strong>) and what structured specification or code output is synthesized (<strong>Outflow</strong>).
+                </p>
+
+                {(() => {
+                  const STAGE_ORDER = ['Queen', 'Planner', 'Architect', 'System', 'Designer', 'Blueprinter', 'Coder', 'Tester', 'Debugger', 'Security', 'Reviewer'];
+                  const DYNAMIC_STAGES = new Set(['Coder', 'Tester', 'Debugger']);
+
+                  const specStagesOnly = STAGE_ORDER.filter(s => !DYNAMIC_STAGES.has(s));
+                  const highestCompletedSpecIndex = Math.max(
+                    -1,
+                    ...specStagesOnly.map((s) => (agentOutputs[s] || logs.some(l => l.agent === s && l.type === 'AGENT_COMPLETE')) ? STAGE_ORDER.indexOf(s) : -1)
+                  );
+
+                  return (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {STAGE_ORDER.map((stage, stageIdx) => {
+                        const outputData = agentOutputs[stage];
+                        const isDynamic = DYNAMIC_STAGES.has(stage);
+                        const isCompleted = !!outputData || logs.some(l => l.agent === stage && l.type === 'AGENT_COMPLETE') || (!isDynamic && highestCompletedSpecIndex >= stageIdx && highestCompletedSpecIndex !== -1);
+                        const isActive = currentStage === stage && pipelineStatus === 'Active' && (!isCompleted || isDynamic);
+                        const icon = { Queen: '👑', Planner: '📋', Architect: '📐', System: '⚙️', Designer: '🎨', Blueprinter: '🗺️', Coder: '💻', Tester: '🧪', Debugger: '🛠️', Security: '🛡️', Reviewer: '🔍' }[stage] || '🤖';
+                        const metrics = extractStageMetrics(stage, outputData, promptText, files);
+
+                    return (
+                      <div key={stage} className={`p-3 rounded-lg border flex flex-col gap-2 transition-all ${
+                        isActive 
+                          ? 'bg-indigo-950/40 border-electric-indigo shadow-[0_0_20px_rgba(99,102,241,0.25)] animate-pulse' 
+                          : isCompleted 
+                          ? 'bg-slate-950/80 border-slate-800' 
+                          : 'bg-slate-950/40 border-slate-900 opacity-60'
+                      }`}>
+                        <div className="flex justify-between items-center text-xs font-bold">
+                          <span className="flex items-center gap-1.5">
+                            <span>{icon}</span>
+                            <span className="text-slate-200">{stage}</span>
+                          </span>
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-bold ${
+                            isActive ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40' :
+                            isCompleted ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
+                            'bg-slate-900 text-slate-500'
+                          }`}>
+                            {isActive ? 'COMPILING...' : isCompleted ? 'DONE' : 'WAITING'}
+                          </span>
+                        </div>
+
+                        {/* Inflow section */}
+                        <div className="text-[10px] bg-slate-900/60 p-2 rounded border border-slate-850 flex flex-col gap-1">
+                          <span className="text-[9px] font-bold text-indigo-400 uppercase tracking-wider flex items-center gap-1">
+                            <span>📥 Inflow</span> <span className="text-slate-500 font-normal">(Upstream Context)</span>
+                          </span>
+                          <span className="text-slate-400 truncate">
+                            {metrics ? metrics.inflow : (
+                              stage === 'Queen' ? (promptText ? `Prompt (${promptText.length} chars)` : 'Natural User Prompt') :
+                              'Upstream Context'
+                            )}
+                          </span>
+                        </div>
+
+                        {/* Outflow section */}
+                        <div className="text-[10px] bg-slate-900/60 p-2 rounded border border-slate-850 flex flex-col gap-1">
+                          <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1">
+                            <span>📤 Outflow</span> <span className="text-slate-500 font-normal">(Synthesized Output)</span>
+                          </span>
+                          <span className="text-slate-300 truncate">
+                            {!outputData && streamProgress && streamProgress.agent === stage ? (
+                              `Streaming tokens (${streamProgress.tokenCount || 0})...`
+                            ) : !outputData ? (
+                              'Pending execution...'
+                            ) : metrics ? (
+                              metrics.outflow
+                            ) : (
+                              'Output synthesized successfully'
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              ) : (
+              );
+            })()}
+          </div>
+
+              {(() => {
+                const speculativeApis = streamProgress?.apis && streamProgress.apis.length > 0
+                  ? streamProgress.apis
+                  : Array.from((streamProgress?.latestText || '').matchAll(/(GET|POST|PUT|DELETE|PATCH)\s+(\/[a-zA-Z0-9_\-\/]+)/gi))
+                      .map((m: any) => ({ method: (m[1] as string).toUpperCase(), route: m[2] as string }));
+
+                const speculativeEntities = streamProgress?.entities && streamProgress.entities.length > 0
+                  ? streamProgress.entities
+                  : Array.from(new Set(Array.from((streamProgress?.latestText || '').matchAll(/(?:model|entity|table|struct)\s+([A-Z][a-zA-Z0-9]+)/gi)).map((m: any) => m[1] as string)));
+
+                const speculativeFiles = streamProgress?.files && streamProgress.files.length > 0
+                  ? streamProgress.files
+                  : Array.from(new Set(Array.from((streamProgress?.latestText || '').matchAll(/(?:File:|Path:|`)([a-zA-Z0-9_\-\/]+\.(?:html|css|js|ts|jsx|tsx|json|md))/gi)).map((m: any) => m[1] as string)));
+
+                if (streamProgress) {
+                  return (
+                    <div className="w-full max-w-4xl bg-slate-900/60 border border-slate-700/80 rounded-xl p-6 flex flex-col gap-6 shadow-[0_4px_30px_rgba(0,0,0,0.3)] backdrop-blur-md relative overflow-hidden">
+                      <div className="absolute inset-0 bg-gradient-to-r from-electric-indigo/5 to-purple-500/5 pointer-events-none" />
+                      
+                      <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full bg-electric-indigo animate-ping" />
+                          <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">Live Spec Compiler HUD ({currentStage})</span>
+                        </div>
+                        <div className="text-[10px] text-indigo-400 font-mono">
+                          {streamProgress.tokenCount} / {streamProgress.maxTokens} tokens
+                        </div>
+                      </div>
+
+                      {/* Progress Bar */}
+                      <div className="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden border border-slate-800">
+                        <div 
+                          className="bg-gradient-to-r from-electric-indigo to-purple-500 h-full transition-all duration-300 ease-out" 
+                          style={{ width: `${Math.min(100, (streamProgress.tokenCount / streamProgress.maxTokens) * 100)}%` }} 
+                        />
+                      </div>
+
+                      {/* Speculative elements visualization */}
+                      <div className="flex flex-col gap-4">
+                        {/* Live API endpoints list */}
+                        {speculativeApis.length > 0 && (
+                          <div className="flex flex-col gap-2">
+                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                              <TerminalIcon className="w-3.5 h-3.5 text-electric-indigo" /> Speculatively Mapped API Routes
+                            </div>
+                            <div className="flex flex-col gap-1.5 max-h-40 overflow-y-auto">
+                              {speculativeApis.map((api: any, idx: number) => (
+                                <div key={idx} className="flex gap-2 items-center bg-slate-950/80 border border-slate-850 p-2 rounded-lg font-mono text-[10px] animate-pulse">
+                                  <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${
+                                    api.method === 'GET' ? 'bg-blue-955 text-blue-300 border border-blue-800' : 'bg-green-955 text-green-300 border border-green-800'
+                                  }`}>{api.method}</span>
+                                  <span className="text-slate-300">{api.route}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Live Entities list */}
+                        {speculativeEntities.length > 0 && (
+                          <div className="flex flex-col gap-2 mt-2">
+                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                              <Database className="w-3.5 h-3.5 text-cyan-400" /> Speculatively Designed DB Entities
+                            </div>
+                            <div className="grid grid-cols-3 gap-2 max-h-40 overflow-y-auto">
+                              {speculativeEntities.map((name: string, idx: number) => (
+                                <div key={idx} className="bg-slate-950 border border-slate-850 p-2 rounded-lg text-[10px] text-center font-bold text-cyan-300 animate-pulse">
+                                  {name}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Live Files list */}
+                        {speculativeFiles.length > 0 && (
+                          <div className="flex flex-col gap-2 mt-2">
+                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                              <Cpu className="w-3.5 h-3.5 text-emerald-400" /> Speculatively Planned Files
+                            </div>
+                            <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto">
+                              {speculativeFiles.map((file: string, idx: number) => (
+                                <code key={idx} className="px-1.5 py-0.5 bg-slate-950 border border-slate-855 rounded text-[9px] text-emerald-300 font-mono animate-pulse">
+                                  {getFileBasename(file)}
+                                </code>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Live Code & Specification Compiler Stream Viewer */}
+                      {streamProgress.latestText && (
+                        <div className="flex flex-col gap-2 mt-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5 font-mono">
+                              <FileCode className="w-3.5 h-3.5 text-electric-indigo" />
+                              Compiling Live Code {streamProgress.targetFile ? `➔ ${streamProgress.targetFile}` : `(${currentStage})`}
+                            </span>
+                            <span className="text-[9px] text-indigo-400 font-mono font-bold">
+                              {(streamProgress.latestText || '').length} bytes compiled live
+                            </span>
+                          </div>
+
+                          <div className="bg-slate-955 border border-slate-800 rounded-lg p-3.5 font-mono text-[11px] text-slate-200 overflow-y-auto max-h-80 select-text relative shadow-inner leading-relaxed">
+                            <div className="whitespace-pre-wrap">
+                              {streamProgress.latestText}
+                              <span className="inline-block w-2 h-3.5 bg-electric-indigo animate-pulse ml-0.5 align-middle" />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+
+                if (pipelineStatus === 'Active') {
+                  return (
+                    <div className="w-full max-w-4xl bg-slate-900/60 border border-slate-700/80 rounded-xl p-6 flex flex-col gap-4 shadow-[0_4px_30px_rgba(0,0,0,0.3)] backdrop-blur-md relative overflow-hidden text-center">
+                      <div className="flex items-center justify-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-electric-indigo animate-ping" />
+                        <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">Live Spec Compiler Active</span>
+                      </div>
+                      <div className="text-sm font-semibold text-indigo-300">
+                        Executing Stage: <span className="font-mono text-purple-400">{currentStage || 'Initializing...'}</span>
+                      </div>
+                      <div className="text-xs text-slate-400">
+                        Synthesizing application specifications and mapping system flowchart...
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (modules.length === 0 && files.length === 0) {
+                  return (
+                    <div className="text-xs text-slate-500 py-12 flex flex-col items-center gap-2 justify-center h-full">
+                      <Database className="w-12 h-12 text-slate-800" />
+                      <span>Architecture flowchart will load here after the Architect stage compiles.</span>
+                    </div>
+                  );
+                }
+
+                return null;
+              })() || (
                 <div className="w-full max-w-3xl flex flex-col gap-6 pb-12">
                   {/* High Level Flowchart Header */}
                   <div className="bg-slate-900/80 border border-electric-indigo/40 rounded-xl p-5 shadow-[0_0_30px_rgba(99,102,241,0.15)] flex flex-col gap-3">
@@ -1507,57 +1852,7 @@ export default function WorkspaceContent() {
                     </div>
                   </div>
 
-                  {/* Modules & File Cards Grid */}
-                  <div className="flex flex-col gap-4">
-                    <h5 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                      <Cpu className="w-4 h-4 text-emerald-400" /> Files &amp; Responsibility Breakdown (Easy Explanation)
-                    </h5>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {(modules.length > 0 ? modules : files.map((f) => ({ name: getFileBasename(f), ownedFiles: [f], responsibility: '' }))).map((item, idx) => {
-                        const fileList = item.ownedFiles && item.ownedFiles.length > 0 ? item.ownedFiles : [item.name];
-                        const mainFile = fileList[0] || 'file';
-                        const info = getSimpleFileExplanation(mainFile, item.responsibility);
-
-                        return (
-                          <div key={idx} className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col gap-3 hover:border-indigo-500/50 transition-all shadow-md">
-                            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                              <div className="flex items-center gap-2">
-                                <span className="p-1.5 rounded-md bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
-                                  <Cpu className="w-3.5 h-3.5" />
-                                </span>
-                                <div>
-                                  <h6 className="text-xs font-bold text-slate-100">{item.name || getFileBasename(mainFile)}</h6>
-                                  <span className="text-[9px] font-mono text-indigo-400">{info.role}</span>
-                                </div>
-                              </div>
-                              <span className="bg-slate-950 border border-slate-800 text-slate-400 text-[9px] font-mono px-2 py-0.5 rounded">
-                                {info.easyName}
-                              </span>
-                            </div>
-
-                            {/* Easy Explanation */}
-                            <div className="bg-slate-950/70 border border-slate-855 rounded-lg p-2.5 text-xs text-slate-300 leading-relaxed">
-                              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">💡 Why this file exists:</div>
-                              {info.why}
-                            </div>
-
-                            {/* Owned files */}
-                            {fileList.length > 0 && (
-                              <div className="flex flex-wrap gap-1 items-center pt-1">
-                                <span className="text-[9px] text-slate-500 font-mono mr-1">Files:</span>
-                                {fileList.map((f: string, i: number) => (
-                                  <code key={i} className="px-1.5 py-0.5 bg-slate-950 border border-slate-800 rounded text-[9px] text-slate-300 font-mono">
-                                    {getFileBasename(f)}
-                                  </code>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
 
                   {/* Entities Schema */}
                   {entities.length > 0 && (
