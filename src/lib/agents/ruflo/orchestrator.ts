@@ -684,11 +684,12 @@ export function parseBlueprintFiles(blueprintText: string): BlueprintFileSection
     });
   }
 
-  // Entry Point Guard: If web project lacks an html entry point, unshift index.html as File #1
+  // Entry Point Guard: Only unshift static index.html if web project lacks HTML and is NOT a Next.js/SSR framework app
   const isWebProject = sections.some((s) => s.file.endsWith('.css') || s.file.endsWith('.html') || s.file.endsWith('.js') || s.file.endsWith('.jsx') || s.file.endsWith('.tsx'));
   const hasHtmlEntryPoint = sections.some((s) => s.file === 'index.html' || s.file === 'public/index.html' || s.file.endsWith('.html'));
+  const isFrameworkApp = sections.some((s) => s.file.startsWith('pages/') || s.file.startsWith('app/') || s.file === 'next.config.js' || s.file === 'vite.config.js');
 
-  if (isWebProject && !hasHtmlEntryPoint) {
+  if (isWebProject && !hasHtmlEntryPoint && !isFrameworkApp) {
     const cssFiles = sections.filter(s => s.file.endsWith('.css')).map(s => s.file);
     const jsFiles = sections.filter(s => /\.(js|ts)$/.test(s.file)).map(s => s.file);
     const primaryCss = cssFiles[0] || 'style.css';
@@ -732,6 +733,7 @@ export function extractFilesFromArchitecture(archContent: string): string[] {
   const files: string[] = [];
   if (!archContent) return files;
 
+  // 1. Extract from "Owned Files: file1, file2" in Modules section
   const ownedMatches = archContent.matchAll(/Owned Files:\s*([^\n]+)/gi);
   for (const match of ownedMatches) {
     const parts = match[1].split(/[,;]/).map((s) => s.trim());
@@ -743,16 +745,43 @@ export function extractFilesFromArchitecture(archContent: string): string[] {
     }
   }
 
+  // 2. Stack-based ASCII Folder Tree Parser (preserves nested directory paths)
   if (files.length === 0) {
     const treeMatch = archContent.match(/### Project Folder Structure([\s\S]*?)(###|$)/i);
     if (treeMatch) {
       const lines = treeMatch[1].split('\n');
+      const dirStack: { depth: number; path: string }[] = [];
+
       for (const line of lines) {
-        const clean = line.replace(/[│├└─\s]/g, '').replace(/[*`'"]/g, '').trim();
-        if (clean && !clean.startsWith('#') && !clean.startsWith('project-root') && clean !== 'project-root/') {
-          const fileOnly = clean.split(/\s*[\(\[\{]/)[0].replace(/^\.\//, '').replace(/^\//, '').trim();
-          if (fileOnly && !fileOnly.endsWith('/') && fileOnly.includes('.') && !files.includes(fileOnly)) {
-            files.push(fileOnly);
+        if (!line.trim() || line.trim().startsWith('#')) continue;
+
+        // Calculate depth from leading spaces and branch characters
+        const indentMatch = line.match(/^([│├└─\s]*)/);
+        const indentStr = indentMatch ? indentMatch[1] : '';
+        const depth = Math.floor(indentStr.replace(/│/g, ' ').length / 2);
+
+        const cleanItem = line.replace(/[│├└─\s]/g, '').replace(/[*`'"]/g, '').trim();
+        if (!cleanItem || cleanItem.startsWith('project-root') || cleanItem === 'project-root/') continue;
+
+        const nameOnly = cleanItem.split(/\s*[\(\[\{]/)[0].replace(/^\.\//, '').replace(/^\//, '').trim();
+        if (!nameOnly) continue;
+
+        // Pop directories from stack deeper or equal to current depth
+        while (dirStack.length > 0 && dirStack[dirStack.length - 1].depth >= depth) {
+          dirStack.pop();
+        }
+
+        const parentPath = dirStack.map((d) => d.path).join('');
+
+        if (nameOnly.endsWith('/') || (!nameOnly.includes('.') && !nameOnly.startsWith('['))) {
+          // Directory entry
+          const dirName = nameOnly.endsWith('/') ? nameOnly : `${nameOnly}/`;
+          dirStack.push({ depth, path: dirName });
+        } else {
+          // File entry
+          const fullPath = `${parentPath}${nameOnly}`;
+          if (!files.includes(fullPath)) {
+            files.push(fullPath);
           }
         }
       }
