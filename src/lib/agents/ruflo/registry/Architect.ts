@@ -101,7 +101,7 @@ Example:
 - Depends On: None
 - Supports Features: Basic Arithmetic, Clear Function
 
-RULE: Every file from ### Project Folder Structure MUST appear in exactly ONE module's "Owned Files". No file can be orphaned or claimed by two modules.
+RULE: Every file from ### Project Folder Structure MUST appear in exactly ONE module's "Owned Files". Every file listed under ### Modules ("Owned Files") MUST also appear in ### Project Folder Structure ASCII tree. No file can be orphaned, omitted from the tree, or claimed by two modules.
 
 ### Conventions
 Write each convention on its own bullet:
@@ -123,9 +123,10 @@ FORBIDDEN — you must NEVER do any of these:
 
 VALIDATION: Before finishing, mentally check:
 1. Does every file in the folder structure appear in exactly one module?
-2. Does every feature from requirements.md have at least one module supporting it?
-3. Is the tech stack appropriate for the project complexity?
-4. Is index.html at the root or in public/, never in src/?
+2. Does every file listed in Modules appear in the folder structure ASCII tree?
+3. Does every feature from requirements.md have at least one module supporting it?
+4. Is the tech stack appropriate for the project complexity?
+5. Is index.html at the root or in public/, never in src/? (Skip index.html for Next.js/SSR framework apps)
 
 Your output is ONLY the document. Start with "### Context Snapshot", end after "### Conventions".`;
 
