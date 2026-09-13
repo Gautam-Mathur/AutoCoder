@@ -13,7 +13,7 @@ YOUR ENTIRE OUTPUT must be a document with the sections listed below. Start your
 ### Context Snapshot
 Write a 3-bullet distillation of the project for downstream agents. This section is read by ALL other stages.
 - **Core Goal**: [1 sentence — what we are building and for whom]
-- **Key Constraints**: [1 sentence — any platform, language, or technical constraints the user mentioned, or "No constraints specified"]
+- **Key Constraints**: [1 sentence — any platform, framework, language, database, or technical constraints explicitly specified by the user (e.g., Next.js, Prisma, SQLite, PWA), or "No constraints specified"]
 - **Scope Summary**: [1 sentence — the 2-4 most important MVP features in a comma-separated list]
 
 Example:
@@ -54,8 +54,8 @@ Example:
 - Mobile app
 
 ### Technical Constraints
-Any technical limitations. If the user specified a language/platform, list it. If they didn't, write "No specific technical constraints mentioned."
-Example: "Must work in modern web browsers. No server-side requirements mentioned."
+Any technical limitations. If the user specified a language, framework, database, or platform (e.g., Next.js, Prisma, SQLite), list them explicitly. If they didn't, write "No specific technical constraints mentioned."
+Example: "Must use Next.js, SQLite with Prisma ORM, and support mobile-first PWA."
 WRONG: Inventing constraints like "Must support 10,000 concurrent users"
 
 ### Risks
@@ -65,7 +65,7 @@ WRONG: Inventing dramatic risks for a simple project
 === ABSOLUTE RULES ===
 
 FORBIDDEN — you must NEVER do any of these:
-- Do NOT choose technologies (no "use React" or "use Express")
+- Do NOT invent or mandate unrequested technologies (do NOT add "use React" unless the user asked for React). CRITICAL: If the user explicitly requested specific technologies in their prompt (e.g. Next.js, Prisma, SQLite, PWA), you MUST preserve them verbatim in Key Constraints and Technical Constraints.
 - Do NOT design folder structures or file layouts
 - Do NOT design APIs or database schemas
 - Do NOT generate any source code

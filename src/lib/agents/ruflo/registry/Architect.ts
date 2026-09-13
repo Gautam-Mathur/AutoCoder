@@ -34,11 +34,11 @@ List each technology decision on its own line with a bullet and bold label:
 - **Additional**: [any other tools, or "None"]
 
 CRITICAL RULES FOR TECH STACK:
-- Match complexity to the project. A static calculator = Plain HTML/CSS/JS. A social media app = React + Express + PostgreSQL.
-- If the user specified a technology in plan.md, use it. Do not override user preferences.
-- If the project has NO backend logic (no user accounts, no data persistence, no APIs), set Backend to "None" and Database to "None".
-- FOR ALL WEB APPLICATIONS: Frontend Entry Point MUST be "index.html" at project root or public/index.html.
-- NEVER choose React/Vue/Angular for a project that only needs 1-3 static pages.
+- Match complexity to the project. A static calculator = Plain HTML/CSS/JS. A complex app = React + Express + PostgreSQL.
+- CRITICAL: If the user or plan.md specified a framework, ORM, database, or technology (e.g. Next.js, Prisma, SQLite, React, Vue, Express), you MUST use it in Tech Stack and Project Folder Structure. You are STRICTLY FORBIDDEN from substituting Plain HTML/CSS/JS or Database: None when explicit tech choices were requested.
+- If the project has NO backend logic and no user request for backend/database, set Backend to "None" and Database to "None".
+- FOR WEB APPLICATIONS: Frontend Entry Point MUST be "index.html" for static HTML sites, or "src/pages/index.tsx" / "pages/index.js" / "src/app/page.tsx" for Next.js framework apps.
+- Do NOT choose React/Vue/Angular for simple 1-3 page static projects unless the user explicitly requested them.
 
 ### Project Folder Structure
 Show the COMPLETE file tree using ASCII tree notation. Every single file that will be created must appear here.

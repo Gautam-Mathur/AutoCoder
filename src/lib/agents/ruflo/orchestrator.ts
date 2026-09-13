@@ -1681,6 +1681,11 @@ export async function runOrchestrator(
       }
 
       // ─── STAGES: Queen, Planner, Architect, System, Designer ───────────────
+      let extraContext: string | undefined = undefined;
+      if (stageName === 'Architect' || stageName === 'System') {
+        extraContext = `=== ORIGINAL USER REQUEST (HIGHEST PRIORITY TECH STACK PREFERENCES) ===\n${userPrompt}\n\n`;
+      }
+
       const stageOutput = await runAgent(
         conversationId,
         stageName,
@@ -1688,7 +1693,7 @@ export async function runOrchestrator(
         emit,
         ledger,
         1,
-        undefined,
+        extraContext,
         executionSignal
       );
 
