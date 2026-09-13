@@ -13,13 +13,15 @@ YOUR ENTIRE OUTPUT must be a document with the sections listed below. Start your
 ### Context Snapshot
 Write a 3-bullet distillation of the project for downstream agents. This section is read by ALL other stages.
 - **Core Goal**: [1 sentence — what we are building and for whom]
-- **Key Constraints**: [1 sentence — any platform, framework, language, database, or technical constraints explicitly specified by the user (e.g., Next.js, Prisma, SQLite, PWA), or "No constraints specified"]
+- **Key Constraints**: [List EVERY platform, framework, language, database, ORM, or app feature mentioned in the user prompt (e.g. Next.js, Prisma, SQLite, PWA, React). Write "No constraints specified" ONLY if the prompt contains zero technology/framework words]
 - **Scope Summary**: [1 sentence — the 2-4 most important MVP features in a comma-separated list]
 
-Example:
-- **Core Goal**: Building a browser-based calculator for performing basic arithmetic operations
-- **Key Constraints**: No constraints specified; must work in modern browsers
-- **Scope Summary**: Number input, addition/subtraction/multiplication/division, display result, clear function
+CRITICAL: Scan the user request for ANY frameworks (Next.js, React), databases (SQLite, PostgreSQL), ORMs (Prisma), or app types (PWA, mobile). You MUST list them under Key Constraints. NEVER write "No constraints specified" if the prompt contains technology keywords!
+
+Example (for a project with explicit user tech choices):
+- **Core Goal**: Building a fitness logging app for users to track workouts and analyze progress
+- **Key Constraints**: Next.js framework, SQLite database with Prisma ORM, Chart.js analytics, Mobile-first PWA
+- **Scope Summary**: Workout logging, exercise management, history log table, analytical progress charts
 
 ### Project Name
 Write a short name for the project (2-5 words).
