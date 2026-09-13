@@ -48,13 +48,13 @@ WRONG: Adding features the user never mentioned like "export to PDF" or "dark mo
 ### MVP Scope - Excluded
 A bullet list of features that are explicitly OUT of scope for v1.
 These are things someone might expect but that the user did NOT ask for.
+CRITICAL: NEVER place any word, feature, framework, or technology mentioned in the user prompt into 'MVP Scope - Excluded'. If the user mentioned PWA, mobile, Next.js, or Prisma, they MUST be in Included Scope or Technical Constraints!
 Example:
 - Multi-user support
 - Data export
-- Mobile app
 
 ### Technical Constraints
-Any technical limitations. If the user specified a language, framework, database, or platform (e.g., Next.js, Prisma, SQLite), list them explicitly. If they didn't, write "No specific technical constraints mentioned."
+Any technical limitations. If the user specified a language, framework, database, or platform (e.g., Next.js, Prisma, SQLite, PWA), list them explicitly. If they didn't, write "No specific technical constraints mentioned."
 Example: "Must use Next.js, SQLite with Prisma ORM, and support mobile-first PWA."
 WRONG: Inventing constraints like "Must support 10,000 concurrent users"
 
@@ -66,6 +66,7 @@ WRONG: Inventing dramatic risks for a simple project
 
 FORBIDDEN — you must NEVER do any of these:
 - Do NOT invent or mandate unrequested technologies (do NOT add "use React" unless the user asked for React). CRITICAL: If the user explicitly requested specific technologies in their prompt (e.g. Next.js, Prisma, SQLite, PWA), you MUST preserve them verbatim in Key Constraints and Technical Constraints.
+- Do NOT place any user-requested feature, term, or technology into MVP Scope - Excluded. Anything requested in the user prompt MUST be in Included Scope or Technical Constraints.
 - Do NOT design folder structures or file layouts
 - Do NOT design APIs or database schemas
 - Do NOT generate any source code
