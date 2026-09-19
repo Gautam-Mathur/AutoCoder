@@ -1,6 +1,6 @@
-import { StageLedger } from '../memory';
+import { StageLedger } from "../memory";
 
-export const name = 'Planner';
+export const name = "Planner";
 export const temperature = 0.3;
 export const maxTokens = 2048;
 
@@ -69,29 +69,17 @@ WRONG examples:
 - "Use REST API for data" ← this is implementation, not a requirement
 - "Support 1000 users" ← don't invent scale requirements the user didn't ask for
 
-### Non-Functional Requirements
-A bullet list. ONLY include requirements that are relevant to what the user asked for. If the user asked for a simple HTML calculator, do NOT invent requirements about "scalability to 10,000 users" or "99.9% uptime".
-
-Categories (include only the ones that apply):
-- **Performance**: e.g., "Page should load in under 2 seconds"
-- **Security**: e.g., "User passwords must be hashed" (ONLY if auth exists)
-- **Accessibility**: e.g., "All buttons must be keyboard-navigable"
-- **Compatibility**: e.g., "Must work in Chrome, Firefox, and Safari"
-
-If the project is simple and no non-functional requirements are needed, write:
-"No specific non-functional requirements for this project scope."
-
 ### Acceptance Criteria
 For each feature listed in ### Features, write 1-3 testable criteria that define "done".
 
 Format:
 - **[Feature Name]**: [Criterion that can be verified by looking at the running app]
-
-Example:
-- **Basic Arithmetic**: Clicking 2, +, 3, = displays "5" on screen
-- **Basic Arithmetic**: Clicking 1, 0, /, 2, = displays "5" on screen
-- **Display**: As user clicks number buttons, digits appear on the display in real-time
-- **Clear Function**: After performing a calculation, clicking C resets the display to "0"
+- **[requirement_id]**: [identifier of the functional requirement this acceptance criteria belongs to]
+- **[preconditions]**: [any preconditions that need to be met before the action can be performed]
+- **[action]**: [the action that needs to be performed]
+- **[expected_result]**: [the expected result of the action]
+- **[negative_cases]**: [list of negative test cases]
+- **[verification_method]**: [method of verification]
 
 === ABSOLUTE RULES ===
 
@@ -108,35 +96,35 @@ FORBIDDEN — you must NEVER do any of these:
 - Do NOT write any text before "### Context Snapshot" or after the last acceptance criterion
 - Do NOT use phrases like "Based on the specification..." or "Here are the requirements:"
 
-REMEMBER: You describe WHAT the software does from a user's perspective. You NEVER describe HOW it's built. If you find yourself writing words like "React", "Express", "API", "database", "server", "endpoint", "schema", "component", "module", or "folder" — STOP. You are crossing into Architect/System/Designer territory.
+REMEMBER: You describe WHAT the software does from a user's perspective. You NEVER describe HOW it's built. 
 
 Your output is ONLY the document. Start with "### Context Snapshot", end after the last acceptance criterion.`;
 
-export const schema = {
-  type: 'object',
-  properties: {
-    content: { type: 'string' },
-    requirements: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          title: { type: 'string' },
-          category: { type: 'string' },
-          description: { type: 'string' },
-          priority: { type: 'string' },
-          acceptanceCriteria: {
-            type: 'array',
-            items: { type: 'string' },
-          },
-        },
-        required: ['id', 'title', 'category', 'description', 'priority'],
-      },
-    },
-  },
-  required: ['content'],
-};
+// export const schema = {
+//   type: 'object',
+//   properties: {
+//     content: { type: 'string' },
+//     requirements: {
+//       type: 'array',
+//       items: {
+//         type: 'object',
+//         properties: {
+//           id: { type: 'string' },
+//           title: { type: 'string' },
+//           category: { type: 'string' },
+//           description: { type: 'string' },
+//           priority: { type: 'string' },
+//           acceptanceCriteria: {
+//             type: 'array',
+//             items: { type: 'string' },
+//           },
+//         },
+//         required: ['id', 'title', 'category', 'description', 'priority'],
+//       },
+//     },
+//   },
+//   required: ['content'],
+// };
 
 export async function getContext(): Promise<string> {
   return "";

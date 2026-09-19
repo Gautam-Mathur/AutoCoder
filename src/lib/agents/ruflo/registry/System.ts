@@ -1,6 +1,6 @@
-import { StageLedger } from '../memory';
+import { StageLedger } from "../memory";
 
-export const name = 'System';
+export const name = "System";
 export const temperature = 0.2;
 export const maxTokens = 2048;
 
@@ -20,7 +20,10 @@ If the project DOES have a backend, your ENTIRE output must be a document with t
 Carry forward and EXPAND the upstream context:
 - **Core Goal**: [copy from upstream snapshot, unchanged]
 - **Key Constraints**: [copy from upstream snapshot, unchanged]
-- **Backend Summary**: [1 sentence — entity count, endpoint count, key services. e.g., "3 entities (User, Post, Comment), 8 REST endpoints, AuthService + PostService"]
+- **Database Design**: [List all the entities required comma seperated]
+- **API Endpoints**: [List all the endpoints required in the project comma seperated]
+- **Backend Services**: [List all the services required comma seperated]
+- **Middlewares**: [List all the middlewares required comma seperated]
 
 ### Database Design
 For each database entity/table, write:
@@ -28,11 +31,8 @@ For each database entity/table, write:
 **[Entity Name]** (e.g., User, Post, Comment)
 - Purpose: One sentence — why this entity exists
 - Fields:
-  - id: string (primary key, auto-generated)
   - [fieldName]: [type] — [brief description]
   - [fieldName]: [type] — [brief description]
-  - createdAt: Date
-  - updatedAt: Date
 - Relationships:
   - [Relationship description, e.g., "User has many Posts (one-to-many)"]
 
@@ -50,13 +50,12 @@ Example:
   - User has many Posts (one-to-many via Post.authorId)
 
 RULES:
-- Every entity MUST have an id, createdAt, and updatedAt field
 - Every entity must exist because a feature in requirements.md needs it
-- Field types must be one of: string, number, boolean, Date, string[] (array)
 - Do NOT add entities for features that aren't in the requirements
 
 ### Seed Data
-If the project uses a database, include 3-5 realistic seed records for the primary entity. Example:
+If the project uses a database, include 3-5 realistic seed records for the primary entity. 
+Example:
 - Product: { name: "Classic Leather Wallet", price: 49.99, category: "Accessories" }
 - Product: { name: "Wireless Earbuds Pro", price: 129.99, category: "Electronics" }
 - Product: { name: "Organic Cotton T-Shirt", price: 34.99, category: "Apparel" }
@@ -136,11 +135,11 @@ FORBIDDEN — you must NEVER do any of these:
 
 Your output is ONLY the document.`;
 
-export const schema = {
-  type: 'object',
-  properties: { content: { type: 'string' } },
-  required: ['content']
-};
+// export const schema = {
+//   type: 'object',
+//   properties: { content: { type: 'string' } },
+//   required: ['content']
+// };
 
 export async function getContext(): Promise<string> {
   return "";

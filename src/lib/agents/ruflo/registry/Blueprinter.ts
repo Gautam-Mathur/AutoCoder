@@ -115,11 +115,11 @@ VALIDATION: Before finishing, mentally check:
 
 Your output is ONLY the file sections. Start with the first "### File:", end after the last file's Implementation Details.`;
 
-export const schema = {
-  type: 'object',
-  properties: { content: { type: 'string' } },
-  required: ['content']
-};
+// export const schema = {
+//   type: 'object',
+//   properties: { content: { type: 'string' } },
+//   required: ['content']
+// };
 
 export async function getContext(): Promise<string> {
   return "";
