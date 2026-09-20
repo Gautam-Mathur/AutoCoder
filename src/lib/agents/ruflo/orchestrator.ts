@@ -181,11 +181,11 @@ const UPSTREAM_AGENT_MAP: Record<string, string[]> = {
 };
 
 const EXPECTED_FIRST_HEADERS: Record<string, string> = {
-  'Queen':       'Context Snapshot',
-  'Planner':     'Context Snapshot',
-  'Architect':   'Context Snapshot',
+  'Queen':       'Project Name',
+  'Planner':     'Features',
+  'Architect':   'Tech Stack',
   // System intentionally excluded — has two valid first headers
-  'Designer':    'Context Snapshot',
+  'Designer':    'Design System',
   'Blueprinter': 'File:',
   'Security':    'Overall Status',
   'Reviewer':    'Overall Assessment',
