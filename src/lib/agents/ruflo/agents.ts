@@ -15,7 +15,7 @@ export interface AgentDef {
   temperature: number;
   maxTokens: number;
   systemPrompt: string;
-  schema: any;
+  schema?: any;
   getContext?: (ledger: any, targetFile?: string) => Promise<string>;
   tools: string[];
   model?: string;
