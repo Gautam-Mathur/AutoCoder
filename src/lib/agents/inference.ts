@@ -1,19 +1,31 @@
 import { prisma } from '../db';
 
-// Ensure localhost bypasses any system proxies so Ollama connections aren't intercepted
-process.env.no_proxy = process.env.no_proxy ? `${process.env.no_proxy},localhost,127.0.0.1,::1` : 'localhost,127.0.0.1,::1';
-process.env.NO_PROXY = process.env.no_proxy;
+// Ensure localhost bypasses any system proxies so Ollama connections aren't intercepted by environment proxies
+delete process.env.HTTP_PROXY;
+delete process.env.http_proxy;
+delete process.env.HTTPS_PROXY;
+delete process.env.https_proxy;
+process.env.no_proxy = '*';
+process.env.NO_PROXY = '*';
 
 const undici = typeof window === 'undefined' ? require('undici') : null;
 const undiciAgent = undici ? undici.Agent : null;
 const undiciFetch = undici ? undici.fetch : fetch;
 
+// Direct unproxied dispatcher specifically for local loopback connections
+export const directAgent = undiciAgent ? new undiciAgent({
+  connect: { timeout: 5000 },
+}) : null;
+
 // Reusable Undici Agent with a 400-hour timeout (1,440,000,000 ms, cached globally)
 const globalForAgent = global as unknown as { ollamaAgent: any };
 const longTimeoutDispatcher = globalForAgent.ollamaAgent ?? (undiciAgent ? new undiciAgent({
+  connect: { timeout: 1440000000 },
+  connectTimeout: 1440000000,   // 400 hours connect timeout
   headersTimeout: 1440000000,   // 400 hours in ms
   bodyTimeout: 1440000000,      // 400 hours in ms
   keepAliveTimeout: 1440000000, // 400 hours in ms
+  keepAliveMaxTimeout: 1440000000,
 }) : null);
 if (process.env.NODE_ENV !== 'production' && typeof window === 'undefined') {
   globalForAgent.ollamaAgent = longTimeoutDispatcher;
@@ -62,17 +74,20 @@ export async function getLLMConfig() {
 
   // Model fallback check: verify if the configured model is installed
   if (config.provider === 'ollama') {
-    const hostsToTry = [config.ollamaHost];
-    if (config.ollamaHost.includes('localhost')) {
-      hostsToTry.push(config.ollamaHost.replace('localhost', '127.0.0.1'));
-    }
+    const hostsToTry = Array.from(new Set([
+      config.ollamaHost,
+      'http://127.0.0.1:11434',
+      'http://localhost:11434',
+      'http://0.0.0.0:11434',
+    ]));
 
     for (const h of hostsToTry) {
       try {
-        const res = await fetch(`${h}/api/tags`, {
+        const res = await undiciFetch(`${h}/api/tags`, {
           method: 'GET',
           cache: 'no-store',
-          signal: AbortSignal.timeout(2000),
+          signal: AbortSignal.timeout(3000),
+          ...(longTimeoutDispatcher ? { dispatcher: longTimeoutDispatcher } : {} as any),
         });
         if (res.ok) {
           config.ollamaHost = h;
@@ -96,19 +111,27 @@ export async function getLLMConfig() {
 }
 
 export async function checkOllamaConnection(host: string): Promise<boolean> {
-  const hostsToTry = [host];
-  if (host.includes('localhost')) {
-    hostsToTry.push(host.replace('localhost', '127.0.0.1'));
-  } else if (host.includes('127.0.0.1')) {
-    hostsToTry.push(host.replace('127.0.0.1', 'localhost'));
-  }
+  delete process.env.HTTP_PROXY;
+  delete process.env.http_proxy;
+  delete process.env.HTTPS_PROXY;
+  delete process.env.https_proxy;
+  process.env.no_proxy = '*';
+  process.env.NO_PROXY = '*';
+
+  const hostsToTry = Array.from(new Set([
+    host,
+    'http://127.0.0.1:11434',
+    'http://localhost:11434',
+    'http://0.0.0.0:11434',
+  ]));
 
   for (const h of hostsToTry) {
     try {
-      const res = await fetch(`${h}/api/tags`, {
+      const res = await undiciFetch(`${h}/api/tags`, {
         method: 'GET',
         cache: 'no-store',
-        signal: AbortSignal.timeout(5000), // 5 second timeout
+        signal: AbortSignal.timeout(5000),
+        ...(directAgent ? { dispatcher: directAgent } : {} as any),
       });
       if (res.ok) return true;
     } catch (e) {
@@ -128,6 +151,14 @@ export async function runInference(
   messages: Message[],
   options: InferenceOptions = {}
 ): Promise<string> {
+  // Ensure loopback bypasses any system environment proxies
+  delete process.env.HTTP_PROXY;
+  delete process.env.http_proxy;
+  delete process.env.HTTPS_PROXY;
+  delete process.env.https_proxy;
+  process.env.no_proxy = '*';
+  process.env.NO_PROXY = '*';
+
   if (process.env.MOCK_INFERENCE === 'true') {
     const sysPrompt = messages.find(m => m.role === 'system')?.content || '';
     if (sysPrompt.includes('You are the Queen Agent')) {
@@ -543,15 +574,32 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
       payload.format = 'json';
     }
 
-    const res = await undiciFetch(`${host}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      cache: 'no-store',
-      body: JSON.stringify(payload),
-      signal: combinedSignal,
-      // Pass the custom dispatcher with extended timeouts using type-casting
-      ...(longTimeoutDispatcher ? { dispatcher: longTimeoutDispatcher } : {} as any),
-    });
+    let res: any;
+    try {
+      res = await undiciFetch(`${host}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        body: JSON.stringify(payload),
+        signal: combinedSignal,
+        ...(longTimeoutDispatcher ? { dispatcher: longTimeoutDispatcher } : {} as any),
+      });
+    } catch (fetchErr: any) {
+      if (fetchErr.message?.includes('fetch failed')) {
+        console.warn('[Inference] Transient fetch error, retrying Ollama request in 1.5s...');
+        await new Promise(r => setTimeout(r, 1500));
+        res = await undiciFetch(`${host}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          cache: 'no-store',
+          body: JSON.stringify(payload),
+          signal: combinedSignal,
+          ...(longTimeoutDispatcher ? { dispatcher: longTimeoutDispatcher } : {} as any),
+        });
+      } else {
+        throw fetchErr;
+      }
+    }
 
     if (!res.ok) {
       const errText = await res.text();

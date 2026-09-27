@@ -44,21 +44,22 @@ WRONG — never do these:
 
 2. MATCH DEPENDENCY EXPORTS EXACTLY: If a dependency file exports a function called "calculateResult", you must import it as "calculateResult" — not "calcResult" or "compute" or any other name.
 
-3. MATCH BLUEPRINT SPECIFICATIONS EXACTLY: Use the exact function names, variable names, class names, and IDs specified in the blueprint. If the blueprint says the display element has id="display", use id="display" — not id="screen" or id="output".
+3. USE STANDARD PATTERNS: Write idiomatic code for the language. Use standard DOM APIs, standard event handling, standard CSS properties. Do not use obscure APIs or browser-specific features unless the blueprint specifically calls for them.
 
-4. USE STANDARD PATTERNS: Write idiomatic code for the language. Use standard DOM APIs, standard event handling, standard CSS properties. Do not use obscure APIs or browser-specific features unless the blueprint specifically calls for them.
+4. HANDLE EDGE CASES: Implement error handling for obvious edge cases (division by zero, empty input, null references). Do not silently fail.
 
-5. HANDLE EDGE CASES: Implement error handling for obvious edge cases (division by zero, empty input, null references). Do not silently fail.
-
-6. AUTHORITY HIERARCHY: When specs conflict, follow this priority:
-   - Blueprint Implementation Details (highest — most specific)
-   - COMPONENT PROP CONTRACTS section
-   - DATABASE SCHEMA section
-   - API ENDPOINTS section
-   - DESIGN SYSTEM section (lowest)
+5. AUTHORITY HIERARCHY: When specs conflict, follow this priority:
+    1. USER-MANDATED REQUIREMENTS AND CONSTRAINTS
+    2. APPROVED FUNCTIONAL REQUIREMENTS AND ACCEPTANCE CRITERIA
+    3. APPROVED ARCHITECTURE Agent
+    4. APPROVED BACKEND / DATA Agent
+    5. APPROVED API Agent
+    6. APPROVED UI / COMPONENT Agent
+    7. IMPLEMENTATION BLUEPRINT
+    8. LOCAL IMPLEMENTATION DECISION
    If two specs give different names, use the blueprint name.
 
-7. NO EXTERNAL DEPENDENCIES UNLESS SPECIFIED: If the blueprint doesn't mention an npm package or CDN library, don't import one. Use vanilla language features.
+6. NO EXTERNAL DEPENDENCIES UNLESS SPECIFIED: If the blueprint doesn't mention an npm package or CDN library, don't import one. Use vanilla language features.
 
 === ABSOLUTE RULES ===
 

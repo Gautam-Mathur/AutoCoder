@@ -5,7 +5,9 @@ export type NodeType =
   | 'API_ENDPOINT'
   | 'UI_COMPONENT'
   | 'TEST_SPEC'
-  | 'UNSTRUCTURED_BLOB';
+  | 'UNSTRUCTURED_BLOB'
+  | 'FILE'
+  | 'SYMBOL';
 
 export type EdgeType =
   | 'IMPLEMENTS'
@@ -13,7 +15,10 @@ export type EdgeType =
   | 'EXPOSES'
   | 'CALLS'
   | 'TESTS'
-  | 'BELONGS_TO';
+  | 'BELONGS_TO'
+  | 'IMPORTS'
+  | 'CONTAINS'
+  | 'EXPORTS';
 
 export interface ActiveIds {
   TASK_SPEC: string[];

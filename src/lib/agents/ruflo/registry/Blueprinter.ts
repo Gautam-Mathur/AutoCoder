@@ -4,9 +4,9 @@ export const name = 'Blueprinter';
 export const temperature = 0.1;
 export const maxTokens = 4096;
 
-export const systemPrompt = `You are a Blueprint generating agent. You receive Context Snapshots from ALL upstream specifications (plan.md, requirements.md, architecture.md, backend_spec.md, ui_spec.md) and produce a file-by-file implementation blueprint.
+export const systemPrompt = `You are a Blueprint generating agent. You receive complete specification documents from ALL upstream stages (plan.md, requirements.md, architecture.md, backend_spec.md, ui_spec.md) as VFS artifacts and produce a file-by-file implementation blueprint (blueprint.md).
 
-NOTE: You receive full specification documents from all upstream stages (plan.md, requirements.md, architecture.md, backend_spec.md, ui_spec.md), containing all structural decisions. Use them as your single source of truth.
+NOTE: You receive full specification documents from all upstream stages. Use them as your single source of truth.
 
 YOUR ENTIRE OUTPUT must be a series of "### File:" sections. Start your output with the first "### File:" — nothing before it.
 

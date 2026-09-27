@@ -1,29 +1,42 @@
 import { NextResponse } from 'next/server';
-import { getLLMConfig, checkOllamaConnection } from '@/lib/agents/inference';
+import { getLLMConfig, directAgent } from '@/lib/agents/inference';
 import { prisma } from '@/lib/db';
+
+const undici = typeof window === 'undefined' ? require('undici') : null;
+const undiciFetch = undici ? undici.fetch : fetch;
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export async function GET() {
+  delete process.env.HTTP_PROXY;
+  delete process.env.http_proxy;
+  delete process.env.HTTPS_PROXY;
+  delete process.env.https_proxy;
+  process.env.NO_PROXY = '*';
+  process.env.no_proxy = '*';
+
   const config = await getLLMConfig();
-  const host = config.ollamaHost || 'http://localhost:11434';
+  const host = config.ollamaHost || 'http://127.0.0.1:11434';
   
   let connected = false;
   let models: string[] = [];
 
   try {
-    const urlsToTry = [host];
-    if (host.includes('localhost')) {
-      urlsToTry.push(host.replace('localhost', '127.0.0.1'));
-    }
+    const urlsToTry = Array.from(new Set([
+      host,
+      'http://127.0.0.1:11434',
+      'http://localhost:11434',
+      'http://0.0.0.0:11434',
+    ]));
 
     for (const targetHost of urlsToTry) {
       try {
-        const res = await fetch(`${targetHost}/api/tags`, {
+        const res = await undiciFetch(`${targetHost}/api/tags`, {
           method: 'GET',
           cache: 'no-store',
           signal: AbortSignal.timeout(3000),
+          ...(directAgent ? { dispatcher: directAgent } : {} as any),
         });
         if (res.ok) {
           connected = true;

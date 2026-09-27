@@ -3,13 +3,14 @@ import { prisma } from '../../db';
 import { runInference, getLLMConfig, startOllamaKeepAlive, stopOllamaKeepAlive, cleanJsonResponse } from '../inference';
 import { writeAgentOutput, queryAgentOutput } from '../sml';
 import { AGENT_DEFS, AgentDef } from './agents';
-import { loadExecutiveMemory, saveExecutiveMemory, writeExecutiveMemoryRecord, OWNERSHIP, StageLedger } from './memory';
+import { loadExecutiveMemory, writeExecutiveMemoryRecord, OWNERSHIP, StageLedger } from './memory';
 import { calculateTokenBudget } from './token-budgeter';
 import fs from 'fs';
 import path from 'path';
 import { exec } from 'child_process';
 import { writeVirtualFile, readVirtualFile, listVirtualFiles, applyDiff, flushVfsToDisk, safeWriteFileSync } from './vfs';
 import { runLinter, runCrossFileImportCheck } from './linter';
+import { buildAndPersistStructuralGraph, detectAndPersistArchitectureDrift } from './structural-graph';
 
 // Global Event Emitter for decoupling browser SSE streams from background Node pipeline compilation
 export const pipelineEvents = new EventEmitter();
@@ -169,15 +170,18 @@ const VFS_OUTPUT_MAP: Record<string, string> = {
   'Reviewer':    'review_report.md',
 };
 
-const UPSTREAM_AGENT_MAP: Record<string, string[]> = {
-  'Queen':       [],
-  'Planner':     ['Queen'],
-  'Architect':   ['Queen', 'Planner'],
-  'System':      ['Queen', 'Planner', 'Architect'],
-  'Designer':    ['Queen', 'Planner', 'Architect'],
-  'Blueprinter': [],  // Handler provides full VFS context directly — no upstream map needed
-  'Security':    ['Queen'],
-  'Reviewer':    ['Queen', 'Planner', 'Architect'],
+// ─── Deterministic Artifact Dependency Registry ─────────────────────────────
+// Each stage declares which VFS Markdown artifacts it requires as input context.
+// This replaces the old UPSTREAM_AGENT_MAP + Context Snapshot system.
+const STAGE_ARTIFACT_DEPS: Record<string, string[]> = {
+  'Queen':       [],                                                          // Receives only user prompt
+  'Planner':     ['plan.md'],                                                 // Reads Queen output
+  'Architect':   ['plan.md', 'requirements.md'],                              // Reads Queen + Planner
+  'System':      ['plan.md', 'requirements.md', 'architecture.md'],           // Reads Queen + Planner + Architect
+  'Designer':    ['plan.md', 'requirements.md', 'architecture.md', 'backend_spec.md'],
+  'Blueprinter': ['plan.md', 'requirements.md', 'architecture.md', 'backend_spec.md', 'ui_spec.md'],
+  'Security':    ['requirements.md', 'architecture.md', 'backend_spec.md'],
+  'Reviewer':    ['plan.md', 'requirements.md', 'architecture.md', 'backend_spec.md', 'ui_spec.md', 'blueprint.md'],
 };
 
 const EXPECTED_FIRST_HEADERS: Record<string, string> = {
@@ -192,18 +196,7 @@ const EXPECTED_FIRST_HEADERS: Record<string, string> = {
   // Coder intentionally excluded — outputs raw code
 };
 
-const MAX_SNAPSHOT_CHARS = 2000;
-
-function truncateAtBullet(text: string, maxChars: number): string {
-  if (text.length <= maxChars) return text;
-  const lines = text.split('\n');
-  let result = '';
-  for (const line of lines) {
-    if ((result + '\n' + line).length > maxChars) break;
-    result += (result ? '\n' : '') + line;
-  }
-  return result + '\n...[SNAPSHOT TRUNCATED]';
-}
+// MAX_SNAPSHOT_CHARS and truncateAtBullet removed — full artifacts are now passed directly
 
 /**
  * Extracts a markdown section by name, capturing all content until the next
@@ -228,140 +221,34 @@ function extractMdSection(content: string, sectionName: string): string {
   return content.substring(startIdx).trim();
 }
 
-// ─── Snapshot Extraction & Context Assembly ──────────────────────────────────
+// ─── Artifact Context Resolver (Replaces Snapshot System) ────────────────────
+// Reads full VFS Markdown artifacts for each stage based on STAGE_ARTIFACT_DEPS.
+// No truncation, no snapshot extraction, no typed DB override.
 
-export async function extractSnapshot(conversationId: string, vfsPath: string): Promise<string> {
-  const fullContent = (await readVirtualFile(conversationId, vfsPath)) || '';
-  if (!fullContent) return '';
-
-  // Tier 1: Extract using heading-aware parser
-  const snapshotSection = extractMdSection(fullContent, 'Context Snapshot');
-  if (snapshotSection) {
-    return truncateAtBullet(snapshotSection, MAX_SNAPSHOT_CHARS);
-  }
-
-  // Tier 2: Fuzzy match
-  const fuzzy = fullContent.match(/(#+)?\s*(context|snapshot|summary|overview)[\s\S]*?(?=\n#{1,4}\s[^#]|$)/i);
-  if (fuzzy) {
-    let snapshotText = fuzzy[0].trim();
-    return truncateAtBullet(snapshotText, MAX_SNAPSHOT_CHARS);
-  }
-
-  // Tier 3: Synthetic fallback (first line of top 3 headers)
-  const headers = fullContent.match(/^### .+$/gm) || [];
-  const synthetic = headers.slice(0, 3).map(h => {
-    const idx = fullContent.indexOf(h) + h.length;
-    const nextLine = fullContent.substring(idx).trim().split('\n')[0];
-    return `- ${h.replace('### ', '')}: ${nextLine}`;
-  }).join('\n');
-
-  if (synthetic) {
-    return `### Context Snapshot (AUTO-GENERATED)\n${synthetic}`;
-  }
-
-  // Final fallback: Truncated content
-  return fullContent.substring(0, 800) + (fullContent.length > 800 ? '\n...[TRUNCATED]' : '');
-}
-
-function extractSnapshotFromContent(content: string): string {
-  if (!content) return '';
-  const snapshotSection = extractMdSection(content, 'Context Snapshot');
-  if (snapshotSection) {
-    return truncateAtBullet(snapshotSection, MAX_SNAPSHOT_CHARS);
-  }
-  const fuzzy = content.match(/(#+)?\s*(context|snapshot|summary|overview)[\s\S]*?(?=\n#{1,4}\s[^#]|$)/i);
-  if (fuzzy) {
-    let snapshotText = fuzzy[0].trim();
-    return truncateAtBullet(snapshotText, MAX_SNAPSHOT_CHARS);
-  }
-  return content.substring(0, 800) + (content.length > 800 ? '\n...[TRUNCATED]' : '');
-}
-
-async function getTypedStageContext(conversationId: string, agentName: string): Promise<string | null> {
-  try {
-    if (agentName === 'Queen') {
-      const q = await prisma.queenStageOutput.findUnique({ where: { conversationId } });
-      if (q) return `=== ORIGINAL USER INTENT ===\nProject: ${q.projectName}\nGoal: ${q.goal || q.summary || ''}\nProblem: ${q.problemStatement || ''}`;
-    } else if (agentName === 'Planner') {
-      const p = await prisma.plannerStageOutput.findUnique({ where: { conversationId } });
-      if (p) return `--- [FROM Planner] ---\nFeatures: ${p.features || ''}\nRequirements: ${p.functionalRequirements || ''}`;
-    } else if (agentName === 'Architect') {
-      const a = await prisma.architectStageOutput.findUnique({ where: { conversationId } });
-      if (a) return `--- [FROM Architect] ---\nStyle: ${a.architectureStyle || ''}\nStructure: ${a.projectStructure || ''}`;
-    } else if (agentName === 'System') {
-      const s = await prisma.systemStageOutput.findUnique({ where: { conversationId } });
-      if (s) return `--- [FROM System] ---\nDB: ${s.databaseType || ''}\nAPIs: ${s.apis || ''}`;
-    }
-  } catch (e) {}
-  return null;
-}
-
-export async function buildStageContext(
+export async function buildArtifactContext(
   conversationId: string,
-  stage: string
-): Promise<{ context: string; consumedInferenceIds: string[] }> {
-  const upstreamAgents = UPSTREAM_AGENT_MAP[stage] ?? [];
-  if (upstreamAgents.length === 0) return { context: '', consumedInferenceIds: [] };
-
-  const rows = await prisma.executiveMemory.findMany({
-    where: {
-      conversationId,
-      agentName: { in: upstreamAgents },
-      status: 'ACTIVE',
-    },
-    orderBy: { sequence: 'desc' },
-    select: { agentName: true, contentMd: true, inferenceId: true },
-  });
-
-  const seen = new Set<string>();
-  const latestPerAgent: { agentName: string; contentMd: string; inferenceId: string }[] = [];
-  for (const row of rows) {
-    if (!seen.has(row.agentName)) {
-      seen.add(row.agentName);
-      latestPerAgent.push(row);
-    }
-  }
+  agentName: string
+): Promise<string> {
+  const requiredArtifacts = STAGE_ARTIFACT_DEPS[agentName] ?? [];
+  if (requiredArtifacts.length === 0) return '';
 
   let context = '';
-  const consumedInferenceIds: string[] = [];
+  const missing: string[] = [];
 
-  for (const agentName of upstreamAgents) {
-    // Tier 0: Attempt to read structured typed context from dedicated DB tables first
-    const typedContext = await getTypedStageContext(conversationId, agentName);
-    if (typedContext) {
-      context += `${typedContext}\n\n`;
-      continue;
+  for (const artifactPath of requiredArtifacts) {
+    const content = await readVirtualFile(conversationId, artifactPath);
+    if (content && content.trim()) {
+      context += `=== ARTIFACT: ${artifactPath} ===\n${content.trim()}\n=== END ARTIFACT: ${artifactPath} ===\n\n`;
+    } else {
+      missing.push(artifactPath);
     }
-
-    // Tier 1: Fallback to reading executive memory markdown snapshot
-    const row = latestPerAgent.find(r => r.agentName === agentName);
-    if (!row) continue;
-    const snapshot = extractSnapshotFromContent(row.contentMd);
-    if (!snapshot) continue;
-    const label = agentName === 'Queen'
-      ? '=== ORIGINAL USER INTENT (DO NOT OVERRIDE) ==='
-      : `--- [FROM ${agentName} / ${row.inferenceId}] ---`;
-    context += `${label}\n${snapshot}\n\n`;
-    consumedInferenceIds.push(row.inferenceId);
   }
 
-  return { context: context.trim(), consumedInferenceIds };
-}
-
-// ─── Post-Hoc Snapshot Consistency Check ────────────────────────────────────
-
-const TECH_KEYWORDS = ['react', 'vue', 'angular', 'express', 'next', 'vite', 'postgresql', 'sqlite', 'mongodb', 'mysql', 'firebase', 'typescript'];
-
-export function validateSnapshotConsistency(snapshot: string, fullBody: string): boolean {
-  const snapshotTerms = TECH_KEYWORDS.filter(kw => snapshot.toLowerCase().includes(kw));
-  const bodyTerms = TECH_KEYWORDS.filter(kw => fullBody.toLowerCase().includes(kw));
-
-  const missing = bodyTerms.filter(t => !snapshotTerms.includes(t));
   if (missing.length > 0) {
-    console.warn(`[WARN] Snapshot missing tech terms found in body: ${missing.join(', ')}`);
-    return false;
+    console.warn(`[buildArtifactContext] Agent "${agentName}" missing required artifacts: ${missing.join(', ')}`);
   }
-  return true;
+
+  return context.trim();
 }
 
 // ─── Header Anchoring & Sanitization ─────────────────────────────────────────
@@ -644,6 +531,8 @@ export function parseBlueprintFiles(blueprintText: string): BlueprintFileSection
   const sections: BlueprintFileSection[] = [];
   const fileBlocks = blueprintText.split(/###\s*File:\s*/i).slice(1);
 
+  const seenFileMap = new Map<string, number>();
+
   for (const block of fileBlocks) {
     const lines = block.trim().split('\n');
     let rawFile = lines[0].trim();
@@ -660,6 +549,8 @@ export function parseBlueprintFiles(blueprintText: string): BlueprintFileSection
 
     if (!file || rawFile.trim().endsWith('/') || rawFile.trim().endsWith('/`')) continue;
 
+    const normKey = file.toLowerCase();
+
     const rawSection = '### File: ' + block.trim();
     const purposeMatch = block.match(/\*\*Purpose\*\*:\s*(.+)/i);
     const depsMatch = block.match(/\*\*Dependencies\*\*:\s*(.+)/i);
@@ -673,6 +564,19 @@ export function parseBlueprintFiles(blueprintText: string): BlueprintFileSection
     const exportsRaw = exportsMatch ? exportsMatch[1].trim() : 'None';
     const exportsList = exportsRaw.toLowerCase() === 'none' ? [] : exportsRaw.split(',').map(e => e.trim()).filter(Boolean);
 
+    // If file section was already parsed, merge dependencies and skip adding duplicate section
+    if (seenFileMap.has(normKey)) {
+      const existingIdx = seenFileMap.get(normKey)!;
+      const existing = sections[existingIdx];
+      for (const d of dependencies) {
+        if (!existing.dependencies.includes(d)) {
+          existing.dependencies.push(d);
+        }
+      }
+      continue;
+    }
+
+    seenFileMap.set(normKey, sections.length);
     sections.push({
       file,
       purpose,
@@ -727,6 +631,100 @@ export function validateBlueprintImports(sections: BlueprintFileSection[]): stri
     }
   }
   return warnings;
+}
+
+export interface BlueprintGraphValidation {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  order: string[];
+}
+
+/**
+ * Validates blueprint file graph for duplicates, missing dependencies, cycles, and computes topological ordering.
+ */
+export function validateBlueprintGraph(sections: BlueprintFileSection[]): BlueprintGraphValidation {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const fileMap = new Map<string, BlueprintFileSection>();
+  const normalizedFileSet = new Set<string>();
+
+  // 1. Check duplicate files
+  for (const s of sections) {
+    const norm = s.file.replace(/\\/g, '/').replace(/^[/\\]+/, '').toLowerCase();
+    if (normalizedFileSet.has(norm)) {
+      errors.push(`Duplicate file section in blueprint: "${s.file}"`);
+    } else {
+      normalizedFileSet.add(norm);
+      fileMap.set(norm, s);
+    }
+  }
+
+  // 2. Check missing declared dependencies
+  for (const s of sections) {
+    for (const dep of s.dependencies) {
+      if (!dep || dep === 'None') continue;
+      const normDep = dep.replace(/\\/g, '/').replace(/^[/\\]+/, '').toLowerCase();
+      if (!normalizedFileSet.has(normDep)) {
+        const hasExtVariation = Array.from(normalizedFileSet).some(
+          (f) => f === normDep || f === normDep + '.ts' || f === normDep + '.tsx' || f === normDep + '.js'
+        );
+        if (!hasExtVariation) {
+          warnings.push(`Blueprint file "${s.file}" lists dependency "${dep}" which is not defined in blueprint.`);
+        }
+      }
+    }
+  }
+
+  // 3. Dependency cycles & Topological sort (Kahn's Algorithm)
+  const inDegree = new Map<string, number>();
+  const graph = new Map<string, string[]>();
+
+  for (const normFile of normalizedFileSet) {
+    inDegree.set(normFile, 0);
+    graph.set(normFile, []);
+  }
+
+  for (const [normFile, section] of fileMap.entries()) {
+    for (const dep of section.dependencies) {
+      if (!dep || dep === 'None') continue;
+      const normDep = dep.replace(/\\/g, '/').replace(/^[/\\]+/, '').toLowerCase();
+      if (normalizedFileSet.has(normDep)) {
+        graph.get(normDep)!.push(normFile);
+        inDegree.set(normFile, (inDegree.get(normFile) || 0) + 1);
+      }
+    }
+  }
+
+  const queue: string[] = [];
+  for (const [node, deg] of inDegree.entries()) {
+    if (deg === 0) queue.push(node);
+  }
+
+  const order: string[] = [];
+  while (queue.length > 0) {
+    const curr = queue.shift()!;
+    const section = fileMap.get(curr);
+    if (section) order.push(section.file);
+
+    const neighbors = graph.get(curr) || [];
+    for (const n of neighbors) {
+      const newDeg = (inDegree.get(n) || 1) - 1;
+      inDegree.set(n, newDeg);
+      if (newDeg === 0) queue.push(n);
+    }
+  }
+
+  if (order.length < normalizedFileSet.size) {
+    errors.push(`Dependency cycle detected in blueprint file graph.`);
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+    order,
+  };
 }
 
 export function extractFilesFromArchitecture(archContent: string): string[] {
@@ -907,7 +905,7 @@ export async function runAgent(
 
   const startTime = Date.now();
   const config = await getLLMConfig();
-  const { context: upstreamContext, consumedInferenceIds } = await buildStageContext(conversationId, agentName);
+  const upstreamContext = await buildArtifactContext(conversationId, agentName);
 
   const constraintsBlock = `\n\nActive System Constraints:
 - Output MUST be valid structured markdown matching the exact header specifications.
@@ -1031,7 +1029,7 @@ export async function runAgent(
     attempt,
   });
 
-  // 1. Write to ExecutiveMemory ledger
+  // 1. Write to ExecutiveMemory ledger (historical record — not used for context)
   const inferenceId = await writeExecutiveMemoryRecord({
     conversationId,
     agentName,
@@ -1039,7 +1037,7 @@ export async function runAgent(
     filePath: targetFile,
     tokenCount: estimatedTokens,
     durationMs,
-    consumedInferenceIds,
+    consumedInferenceIds: [],
   });
 
   // 2. Synchronize in-flight ledger so subsequent stages in this run see fresh data
@@ -1186,7 +1184,7 @@ export async function runOrchestrator(
 
         let passed = 0;
         let failed = 0;
-        const testReportLines: string[] = ['### Context Snapshot', '- **Core Goal**: Code Verification & Linter Diagnostics', `- **Total Files Tested**: ${codeFiles.length}`, ''];
+        const testReportLines: string[] = ['### Test Report', `- **Total Files Tested**: ${codeFiles.length}`, ''];
 
         for (const file of codeFiles) {
           const lResult = await runLinter(conversationId, file);
@@ -1370,10 +1368,31 @@ export async function runOrchestrator(
           return;
         }
 
-        // Validate blueprint cross-references before generation
-        const bpWarnings = validateBlueprintImports(fileSections);
-        for (const bpw of bpWarnings) {
+        // Validate blueprint graph gate (blocking on errors)
+        const blueprintValidation = validateBlueprintGraph(fileSections);
+        for (const bpw of blueprintValidation.warnings) {
           emit({ type: 'AGENT_LOG', agent: 'Coder', message: `⚠️ ${bpw}` });
+        }
+
+        if (!blueprintValidation.valid) {
+          for (const bpe of blueprintValidation.errors) {
+            emit({ type: 'AGENT_LOG', agent: 'Coder', message: `❌ Blueprint Graph Error: ${bpe}` });
+          }
+          emit({
+            type: 'PIPELINE_ERROR',
+            message: `Blueprint graph validation failed: ${blueprintValidation.errors.join('; ')}`,
+          });
+          throw new Error('Blueprint graph validation failed. Coder execution aborted.');
+        }
+
+        // Apply topological ordering to Coder synthesis loop
+        if (blueprintValidation.order.length === fileSections.length) {
+          const fileOrderMap = new Map(blueprintValidation.order.map((f, i) => [f.toLowerCase(), i]));
+          fileSections.sort((a, b) => {
+            const idxA = fileOrderMap.get(a.file.toLowerCase()) ?? 0;
+            const idxB = fileOrderMap.get(b.file.toLowerCase()) ?? 0;
+            return idxA - idxB;
+          });
         }
 
         emit({
@@ -1527,6 +1546,23 @@ export async function runOrchestrator(
           }
         }
 
+        // Build structural graph and detect architecture drift post-Coder
+        try {
+          await buildAndPersistStructuralGraph(conversationId);
+          await detectAndPersistArchitectureDrift(conversationId, fileSections);
+          emit({
+            type: 'AGENT_LOG',
+            agent: 'Coder',
+            message: '📊 Structural graph extracted and architecture drift report generated.',
+          });
+        } catch (graphErr: any) {
+          emit({
+            type: 'AGENT_LOG',
+            agent: 'Coder',
+            message: `⚠️ Structural graph build warning: ${graphErr.message}`,
+          });
+        }
+
         emit({
           type: 'AGENT_COMPLETE',
           agent: 'Coder',
@@ -1547,15 +1583,10 @@ export async function runOrchestrator(
         const archContent = specContents['architecture.md'] || '';
         const targetFiles = extractFilesFromArchitecture(archContent);
 
-        // Build pruned spec context
+        // Full artifact context — no truncation, no snapshot extraction
         let prunedContext = '';
         for (const [name, content] of Object.entries(specContents)) {
-          const match = content.match(/### Context Snapshot([\s\S]*?)(###|$)/i);
-          if (match) {
-            prunedContext += `=== ${name.toUpperCase()} (SNAPSHOT) ===\n### Context Snapshot\n${match[1].trim()}\n\n`;
-          } else {
-            prunedContext += `=== ${name.toUpperCase()} (SUMMARY) ===\n${content.slice(0, 1200).trim()}\n\n`;
-          }
+          prunedContext += `=== ARTIFACT: ${name} ===\n${content.trim()}\n=== END ARTIFACT: ${name} ===\n\n`;
         }
 
         let finalBlueprintText = '';
@@ -1593,18 +1624,18 @@ export async function runOrchestrator(
           const batchOutputs = await Promise.all(batchPromises);
           const rawJoined = batchOutputs.join('\n\n');
 
-          // Parse generated sections and sort by dependency order
+          // Parse generated sections and sort by topological dependency order
           const parsedSections = parseBlueprintFiles(rawJoined);
           if (parsedSections.length > 0) {
-            // Sort: index.html or entry points first, then files with no deps, then others
-            parsedSections.sort((a, b) => {
-              if (a.file === 'index.html' || a.file === 'public/index.html') return -1;
-              if (b.file === 'index.html' || b.file === 'public/index.html') return 1;
-              if (a.dependencies.length === 0 && b.dependencies.length > 0) return -1;
-              if (b.dependencies.length === 0 && a.dependencies.length > 0) return 1;
-              return 0;
-            });
-
+            const bpVal = validateBlueprintGraph(parsedSections);
+            if (bpVal.order.length === parsedSections.length) {
+              const fileOrderMap = new Map(bpVal.order.map((f, i) => [f.toLowerCase(), i]));
+              parsedSections.sort((a, b) => {
+                const idxA = fileOrderMap.get(a.file.toLowerCase()) ?? 0;
+                const idxB = fileOrderMap.get(b.file.toLowerCase()) ?? 0;
+                return idxA - idxB;
+              });
+            }
             finalBlueprintText = parsedSections.map((s) => s.rawSection).join('\n\n');
           } else {
             // Fallback to raw output if parseBlueprintFiles returned empty
@@ -1625,6 +1656,29 @@ export async function runOrchestrator(
           }
           const bpOut = await runAgent(conversationId, 'Blueprinter', userPrompt, emit, ledger, 1, fullContext.trim(), executionSignal);
           finalBlueprintText = bpOut.content;
+        }
+
+        // Parse, validate, and topologically order final blueprint sections before persisting
+        const finalSections = parseBlueprintFiles(finalBlueprintText);
+        if (finalSections.length > 0) {
+          const bpVal = validateBlueprintGraph(finalSections);
+          for (const warn of bpVal.warnings) {
+            emit({ type: 'AGENT_LOG', agent: 'Blueprinter', message: `⚠️ ${warn}` });
+          }
+          if (!bpVal.valid) {
+            for (const err of bpVal.errors) {
+              emit({ type: 'AGENT_LOG', agent: 'Blueprinter', message: `❌ Blueprint Graph Error: ${err}` });
+            }
+          }
+          if (bpVal.order.length === finalSections.length) {
+            const fileOrderMap = new Map(bpVal.order.map((f, i) => [f.toLowerCase(), i]));
+            finalSections.sort((a, b) => {
+              const idxA = fileOrderMap.get(a.file.toLowerCase()) ?? 0;
+              const idxB = fileOrderMap.get(b.file.toLowerCase()) ?? 0;
+              return idxA - idxB;
+            });
+            finalBlueprintText = finalSections.map((s) => s.rawSection).join('\n\n');
+          }
         }
 
         // Save blueprint.md to VFS and flush to disk
@@ -1660,7 +1714,11 @@ export async function runOrchestrator(
             totalChars += fc.length;
           }
         }
-        const fullCtx = specContext + (codeContext ? `\n=== GENERATED SOURCE CODE ===\n${codeContext}` : '\n=== NOTE: No source code files found ===');
+        const driftReport = await readVirtualFile(conversationId, 'architecture_drift_report.md');
+        const fullCtx =
+          specContext +
+          (codeContext ? `\n=== GENERATED SOURCE CODE ===\n${codeContext}` : '\n=== NOTE: No source code files found ===') +
+          (driftReport ? `\n=== ARCHITECTURE DRIFT REPORT ===\n${driftReport}` : '');
         const srOut = await runAgent(conversationId, stageName, userPrompt, emit, ledger, 1, fullCtx, executionSignal);
 
         // Reviewer rework guard: if Reviewer found critical issues, log them prominently

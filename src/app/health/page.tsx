@@ -62,7 +62,19 @@ export default function SystemHealth() {
   useEffect(() => {
     fetchSystemStats();
     const timer = setInterval(fetchSystemStats, 2000);
-    return () => clearInterval(timer);
+
+    const handleFocus = () => {
+      fetchSystemStats();
+    };
+
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('visibilitychange', handleFocus);
+
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('visibilitychange', handleFocus);
+    };
   }, []);
 
   const connections = [

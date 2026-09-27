@@ -3,7 +3,6 @@ import {
   parseSpecsRequired,
   parseBlueprintFiles,
   evaluateComplexity,
-  validateSnapshotConsistency,
 } from '../src/lib/agents/ruflo/orchestrator';
 
 async function main() {
@@ -62,9 +61,7 @@ Simple Calculator
   const complexComplexity = evaluateComplexity('backend PostgreSQL auth', 16);
   console.log('[4] Complexity Gate Check (Complex):', complexComplexity);
 
-  // 5. Test Snapshot Consistency
-  const isConsistent = validateSnapshotConsistency('Tech Stack: Vanilla JS', '### Tech Stack\nVanilla JS');
-  console.log('\n[5] Snapshot Consistency Check:', isConsistent);
+  // 5. Snapshot Consistency Check removed — snapshot system replaced with full artifact context
 
   console.log('\n✅ ALL HYBRID V2 ENGINE HELPERS VERIFIED SUCCESSFULLY!');
 }

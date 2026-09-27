@@ -107,8 +107,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     checkOllama();
-    const interval = setInterval(checkOllama, 10000); // Check every 10s
-    return () => clearInterval(interval);
+    const interval = setInterval(checkOllama, 5000); // Check every 5s for rapid UI status updates
+
+    const handleFocus = () => {
+      checkOllama();
+    };
+
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('visibilitychange', handleFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('visibilitychange', handleFocus);
+    };
   }, []);
 
   const clearLogs = () => setLogs([]);
