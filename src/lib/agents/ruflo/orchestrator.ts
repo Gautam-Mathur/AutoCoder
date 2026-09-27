@@ -651,13 +651,51 @@ export interface BlueprintGraphValidation {
 
 export function classifyBlueprintDependency(dep: string): 'LOCAL_FILE' | 'PACKAGE' | 'EXTERNAL' {
   if (!dep || dep === 'None') return 'EXTERNAL';
-  if (dep.startsWith('.') || dep.startsWith('/') || dep.endsWith('.ts') || dep.endsWith('.tsx') || dep.endsWith('.js') || dep.endsWith('.jsx') || dep.includes('/')) {
+  const clean = dep.trim();
+
+  // Explicit local references starting with relative path or alias (@/) or ending with code extension
+  if (clean.startsWith('.') || clean.startsWith('@/') || clean.startsWith('~/') || /\.(ts|tsx|js|jsx|css|json|prisma)$/i.test(clean)) {
     return 'LOCAL_FILE';
   }
-  if (/^[a-z0-9\-_@\/]+$/i.test(dep) && !dep.includes('.')) {
+
+  // Scoped npm package: e.g. @lucide/react, @prisma/client, @tanstack/react-query, @radix-ui/react-dialog
+  if (/^@[a-z0-9_.-]+\/[a-z0-9_.-]+/i.test(clean)) {
     return 'PACKAGE';
   }
+
+  // Standard package or framework subpath: e.g. next/server, next/navigation, react-dom/client, lucide-react, express
+  if (/^[a-z0-9_.-]+(\/[a-z0-9_.-]+)*$/i.test(clean)) {
+    return 'PACKAGE';
+  }
+
   return 'EXTERNAL';
+}
+
+function isLocalDependencyPresent(dep: string, normalizedFileSet: Set<string>): boolean {
+  let normDep = dep.replace(/\\/g, '/').replace(/^[/\\]+/, '').toLowerCase();
+  normDep = normDep.replace(/^@\//, 'src/').replace(/^~\//, 'src/').replace(/^\.\//, '');
+
+  if (normalizedFileSet.has(normDep)) return true;
+
+  const normDepNoSrc = normDep.replace(/^src\//, '');
+  if (normalizedFileSet.has(normDepNoSrc)) return true;
+
+  for (const file of normalizedFileSet) {
+    const normFile = file.toLowerCase();
+    const normFileNoExt = normFile.replace(/\.(ts|tsx|js|jsx|json|css)$/, '');
+    const normFileNoSrcNoExt = normFileNoExt.replace(/^src\//, '');
+
+    if (
+      normFile === normDep ||
+      normFileNoExt === normDep ||
+      normFileNoSrcNoExt === normDepNoSrc ||
+      normFile.endsWith('/' + normDep) ||
+      normFileNoExt.endsWith('/' + normDep)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -686,14 +724,8 @@ export function validateBlueprintGraph(sections: BlueprintFileSection[]): Bluepr
       if (!dep || dep === 'None') continue;
       const depType = classifyBlueprintDependency(dep);
       if (depType === 'LOCAL_FILE') {
-        const normDep = dep.replace(/\\/g, '/').replace(/^[/\\]+/, '').toLowerCase();
-        if (!normalizedFileSet.has(normDep)) {
-          const hasExtVariation = Array.from(normalizedFileSet).some(
-            (f) => f === normDep || f === normDep + '.ts' || f === normDep + '.tsx' || f === normDep + '.js'
-          );
-          if (!hasExtVariation) {
-            errors.push(`Blueprint file "${s.file}" lists local file dependency "${dep}" which is not defined in blueprint.`);
-          }
+        if (!isLocalDependencyPresent(dep, normalizedFileSet)) {
+          errors.push(`Blueprint file "${s.file}" lists local file dependency "${dep}" which is not defined in blueprint.`);
         }
       } else {
         warnings.push(`Blueprint file "${s.file}" lists external/package dependency "${dep}".`);
