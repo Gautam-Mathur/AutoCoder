@@ -11,6 +11,15 @@ import { exec } from 'child_process';
 import { writeVirtualFile, readVirtualFile, listVirtualFiles, applyDiff, flushVfsToDisk, safeWriteFileSync } from './vfs';
 import { runLinter, runCrossFileImportCheck } from './linter';
 import { buildAndPersistStructuralGraph, detectAndPersistArchitectureDrift } from './structural-graph';
+import { extractProjectContract, validateProjectContract } from './spec-contract';
+import { validatePackageDependencies } from './dependency-validator';
+import { validateGeneratedProject } from './project-validator';
+import { validatePrismaUsage } from './prisma-validator';
+import { validateApiContracts } from './api-contract-validator';
+import { validateFrameworkBoundaries } from './framework-validator';
+import { probeGeneratedProjectRoutes } from './runtime-validator';
+import { validateSecurityGate } from './security-gate';
+import { evaluateQualityGate } from './quality-gate';
 
 // Global Event Emitter for decoupling browser SSE streams from background Node pipeline compilation
 export const pipelineEvents = new EventEmitter();
@@ -640,6 +649,17 @@ export interface BlueprintGraphValidation {
   order: string[];
 }
 
+export function classifyBlueprintDependency(dep: string): 'LOCAL_FILE' | 'PACKAGE' | 'EXTERNAL' {
+  if (!dep || dep === 'None') return 'EXTERNAL';
+  if (dep.startsWith('.') || dep.startsWith('/') || dep.endsWith('.ts') || dep.endsWith('.tsx') || dep.endsWith('.js') || dep.endsWith('.jsx') || dep.includes('/')) {
+    return 'LOCAL_FILE';
+  }
+  if (/^[a-z0-9\-_@\/]+$/i.test(dep) && !dep.includes('.')) {
+    return 'PACKAGE';
+  }
+  return 'EXTERNAL';
+}
+
 /**
  * Validates blueprint file graph for duplicates, missing dependencies, cycles, and computes topological ordering.
  */
@@ -660,18 +680,23 @@ export function validateBlueprintGraph(sections: BlueprintFileSection[]): Bluepr
     }
   }
 
-  // 2. Check missing declared dependencies
+  // 2. Check missing declared local file dependencies (Hard Error for LOCAL_FILE)
   for (const s of sections) {
     for (const dep of s.dependencies) {
       if (!dep || dep === 'None') continue;
-      const normDep = dep.replace(/\\/g, '/').replace(/^[/\\]+/, '').toLowerCase();
-      if (!normalizedFileSet.has(normDep)) {
-        const hasExtVariation = Array.from(normalizedFileSet).some(
-          (f) => f === normDep || f === normDep + '.ts' || f === normDep + '.tsx' || f === normDep + '.js'
-        );
-        if (!hasExtVariation) {
-          warnings.push(`Blueprint file "${s.file}" lists dependency "${dep}" which is not defined in blueprint.`);
+      const depType = classifyBlueprintDependency(dep);
+      if (depType === 'LOCAL_FILE') {
+        const normDep = dep.replace(/\\/g, '/').replace(/^[/\\]+/, '').toLowerCase();
+        if (!normalizedFileSet.has(normDep)) {
+          const hasExtVariation = Array.from(normalizedFileSet).some(
+            (f) => f === normDep || f === normDep + '.ts' || f === normDep + '.tsx' || f === normDep + '.js'
+          );
+          if (!hasExtVariation) {
+            errors.push(`Blueprint file "${s.file}" lists local file dependency "${dep}" which is not defined in blueprint.`);
+          }
         }
+      } else {
+        warnings.push(`Blueprint file "${s.file}" lists external/package dependency "${dep}".`);
       }
     }
   }
@@ -1580,6 +1605,23 @@ export async function runOrchestrator(
           if (sc) specContents[sf] = sc;
         }
 
+        // P0: Validate Specification Contract for cross-document contradictions
+        const specContract = extractProjectContract(specContents);
+        const specVal = validateProjectContract(specContract);
+        for (const warn of specVal.warnings) {
+          emit({ type: 'AGENT_LOG', agent: 'Blueprinter', message: `⚠️ Spec Contract Warning: ${warn}` });
+        }
+        if (!specVal.valid) {
+          for (const err of specVal.errors) {
+            emit({ type: 'AGENT_LOG', agent: 'Blueprinter', message: `❌ Spec Contract Error: ${err}` });
+          }
+          emit({
+            type: 'PIPELINE_ERROR',
+            message: `Specification contract validation failed: ${specVal.errors.join('; ')}`,
+          });
+          throw new Error('Specification contract validation failed. Blueprinter execution aborted.');
+        }
+
         const archContent = specContents['architecture.md'] || '';
         const targetFiles = extractFilesFromArchitecture(archContent);
 
@@ -1694,9 +1736,13 @@ export async function runOrchestrator(
       if (stageName === 'Security' || stageName === 'Reviewer') {
         const specFiles = ['plan.md', 'requirements.md', 'architecture.md', 'backend_spec.md', 'ui_spec.md'];
         let specContext = '';
+        const specContentsMap: Record<string, string> = {};
         for (const sf of specFiles) {
           const sc = await readVirtualFile(conversationId, sf);
-          if (sc) specContext += `=== ${sf.toUpperCase()} ===\n${sc}\n\n`;
+          if (sc) {
+            specContext += `=== ${sf.toUpperCase()} ===\n${sc}\n\n`;
+            specContentsMap[sf] = sc;
+          }
         }
         const allVfsFiles = await listVirtualFiles(conversationId);
         const codeFiles = allVfsFiles.filter(f => /\.(js|ts|jsx|tsx|html|css|py|go|java|rs|sh)$/.test(f));
@@ -1721,19 +1767,55 @@ export async function runOrchestrator(
           (driftReport ? `\n=== ARCHITECTURE DRIFT REPORT ===\n${driftReport}` : '');
         const srOut = await runAgent(conversationId, stageName, userPrompt, emit, ledger, 1, fullCtx, executionSignal);
 
-        // Reviewer rework guard: if Reviewer found critical issues, log them prominently
-        if (stageName === 'Reviewer' && srOut.content) {
-          const hasRework = /\b(MAJOR|CRITICAL|REWORK|FAIL)\b/i.test(srOut.content);
-          if (hasRework) {
-            emit({
-              type: 'AGENT_LOG',
-              agent: 'Reviewer',
-              message: '⚠️ Reviewer flagged CRITICAL/REWORK issues. Review recommended before deployment.',
-            });
-          }
+        // Execute Deterministic Quality Gate Evaluation Stack
+        const allVfsList = await listVirtualFiles(conversationId);
+        const vfsFilesRecord: Record<string, string> = {};
+        for (const f of allVfsList) {
+          const c = await readVirtualFile(conversationId, f);
+          if (c !== null) vfsFilesRecord[f] = c;
         }
 
-        emit({ type: 'AGENT_COMPLETE', agent: stageName, message: `Stage ${stageName} completed.`, data: srOut.content });
+        const specContract = extractProjectContract(specContentsMap);
+        const specVal = validateProjectContract(specContract);
+
+        const blueprintText = (await readVirtualFile(conversationId, 'blueprint.md')) || '';
+        const fileSections = parseBlueprintFiles(blueprintText);
+        const blueprintVal = validateBlueprintGraph(fileSections);
+
+        const projVal = await validateGeneratedProject(conversationId);
+        const packageVal = validatePackageDependencies(vfsFilesRecord, vfsFilesRecord['package.json'] || '');
+        const prismaVal = validatePrismaUsage(vfsFilesRecord, vfsFilesRecord['prisma/schema.prisma'] || '');
+        const apiVal = validateApiContracts(specContract.apiEndpoints, vfsFilesRecord);
+        const frameworkVal = validateFrameworkBoundaries(vfsFilesRecord, specContract.framework);
+        const runtimeVal = await probeGeneratedProjectRoutes(specContract.apiEndpoints, vfsFilesRecord);
+        const securityVal = validateSecurityGate(vfsFilesRecord);
+
+        const qGate = evaluateQualityGate({
+          specValidation: specVal,
+          blueprintValidation: blueprintVal,
+          projectValidation: projVal,
+          packageValidation: packageVal,
+          prismaValidation: prismaVal,
+          apiValidation: apiVal,
+          frameworkValidation: frameworkVal,
+          runtimeValidation: runtimeVal,
+          securityValidation: securityVal,
+        });
+
+        emit({
+          type: 'AGENT_LOG',
+          agent: 'Reviewer',
+          message: `🛡️ Deterministic Quality Gate Evaluation: Score ${qGate.score}/100 | Status: ${qGate.status}`,
+        });
+
+        for (const reason of qGate.blockingReasons) {
+          emit({ type: 'AGENT_LOG', agent: 'Reviewer', message: `❌ Quality Gate Blocking: ${reason}` });
+        }
+
+        const qGateReport = `# Quality Gate Evaluation Report\n\n- Status: **${qGate.status}**\n- Verification Score: **${qGate.score}/100**\n\n### Summary\n- Specifications Valid: ${qGate.summary.specsValid ? '✅' : '❌'}\n- Blueprint Valid: ${qGate.summary.blueprintValid ? '✅' : '❌'}\n- Whole Project Compiles: ${qGate.summary.projectCompiles ? '✅' : '❌'}\n- Package Dependencies Valid: ${qGate.summary.packagesValid ? '✅' : '❌'}\n- Prisma DB Contract Matches: ${qGate.summary.prismaValid ? '✅' : '❌'}\n- API Contracts Implemented: ${qGate.summary.apiContractsValid ? '✅' : '❌'}\n- Framework Boundaries Valid: ${qGate.summary.frameworkBoundariesValid ? '✅' : '❌'}\n- Runtime Probes Pass: ${qGate.summary.runtimeProbesValid ? '✅' : '❌'}\n- Security Gate Passed: ${qGate.summary.securityGatePassed ? '✅' : '❌'}\n\n### Blocking Reasons\n${qGate.blockingReasons.length > 0 ? qGate.blockingReasons.map(r => `- ${r}`).join('\n') : 'None'}\n\n### Warnings\n${qGate.warnings.length > 0 ? qGate.warnings.map(w => `- ${w}`).join('\n') : 'None'}\n`;
+        await writeVirtualFile(conversationId, 'quality_gate_report.md', qGateReport);
+
+        emit({ type: 'AGENT_COMPLETE', agent: stageName, message: `Stage ${stageName} completed (Quality Gate: ${qGate.status}).`, data: srOut.content });
         await flushVfsToDisk(conversationId);
         continue;
       }

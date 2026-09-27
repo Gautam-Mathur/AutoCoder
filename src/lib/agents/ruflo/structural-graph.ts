@@ -248,13 +248,19 @@ export async function buildStructuralGraph(conversationId: string): Promise<Stru
   return { nodes, edges, warnings, errors };
 }
 
+import { resolveModule, parseTsConfigOptions } from './module-resolver';
+
 /**
- * Persists derived structural graph nodes and edges into Prisma database.
+ * Persists derived structural graph nodes and edges into Prisma database after clearing stale records.
  */
 export async function persistStructuralGraph(
   conversationId: string,
   graph: StructuralGraphResult
 ): Promise<void> {
+  // Clear stale graph state prior to persisting fresh derived graph
+  await prisma.graphEdge.deleteMany({ where: { conversationId } });
+  await prisma.graphNode.deleteMany({ where: { conversationId } });
+
   // Upsert all nodes
   for (const node of graph.nodes) {
     await prisma.graphNode.upsert({
@@ -493,17 +499,25 @@ export async function detectAndPersistArchitectureDrift(
     }
   }
 
-  // 3. Dependency drifts (actual IMPORTS edges vs blueprint declared dependencies)
+  // 3. Symmetric Dependency Drifts (declared vs actual imports)
   for (const [normBpFile, section] of blueprintFileMap.entries()) {
     if (!actualFileSet.has(normBpFile)) continue;
     const actualDeps = await getFileDependencies(conversationId, section.file);
     const actualDepSet = new Set(actualDeps.map((d) => d.replace(/\\/g, '/').replace(/^[/\\]+/, '').toLowerCase()));
 
+    const declaredSet = new Set<string>();
     for (const declaredDep of section.dependencies) {
       if (declaredDep === 'None') continue;
       const normDeclared = declaredDep.replace(/\\/g, '/').replace(/^[/\\]+/, '').toLowerCase();
+      declaredSet.add(normDeclared);
       if (!actualDepSet.has(normDeclared)) {
-        dependencyDrifts.push(`${section.file}: Blueprint declared dependency "${declaredDep}" not imported in code.`);
+        dependencyDrifts.push(`${section.file}: Blueprint declared dependency "${declaredDep}" is not imported in code.`);
+      }
+    }
+
+    for (const actualDep of actualDepSet) {
+      if (!declaredSet.has(actualDep)) {
+        dependencyDrifts.push(`${section.file}: Actual code import "${actualDep}" was not declared in blueprint.`);
       }
     }
   }
