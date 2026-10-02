@@ -48,15 +48,22 @@ export function evaluateQualityGate(input: QualityGateEvaluationInput): QualityG
   const blockingReasons: string[] = [];
   const warnings: string[] = [];
 
-  const specsValid = input.specValidation ? input.specValidation.valid : true;
-  const blueprintValid = input.blueprintValidation ? input.blueprintValidation.valid : true;
-  const projectCompiles = input.projectValidation ? input.projectValidation.success : true;
-  const packagesValid = input.packageValidation ? input.packageValidation.valid : true;
-  const prismaValid = input.prismaValidation ? input.prismaValidation.valid : true;
-  const apiContractsValid = input.apiValidation ? input.apiValidation.valid : true;
-  const frameworkBoundariesValid = input.frameworkValidation ? input.frameworkValidation.valid : true;
-  const runtimeProbesValid = input.runtimeValidation ? input.runtimeValidation.success : true;
-  const securityGatePassed = input.securityValidation ? input.securityValidation.passed : true;
+  const specsValid = input.specValidation ? input.specValidation.valid : false;
+  const blueprintValid = input.blueprintValidation ? input.blueprintValidation.valid : false;
+  const projectCompiles = input.projectValidation ? input.projectValidation.success : false;
+  const packagesValid = input.packageValidation ? input.packageValidation.valid : false;
+  const prismaValid = input.prismaValidation ? input.prismaValidation.valid : true; // Optional if no DB
+  const apiContractsValid = input.apiValidation ? input.apiValidation.valid : true; // Optional if no API
+  const frameworkBoundariesValid = input.frameworkValidation ? input.frameworkValidation.valid : false;
+  const runtimeProbesValid = input.runtimeValidation ? input.runtimeValidation.success : true; // Optional structural probe
+  const securityGatePassed = input.securityValidation ? input.securityValidation.passed : false;
+
+  if (!input.specValidation) blockingReasons.push('Verification Incomplete: Spec contract validation was NOT_RUN.');
+  if (!input.blueprintValidation) blockingReasons.push('Verification Incomplete: Blueprint graph validation was NOT_RUN.');
+  if (!input.projectValidation) blockingReasons.push('Verification Incomplete: TypeScript project compilation was NOT_RUN.');
+  if (!input.packageValidation) blockingReasons.push('Verification Incomplete: Package dependency validation was NOT_RUN.');
+  if (!input.frameworkValidation) blockingReasons.push('Verification Incomplete: Framework boundary validation was NOT_RUN.');
+  if (!input.securityValidation) blockingReasons.push('Verification Incomplete: Security gate check was NOT_RUN.');
 
   // Collect Spec Contract Errors
   if (input.specValidation && !input.specValidation.valid) {
@@ -124,8 +131,7 @@ export function evaluateQualityGate(input: QualityGateEvaluationInput): QualityG
 
   let status: QualityGateStatus = 'PASS';
   if (blockingReasons.length > 0) {
-    // If compilation or security or spec contradiction, mark as BLOCKED or REPAIR_REQUIRED
-    const hasFatal = blockingReasons.some(r => r.includes('Spec Contradiction') || r.includes('Security Hard Block') || r.includes('Blueprint Graph Error'));
+    const hasFatal = blockingReasons.some(r => r.includes('Spec Contradiction') || r.includes('Security Hard Block') || r.includes('Blueprint Graph Error') || r.includes('Verification Incomplete'));
     status = hasFatal ? 'BLOCKED' : 'REPAIR_REQUIRED';
   }
 
@@ -145,7 +151,7 @@ export function evaluateQualityGate(input: QualityGateEvaluationInput): QualityG
 
   return {
     status,
-    passed: status === 'PASS',
+    passed: status === 'PASS' && blockingReasons.length === 0,
     score,
     blockingReasons,
     warnings,

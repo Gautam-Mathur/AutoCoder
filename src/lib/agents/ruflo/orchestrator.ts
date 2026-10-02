@@ -12,6 +12,7 @@ import { writeVirtualFile, readVirtualFile, listVirtualFiles, applyDiff, flushVf
 import { runLinter, runCrossFileImportCheck } from './linter';
 import { buildAndPersistStructuralGraph, detectAndPersistArchitectureDrift } from './structural-graph';
 import { extractProjectContract, validateProjectContract } from './spec-contract';
+import { resolveModule, parseTsConfigOptions } from './module-resolver';
 import { validatePackageDependencies } from './dependency-validator';
 import { validateGeneratedProject } from './project-validator';
 import { validatePrismaUsage } from './prisma-validator';
@@ -627,19 +628,8 @@ export function parseBlueprintFiles(blueprintText: string): BlueprintFileSection
  * Validates that blueprint dependencies reference files that actually exist in the blueprint.
  */
 export function validateBlueprintImports(sections: BlueprintFileSection[]): string[] {
-  const allFiles = new Set(sections.map(s => s.file));
-  const warnings: string[] = [];
-  for (const section of sections) {
-    for (const dep of section.dependencies) {
-      const normalizedDep = dep.replace(/^\.\.\//, '').replace(/^\.\//, '').replace(/^\//, '');
-      if (!allFiles.has(normalizedDep) && !allFiles.has(dep)) {
-        warnings.push(
-          `Blueprint Warning: "${section.file}" lists dependency "${dep}" which is not defined as a ### File: section.`
-        );
-      }
-    }
-  }
-  return warnings;
+  const val = validateBlueprintGraph(sections);
+  return [...val.errors, ...val.warnings];
 }
 
 export interface BlueprintGraphValidation {
@@ -671,37 +661,13 @@ export function classifyBlueprintDependency(dep: string): 'LOCAL_FILE' | 'PACKAG
   return 'EXTERNAL';
 }
 
-function isLocalDependencyPresent(dep: string, normalizedFileSet: Set<string>): boolean {
-  let normDep = dep.replace(/\\/g, '/').replace(/^[/\\]+/, '').toLowerCase();
-  normDep = normDep.replace(/^@\//, 'src/').replace(/^~\//, 'src/').replace(/^\.\//, '');
-
-  if (normalizedFileSet.has(normDep)) return true;
-
-  const normDepNoSrc = normDep.replace(/^src\//, '');
-  if (normalizedFileSet.has(normDepNoSrc)) return true;
-
-  for (const file of normalizedFileSet) {
-    const normFile = file.toLowerCase();
-    const normFileNoExt = normFile.replace(/\.(ts|tsx|js|jsx|json|css)$/, '');
-    const normFileNoSrcNoExt = normFileNoExt.replace(/^src\//, '');
-
-    if (
-      normFile === normDep ||
-      normFileNoExt === normDep ||
-      normFileNoSrcNoExt === normDepNoSrc ||
-      normFile.endsWith('/' + normDep) ||
-      normFileNoExt.endsWith('/' + normDep)
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
-
 /**
  * Validates blueprint file graph for duplicates, missing dependencies, cycles, and computes topological ordering.
  */
-export function validateBlueprintGraph(sections: BlueprintFileSection[]): BlueprintGraphValidation {
+export function validateBlueprintGraph(
+  sections: BlueprintFileSection[],
+  tsConfigContent?: string
+): BlueprintGraphValidation {
   const errors: string[] = [];
   const warnings: string[] = [];
   const fileMap = new Map<string, BlueprintFileSection>();
@@ -718,22 +684,14 @@ export function validateBlueprintGraph(sections: BlueprintFileSection[]): Bluepr
     }
   }
 
-  // 2. Check missing declared local file dependencies (Hard Error for LOCAL_FILE)
-  for (const s of sections) {
-    for (const dep of s.dependencies) {
-      if (!dep || dep === 'None') continue;
-      const depType = classifyBlueprintDependency(dep);
-      if (depType === 'LOCAL_FILE') {
-        if (!isLocalDependencyPresent(dep, normalizedFileSet)) {
-          errors.push(`Blueprint file "${s.file}" lists local file dependency "${dep}" which is not defined in blueprint.`);
-        }
-      } else {
-        warnings.push(`Blueprint file "${s.file}" lists external/package dependency "${dep}".`);
-      }
-    }
-  }
+  // 2. Prepare Module Resolution Context
+  const tsOpts = parseTsConfigOptions(tsConfigContent || '');
+  const moduleContext = {
+    files: sections.map((s) => s.file),
+    baseUrl: tsOpts.baseUrl || '.',
+    paths: tsOpts.paths || { '@/*': ['./src/*', './*'], '~/*': ['./src/*', './*'] },
+  };
 
-  // 3. Dependency cycles & Topological sort (Kahn's Algorithm)
   const inDegree = new Map<string, number>();
   const graph = new Map<string, string[]>();
 
@@ -742,17 +700,29 @@ export function validateBlueprintGraph(sections: BlueprintFileSection[]): Bluepr
     graph.set(normFile, []);
   }
 
+  // 3. Resolve dependencies using resolveModule & build canonical graph edges
   for (const [normFile, section] of fileMap.entries()) {
     for (const dep of section.dependencies) {
       if (!dep || dep === 'None') continue;
-      const normDep = dep.replace(/\\/g, '/').replace(/^[/\\]+/, '').toLowerCase();
-      if (normalizedFileSet.has(normDep)) {
-        graph.get(normDep)!.push(normFile);
-        inDegree.set(normFile, (inDegree.get(normFile) || 0) + 1);
+      const depType = classifyBlueprintDependency(dep);
+      if (depType === 'LOCAL_FILE') {
+        const resolved = resolveModule(section.file, dep, moduleContext);
+        if (!resolved) {
+          errors.push(`Blueprint file "${section.file}" lists local file dependency "${dep}" which is not defined in blueprint.`);
+        } else {
+          const normResolved = resolved.replace(/\\/g, '/').replace(/^[/\\]+/, '').toLowerCase();
+          if (fileMap.has(normResolved) && normResolved !== normFile) {
+            graph.get(normResolved)!.push(normFile);
+            inDegree.set(normFile, (inDegree.get(normFile) || 0) + 1);
+          }
+        }
+      } else {
+        warnings.push(`Blueprint file "${section.file}" lists external/package dependency "${dep}".`);
       }
     }
   }
 
+  // 4. Dependency cycles & Topological sort (Kahn's Algorithm)
   const queue: string[] = [];
   for (const [node, deg] of inDegree.entries()) {
     if (deg === 0) queue.push(node);
@@ -1743,6 +1713,11 @@ export async function runOrchestrator(
             for (const err of bpVal.errors) {
               emit({ type: 'AGENT_LOG', agent: 'Blueprinter', message: `❌ Blueprint Graph Error: ${err}` });
             }
+            emit({
+              type: 'PIPELINE_ERROR',
+              message: `Blueprint graph validation failed: ${bpVal.errors.join('; ')}`,
+            });
+            throw new Error(`Blueprint graph validation failed: ${bpVal.errors.join('; ')}`);
           }
           if (bpVal.order.length === finalSections.length) {
             const fileOrderMap = new Map(bpVal.order.map((f, i) => [f.toLowerCase(), i]));
@@ -1846,6 +1821,14 @@ export async function runOrchestrator(
 
         const qGateReport = `# Quality Gate Evaluation Report\n\n- Status: **${qGate.status}**\n- Verification Score: **${qGate.score}/100**\n\n### Summary\n- Specifications Valid: ${qGate.summary.specsValid ? '✅' : '❌'}\n- Blueprint Valid: ${qGate.summary.blueprintValid ? '✅' : '❌'}\n- Whole Project Compiles: ${qGate.summary.projectCompiles ? '✅' : '❌'}\n- Package Dependencies Valid: ${qGate.summary.packagesValid ? '✅' : '❌'}\n- Prisma DB Contract Matches: ${qGate.summary.prismaValid ? '✅' : '❌'}\n- API Contracts Implemented: ${qGate.summary.apiContractsValid ? '✅' : '❌'}\n- Framework Boundaries Valid: ${qGate.summary.frameworkBoundariesValid ? '✅' : '❌'}\n- Runtime Probes Pass: ${qGate.summary.runtimeProbesValid ? '✅' : '❌'}\n- Security Gate Passed: ${qGate.summary.securityGatePassed ? '✅' : '❌'}\n\n### Blocking Reasons\n${qGate.blockingReasons.length > 0 ? qGate.blockingReasons.map(r => `- ${r}`).join('\n') : 'None'}\n\n### Warnings\n${qGate.warnings.length > 0 ? qGate.warnings.map(w => `- ${w}`).join('\n') : 'None'}\n`;
         await writeVirtualFile(conversationId, 'quality_gate_report.md', qGateReport);
+
+        if (!qGate.passed) {
+          emit({
+            type: 'PIPELINE_ERROR',
+            message: `Pipeline Quality Gate failed with status ${qGate.status}: ${qGate.blockingReasons.join('; ')}`,
+          });
+          throw new Error(`Pipeline Quality Gate failed (${qGate.status}): ${qGate.blockingReasons.join('; ')}`);
+        }
 
         emit({ type: 'AGENT_COMPLETE', agent: stageName, message: `Stage ${stageName} completed (Quality Gate: ${qGate.status}).`, data: srOut.content });
         await flushVfsToDisk(conversationId);

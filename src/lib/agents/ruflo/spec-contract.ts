@@ -1,39 +1,25 @@
-export interface ApiEndpointContract {
-  method: string;
-  path: string;
-  authRequired: boolean;
-}
+import crypto from 'crypto';
+import {
+  ProjectContract,
+  ApiEndpointContract,
+  ModelContract,
+  ContractValidation,
+} from './contracts';
 
-export interface ModelContract {
-  name: string;
-  fields: Record<string, string>;
-}
+export type { ApiEndpointContract, ModelContract, ProjectContract, ContractValidation };
 
-export interface ProjectContract {
-  framework: 'NEXT_APP_ROUTER' | 'NEXT_PAGES_ROUTER' | 'VITE_SPA' | 'STATIC_HTML';
-  language: 'typescript' | 'javascript';
-  database: 'sqlite' | 'postgresql' | 'none';
-  authentication: {
-    required: boolean;
-    mechanism?: string;
-  };
-  routing: {
-    style: 'app' | 'pages' | 'static';
-  };
-  entryPoints: string[];
-  apiEndpoints: ApiEndpointContract[];
-  models: ModelContract[];
-  dependencies: string[];
-}
-
-export interface ContractValidation {
-  valid: boolean;
-  errors: string[];
-  warnings: string[];
+export function getPackageRoot(specifier: string): string {
+  const clean = specifier.trim().replace(/[*`'"]/g, '');
+  if (!clean) return '';
+  if (clean.startsWith('@')) {
+    const parts = clean.split('/');
+    return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : clean;
+  }
+  return clean.split('/')[0];
 }
 
 /**
- * Deterministically extracts a unified ProjectContract from Markdown specification artifacts.
+ * Deterministically extracts a unified ProjectContract from Markdown specification artifacts and project facts.
  */
 export function extractProjectContract(specs: Record<string, string>): ProjectContract {
   const plan = specs['plan.md'] || '';
@@ -41,6 +27,7 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
   const arch = specs['architecture.md'] || '';
   const backend = specs['backend_spec.md'] || '';
   const ui = specs['ui_spec.md'] || '';
+  const prismaSchema = specs['prisma/schema.prisma'] || specs['schema.prisma'] || '';
 
   const combined = `${plan}\n${reqs}\n${arch}\n${backend}\n${ui}`;
 
@@ -56,16 +43,19 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
     framework = 'VITE_SPA';
   }
 
-  const routingStyle = framework === 'NEXT_APP_ROUTER' ? 'app' : (framework === 'NEXT_PAGES_ROUTER' ? 'pages' : 'static');
+  const routingStyle: ProjectContract['routing']['style'] = framework === 'NEXT_APP_ROUTER' ? 'app' : (framework === 'NEXT_PAGES_ROUTER' ? 'pages' : 'static');
 
   // 2. Detect Language
-  const language = /typescript|\.tsx?|\.ts\b/i.test(combined) ? 'typescript' : 'javascript';
+  const language: ProjectContract['language'] = /typescript|\.tsx?|\.ts\b/i.test(combined) ? 'typescript' : 'javascript';
 
-  // 3. Detect Database
+  // 3. Detect ORM & Database Engine
+  const hasPrisma = /prisma/i.test(combined) || !!prismaSchema;
+  const orm: ProjectContract['orm'] = hasPrisma ? 'prisma' : 'none';
+
   let database: ProjectContract['database'] = 'none';
-  if (/postgres|postgresql/i.test(combined)) {
+  if (/provider\s*=\s*"postgresql"/i.test(prismaSchema) || /postgresql|postgres\b/i.test(combined)) {
     database = 'postgresql';
-  } else if (/sqlite|prisma/i.test(combined)) {
+  } else if (/provider\s*=\s*"sqlite"/i.test(prismaSchema) || /sqlite/i.test(combined) || hasPrisma) {
     database = 'sqlite';
   }
 
@@ -73,9 +63,9 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
   const planNoAuth = /auth:\s*none|no auth|authentication:\s*none/i.test(plan) || /without auth/i.test(plan);
   const backendHasAuth = /auth\s*required|authentication\s*required|auth:\s*true/i.test(backend) || /bearer|jwt|session/i.test(backend);
   const authRequired = !planNoAuth && (backendHasAuth || /auth:\s*required|authentication:\s*required/i.test(combined));
-  
+
   const mechanismMatch = combined.match(/auth\s*mechanism:\s*(.+)/i) || combined.match(/authentication:\s*(jwt|session|next-auth|clerk|oauth)/i);
-  const mechanism = authRequired ? (mechanismMatch ? mechanismMatch[1].trim() : 'jwt') : undefined;
+  const mechanism = authRequired ? (mechanismMatch ? mechanismMatch[1].trim() : undefined) : undefined;
 
   // 5. Extract API Endpoints from backend_spec
   const apiEndpoints: ApiEndpointContract[] = [];
@@ -97,9 +87,10 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
     }
   }
 
-  // 6. Extract Prisma Models from backend_spec
+  // 6. Extract Prisma Models from backend_spec or schema.prisma
   const models: ModelContract[] = [];
-  const modelBlocks = backend.split(/model\s+([A-Za-z0-9_]+)\s*\{/gi);
+  const sourceSchemaText = prismaSchema || backend;
+  const modelBlocks = sourceSchemaText.split(/model\s+([A-Za-z0-9_]+)\s*\{/gi);
   for (let i = 1; i < modelBlocks.length; i += 2) {
     const name = modelBlocks[i].trim();
     const body = modelBlocks[i + 1] ? modelBlocks[i + 1].split('}')[0] : '';
@@ -128,22 +119,23 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
     entryPoints.push('index.html');
   }
 
-  // 8. Extract Declared Dependencies
+  // 8. Extract Declared Dependencies using getPackageRoot
   const dependencies: string[] = [];
   const depMatches = combined.matchAll(/(?:dependency|dependencies|package|packages):\s*([^\n]+)/gi);
   for (const dm of depMatches) {
     const parts = dm[1].split(/[,;]/);
     for (const p of parts) {
-      const clean = p.replace(/[*`'"]/g, '').trim();
-      if (clean && !clean.includes('/') && !dependencies.includes(clean)) {
-        dependencies.push(clean);
+      const pkgRoot = getPackageRoot(p);
+      if (pkgRoot && !pkgRoot.startsWith('.') && !pkgRoot.startsWith('@/') && !dependencies.includes(pkgRoot)) {
+        dependencies.push(pkgRoot);
       }
     }
   }
 
-  return {
+  const rawContract = {
     framework,
     language,
+    orm,
     database,
     authentication: {
       required: authRequired,
@@ -157,6 +149,14 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
     models,
     dependencies,
   };
+
+  const canonicalJson = JSON.stringify(rawContract, Object.keys(rawContract).sort());
+  const contractHash = crypto.createHash('sha256').update(canonicalJson).digest('hex');
+
+  return {
+    ...rawContract,
+    contractHash,
+  };
 }
 
 /**
@@ -168,7 +168,7 @@ export function validateProjectContract(contract: ProjectContract): ContractVali
 
   // Contradiction Check 1: Authentication Enabled vs No Auth Mechanism
   if (contract.authentication.required && !contract.authentication.mechanism) {
-    warnings.push('Authentication is marked as required, but no specific mechanism (JWT/NextAuth/Session) was declared.');
+    warnings.push('Authentication is marked as required, but no specific mechanism (JWT/NextAuth/Session) was declared in specs.');
   }
 
   // Contradiction Check 2: Auth Required on Endpoints when Auth is Disabled globally

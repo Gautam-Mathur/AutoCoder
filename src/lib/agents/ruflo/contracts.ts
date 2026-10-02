@@ -7,16 +7,68 @@ export interface CapabilityDefinition {
   forbiddenConstructs: string[];
 }
 
+export interface ApiEndpointContract {
+  method: string;
+  path: string;
+  authRequired: boolean;
+}
+
+export interface ModelContract {
+  name: string;
+  fields: Record<string, string>;
+}
+
 export interface ProjectContract {
-  mvpId: string;
-  projectName: string;
-  goal: string;
-  scope: {
+  contractHash?: string;
+  mvpId?: string;
+  projectName?: string;
+  goal?: string;
+  scope?: {
     included: string[];
     excluded: string[];
   };
-  constraints: string[];
-  capabilities: CapabilityDefinition[];
+  constraints?: string[];
+  capabilities?: CapabilityDefinition[];
+  framework: 'NEXT_APP_ROUTER' | 'NEXT_PAGES_ROUTER' | 'VITE_SPA' | 'STATIC_HTML';
+  language: 'typescript' | 'javascript';
+  orm: 'prisma' | 'none';
+  database: 'sqlite' | 'postgresql' | 'none';
+  authentication: {
+    required: boolean;
+    mechanism?: string;
+  };
+  routing: {
+    style: 'app' | 'pages' | 'static';
+  };
+  entryPoints: string[];
+  apiEndpoints: ApiEndpointContract[];
+  models: ModelContract[];
+  dependencies: string[];
+}
+
+export interface ContractValidation {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface VerificationError {
+  code: string;
+  source:
+    | 'SPEC'
+    | 'BLUEPRINT'
+    | 'PROJECT'
+    | 'PACKAGE'
+    | 'PRISMA'
+    | 'API'
+    | 'FRAMEWORK'
+    | 'RUNTIME'
+    | 'SECURITY';
+  severity: 'ERROR' | 'WARNING';
+  message: string;
+  file?: string;
+  line?: number;
+  dependency?: string;
 }
 
 export interface VersionRecord {
