@@ -24,6 +24,8 @@ export function detectExplicitNoAuth(text: string): boolean {
   return [
     /authentication\s*:\s*none\b/i,
     /auth\s*:\s*none\b/i,
+    /authentication\s*\/\s*session\s*:\s*none\b/i,
+    /auth\s*\/\s*session\s*:\s*none\b/i,
     /authentication\s*required\s*:\s*no\b/i,
     /auth\s*required\s*:\s*no\b/i,
     /\bno\s+auth(?:entication)?\b/i,
@@ -39,7 +41,16 @@ export function detectExplicitAuthRequired(text: string): boolean {
     /authmiddleware\b/i,
     /\bbearer\b/i,
     /\bjwt\b/i,
-    /\bsession\b/i,
+    /\b(session|cookie|token|jwt)-?based\s+auth(?:entication)?\b/i,
+    /\bsession\s+auth(?:entication)?\b/i,
+    /\bauthenticated\s+session\b/i,
+    /\bexpress-session\b/i,
+    /\bnext-auth\b/i,
+    /\bpassport\b/i,
+    /\buser\s+authentication\b|\bauthenticated\s+users?\b/i,
+    /\baccess[_\s]+token\b|\brefresh[_\s]+token\b/i,
+    /\boauth2?\b/i,
+    /\blog\s*in\b|\blogged\s+in\b|\bsign\s*in\b|\bsigned\s+in\b/i,
   ].some((pattern) => pattern.test(text));
 }
 
@@ -160,6 +171,23 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
     }
 
     models.push({ name, fields });
+  }
+
+  // Fallback for markdown entity blocks if no explicit Prisma model blocks are defined
+  if (models.length === 0 && backend) {
+    const entityBlocks = backend.split(/\n\*\*([A-Za-z0-9_]+)\*\*/gi);
+    for (let i = 1; i < entityBlocks.length; i += 2) {
+      const name = entityBlocks[i].trim();
+      const body = entityBlocks[i + 1] ? entityBlocks[i + 1].split(/\n\*\*/)[0] : '';
+      const fields: Record<string, string> = {};
+      const fieldMatches = body.matchAll(/-\s*([A-Za-z0-9_]+)\s*:\s*([^\s—\n]+)/gi);
+      for (const fm of fieldMatches) {
+        fields[fm[1]] = fm[2];
+      }
+      if (Object.keys(fields).length > 0) {
+        models.push({ name, fields });
+      }
+    }
   }
 
   // 7. Extract Entry Points

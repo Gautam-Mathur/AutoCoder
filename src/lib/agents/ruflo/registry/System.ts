@@ -29,6 +29,7 @@ For each database entity/table, write:
 RULES:
 - Every entity must exist because a feature in requirements.md needs it
 - Do NOT add entities for features that aren't in the requirements
+- If Database is PostgreSQL or ORM is Prisma, include machine-readable Prisma model code blocks under ### Database Design (e.g. model Board { id String @id @default(uuid()) }).
 
 ### Seed Data
 If the project uses a database, include 3-5 realistic seed records for the primary entity.

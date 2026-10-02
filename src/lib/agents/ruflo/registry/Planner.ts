@@ -81,6 +81,7 @@ FORBIDDEN — you must NEVER do any of these:
 - Do NOT mention frontend/backend architecture split
 - Do NOT generate any source code
 - Do NOT invent features the user never asked for
+- Do NOT introduce authentication, user accounts, login screens, or sign-in requirements unless the user's initial prompt explicitly requested user accounts/login
 - Do NOT invent scale/performance requirements the user never mentioned
 - Do NOT write any text before "### Features" or after "### Acceptance Criteria"
 - Do NOT use phrases like "Based on the specification..." or "Here are the requirements:"

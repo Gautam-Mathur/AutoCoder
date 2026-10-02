@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { extractProjectContract, validateProjectContract } from '../spec-contract';
+import { extractProjectContract, validateProjectContract, detectExplicitNoAuth, detectExplicitAuthRequired } from '../spec-contract';
 import { validateFrameworkBoundaries } from '../framework-validator';
 import { validateReactHookImports, ProjectValidationError } from '../project-validator';
 import { probeGeneratedProjectRoutes } from '../runtime-validator';
@@ -313,7 +313,71 @@ Frontend Entry Point: src/pages/index.tsx
   const resT = validateProjectContract(contractT);
   assert.strictEqual(resT.valid, false, 'Expected full historical contract to fail spec validation');
 
-  console.log('✅ All Kanban spec contract regression assertions (A-T) passed successfully.');
+  // --- REGRESSION TESTS FOR FIX PLAN ---
+
+  // Regression 1: Generic session is not authentication
+  const contractReg1 = extractProjectContract({
+    'plan.md': 'Kanban app',
+    'requirements.md': "User's board state should persist across sessions.",
+    'architecture.md': 'Authentication: None — no auth needed',
+    'backend_spec.md': 'GET /api/boards\n- Auth Required: No',
+    'ui_spec.md': 'Auth/Session: None',
+  });
+  const resReg1 = validateProjectContract(contractReg1);
+  assert.strictEqual(contractReg1.authentication.required, false, 'Expected generic session to not set auth.required to true');
+  assert.strictEqual(resReg1.valid, true, 'Expected generic session wording to pass contract validation');
+
+  // Regression 2: Browser session is not authentication
+  const contractReg2 = extractProjectContract({
+    'plan.md': 'Kanban app',
+    'requirements.md': 'Restore state across browser sessions',
+    'architecture.md': 'Authentication: None',
+    'backend_spec.md': 'GET /api/boards\n- Auth Required: No',
+    'ui_spec.md': 'Auth/Session: None',
+  });
+  assert.strictEqual(contractReg2.authentication.required, false, 'Expected browser sessions to not set auth.required to true');
+
+  // Regression 3: Auth/Session: None is recognized as explicit no-auth
+  assert.strictEqual(detectExplicitNoAuth('Auth/Session: None'), true, 'Expected Auth/Session: None to match detectExplicitNoAuth');
+  assert.strictEqual(detectExplicitNoAuth('Authentication / Session: None'), true, 'Expected Authentication / Session: None to match detectExplicitNoAuth');
+
+  // Regression 4: Explicit login is authentication
+  assert.strictEqual(detectExplicitAuthRequired('Users must log in before accessing their board'), true, 'Expected log in to match detectExplicitAuthRequired');
+
+  // Regression 5: JWT is authentication
+  assert.strictEqual(detectExplicitAuthRequired('Authentication: JWT'), true, 'Expected JWT to match detectExplicitAuthRequired');
+
+  // Regression 6: Genuine contradiction still fails
+  const contractReg6 = extractProjectContract({
+    'plan.md': '',
+    'requirements.md': 'Users must log in before accessing their board',
+    'architecture.md': 'Authentication: None — no auth needed',
+    'backend_spec.md': 'GET /api/boards\n- Auth Required: No',
+    'ui_spec.md': '',
+  });
+  const resReg6 = validateProjectContract(contractReg6);
+  assert.strictEqual(resReg6.valid, false, 'Expected genuine login vs no-auth contradiction to fail validation');
+
+  // Regression 7: Database models fallback from markdown entity headers
+  const contractReg7 = extractProjectContract({
+    'plan.md': '',
+    'requirements.md': '',
+    'architecture.md': 'Database: PostgreSQL\nORM: Prisma',
+    'backend_spec.md': `
+### Database Design
+**Column**
+- Purpose: Represents a column
+- Fields:
+  - id: String
+  - title: String
+`,
+    'ui_spec.md': '',
+  });
+  assert.ok(contractReg7.models.length > 0, 'Expected entity headers to produce extracted models');
+  const resReg7 = validateProjectContract(contractReg7);
+  assert.strictEqual(resReg7.warnings.length, 0, 'Expected model extraction to clear missing model warning');
+
+  console.log('✅ All Kanban spec contract regression assertions (A-T + Regressions 1-7) passed successfully.');
 }
 
 if (require.main === module) {
