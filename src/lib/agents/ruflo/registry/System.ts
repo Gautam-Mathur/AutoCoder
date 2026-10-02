@@ -50,9 +50,10 @@ For each endpoint, write using this EXACT format:
 RULES:
 - Every endpoint must support at least one feature from requirements.md
 - Use RESTful conventions: GET for reads, POST for creates, PUT for updates, DELETE for deletes
-- All data-modifying endpoints that access user data must have Auth Required: Yes
+- CRITICAL CONTRACT PRESERVATION RULE: Check "Authentication" in architecture.md and plan.md. If Authentication is "None" or states no auth needed, set "Auth Required: No" on ALL endpoints.
+- NEVER introduce authentication, AuthMiddleware, or User entities solely to support auth unless upstream requirements explicitly require accounts/authentication.
 - Response shapes must use the entity names and fields from ### Database Design
-- Do NOT invent endpoints for features that aren't in the requirements
+- Do NOT invent endpoints or auth features that aren't in the requirements
 
 ### Backend Services
 For each service, write:

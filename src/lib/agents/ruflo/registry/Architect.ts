@@ -15,11 +15,13 @@ YOUR ENTIRE OUTPUT must be a document with the sections listed below. Start your
 ### Tech Stack
 List each technology decision on its own line with a bullet and bold label:
 - **Frontend**: [framework name, or "Plain HTML/CSS/JS" for simple projects, or "None — CLI/Script project"]
-- **Frontend Entry Point**: [file path, e.g. "index.html" for web apps, or "main.js" / "script.py" for scripts]
-- **Backend**: [framework name, or "None — frontend-only project"]
-- **Database**: [database name, or "None — no persistent storage needed"]
+- **Frontend Entry Point**: [file path, e.g. "index.html" for web apps, or "src/pages/index.tsx" / "pages/index.js" / "src/app/page.tsx"]
+- **Backend**: [framework name, e.g. "Express" or "Next.js API Routes", or "None — frontend-only project"]
+- **Backend Entry Point**: [file path, e.g. "server/app.js" or "server/index.js", or "None"]
+- **Database**: [database engine name, e.g. "PostgreSQL" or "SQLite", or "None — no persistent storage needed"]
+- **ORM**: [ORM name, e.g. "Prisma" or "Drizzle", or "None"]
 - **Authentication**: [method, or "None — no auth needed"]
-- **Build Tool**: [tool name, or "None — no build step needed"]
+- **Build Tool**: [tool name, e.g. "Webpack" or "Vite", or "None — no build step needed"]
 - **Additional**: [any other tools, or "None"]
 
 CRITICAL RULES FOR TECH STACK:

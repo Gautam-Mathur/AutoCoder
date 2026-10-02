@@ -7,10 +7,28 @@ export interface CapabilityDefinition {
   forbiddenConstructs: string[];
 }
 
+export interface ContractEvidence {
+  source: string;
+  field: string;
+  value: string;
+  excerpt?: string;
+}
+
+export interface ImplementationBoundary {
+  id: string;
+  kind: 'frontend' | 'backend' | 'database' | 'shared' | 'config';
+  ownedFiles: string[];
+  entryPoint?: string;
+  runtime?: string;
+}
+
 export interface ApiEndpointContract {
   method: string;
   path: string;
   authRequired: boolean;
+  requestBody?: string;
+  response?: string;
+  source?: string;
 }
 
 export interface ModelContract {
@@ -29,13 +47,14 @@ export interface ProjectContract {
   };
   constraints?: string[];
   capabilities?: CapabilityDefinition[];
-  framework: 'NEXT_APP_ROUTER' | 'NEXT_PAGES_ROUTER' | 'VITE_SPA' | 'STATIC_HTML';
+  framework: 'NEXT_APP_ROUTER' | 'NEXT_PAGES_ROUTER' | 'VITE_SPA' | 'REACT_WEBPACK_SPA' | 'STATIC_HTML';
   language: 'typescript' | 'javascript';
   orm: 'prisma' | 'none';
   database: 'sqlite' | 'postgresql' | 'none';
   authentication: {
     required: boolean;
     mechanism?: string;
+    evidence?: ContractEvidence[];
   };
   routing: {
     style: 'app' | 'pages' | 'static';
@@ -44,6 +63,7 @@ export interface ProjectContract {
   apiEndpoints: ApiEndpointContract[];
   models: ModelContract[];
   dependencies: string[];
+  implementationBoundaries?: ImplementationBoundary[];
 }
 
 export interface ContractValidation {

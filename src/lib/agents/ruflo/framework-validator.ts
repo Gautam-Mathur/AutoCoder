@@ -7,7 +7,7 @@ export interface FrameworkValidationError {
 
 export interface FrameworkValidationResult {
   valid: boolean;
-  routingStyle: 'NEXT_APP_ROUTER' | 'NEXT_PAGES_ROUTER' | 'VITE_SPA' | 'STATIC_HTML';
+  routingStyle: 'NEXT_APP_ROUTER' | 'NEXT_PAGES_ROUTER' | 'VITE_SPA' | 'REACT_WEBPACK_SPA' | 'STATIC_HTML';
   errors: FrameworkValidationError[];
   warnings: FrameworkValidationError[];
 }
@@ -17,7 +17,7 @@ export interface FrameworkValidationResult {
  */
 export function validateFrameworkBoundaries(
   vfsFiles: Record<string, string>,
-  targetFramework: 'NEXT_APP_ROUTER' | 'NEXT_PAGES_ROUTER' | 'VITE_SPA' | 'STATIC_HTML' = 'NEXT_APP_ROUTER'
+  targetFramework: 'NEXT_APP_ROUTER' | 'NEXT_PAGES_ROUTER' | 'VITE_SPA' | 'REACT_WEBPACK_SPA' | 'STATIC_HTML' = 'NEXT_APP_ROUTER'
 ): FrameworkValidationResult {
   const errors: FrameworkValidationError[] = [];
   const warnings: FrameworkValidationError[] = [];
