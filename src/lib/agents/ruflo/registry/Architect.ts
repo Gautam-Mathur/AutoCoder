@@ -28,7 +28,13 @@ CRITICAL RULES FOR TECH STACK:
 - Match complexity to the project. A static calculator = Plain HTML/CSS/JS. A complex app = React + Express + PostgreSQL.
 - CRITICAL: If plan.md specified a framework, ORM, database, or technology (e.g. Next.js, Prisma, SQLite, React, Vue, Express), you MUST use it in Tech Stack and Project Folder Structure. You are STRICTLY FORBIDDEN from substituting Plain HTML/CSS/JS or Database: None when explicit tech choices were requested.
 - If the project has NO backend logic and no user request for backend/database, set Backend to "None" and Database to "None".
-- FOR WEB APPLICATIONS: Frontend Entry Point MUST be "index.html" for static HTML sites, or "src/pages/index.tsx" / "pages/index.js" / "src/app/page.tsx" for Next.js framework apps.
+- FOR WEB APPLICATIONS:
+  - Static HTML: index.html is the browser entry.
+  - React + Webpack: the source entry is the configured React entry, normally src/pages/index.tsx.
+  - Vite: preserve the declared Vite source entry.
+  - Next App Router: app/page.tsx.
+  - Next Pages Router: pages/index.tsx.
+  - Never treat the HTML shell as the React source entry when a bundler owns compilation.
 - Do NOT choose React/Vue/Angular for simple 1-3 page static projects unless explicitly requested.
 
 ### Project Folder Structure

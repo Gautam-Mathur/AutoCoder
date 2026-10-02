@@ -14,25 +14,54 @@ export interface ProjectValidationResult {
   warnings: ProjectValidationError[];
 }
 
-/**
- * Executes a whole-project TypeScript compilation pass across all files in the Virtual File System.
- */
-export async function validateGeneratedProject(conversationId: string): Promise<ProjectValidationResult> {
-  const allVfsFiles = await listVirtualFiles(conversationId);
-  const codeFiles = allVfsFiles.filter((f: string) => /\.(js|jsx|ts|tsx)$/.test(f));
-  const vfsContentMap = new Map<string, string>();
+export function validateReactHookImports(
+  file: string,
+  content: string,
+  errors: ProjectValidationError[]
+): void {
+  const hooks = [
+    'useState',
+    'useEffect',
+    'useContext',
+    'useReducer',
+    'useCallback',
+    'useMemo',
+    'useRef',
+    'useLayoutEffect',
+    'useTransition',
+  ];
 
-  for (const f of codeFiles) {
-    const content = await readVirtualFile(conversationId, f);
-    if (content !== null) {
-      vfsContentMap.set(f, content);
+  for (const hook of hooks) {
+    if (!new RegExp(`\\b${hook}\\s*\\(`).test(content)) {
+      continue;
+    }
+
+    const imported = new RegExp(
+      `import\\s*\\{[^}]*\\b${hook}\\b[^}]*\\}\\s*from\\s*['"]react['"]`
+    ).test(content);
+
+    if (!imported) {
+      errors.push({
+        file,
+        line: 1,
+        message: `React hook "${hook}" is used but is not explicitly imported from "react".`,
+      });
+    }
+  }
+}
+
+function getProjectCompilerOptions(
+  vfsContentMap: Map<string, string>
+): ts.CompilerOptions {
+  let tsconfigRaw: string | undefined;
+  for (const [k, v] of vfsContentMap.entries()) {
+    if (k === 'tsconfig.json' || k.endsWith('/tsconfig.json')) {
+      tsconfigRaw = v;
+      break;
     }
   }
 
-  const errors: ProjectValidationError[] = [];
-  const warnings: ProjectValidationError[] = [];
-
-  const compilerOptions: ts.CompilerOptions = {
+  const baseOptions: ts.CompilerOptions = {
     target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.CommonJS,
     jsx: ts.JsxEmit.ReactJSX,
@@ -46,6 +75,90 @@ export async function validateGeneratedProject(conversationId: string): Promise<
     },
   };
 
+  if (!tsconfigRaw) {
+    return baseOptions;
+  }
+
+  const parsedJson = ts.parseConfigFileTextToJson('tsconfig.json', tsconfigRaw);
+  if (parsedJson.error) {
+    return baseOptions;
+  }
+
+  const parseHost: ts.ParseConfigHost = {
+    useCaseSensitiveFileNames: true,
+    readDirectory: () => [],
+    fileExists: (f) => {
+      const normalized = f.replace(/\\/g, '/').replace(/^\.\//, '');
+      if (vfsContentMap.has(normalized)) return true;
+      for (const k of vfsContentMap.keys()) {
+        if (normalized.endsWith(k)) return true;
+      }
+      return false;
+    },
+    readFile: (f) => {
+      const normalized = f.replace(/\\/g, '/').replace(/^\.\//, '');
+      if (vfsContentMap.has(normalized)) return vfsContentMap.get(normalized);
+      for (const [k, v] of vfsContentMap.entries()) {
+        if (normalized.endsWith(k)) return v;
+      }
+      return undefined;
+    },
+  };
+
+  const parsed = ts.parseJsonConfigFileContent(
+    parsedJson.config,
+    parseHost,
+    '.'
+  );
+
+  return {
+    ...baseOptions,
+    ...parsed.options,
+    noEmit: true,
+    skipLibCheck: parsed.options.skipLibCheck ?? true,
+  };
+}
+
+/**
+ * Executes a whole-project TypeScript compilation pass across all files in the Virtual File System.
+ */
+export async function validateGeneratedProject(
+  input: string | Map<string, string> | Record<string, string>
+): Promise<ProjectValidationResult> {
+  const vfsContentMap = new Map<string, string>();
+  let codeFiles: string[] = [];
+
+  if (typeof input === 'string') {
+    const allVfsFiles = await listVirtualFiles(input);
+    codeFiles = allVfsFiles.filter((f: string) => /\.(js|jsx|ts|tsx)$/.test(f));
+    for (const f of codeFiles) {
+      const content = await readVirtualFile(input, f);
+      if (content !== null) {
+        vfsContentMap.set(f, content);
+      }
+    }
+  } else if (input instanceof Map) {
+    for (const [k, v] of input.entries()) {
+      vfsContentMap.set(k.replace(/\\/g, '/').replace(/^\.\//, ''), v);
+    }
+    codeFiles = Array.from(vfsContentMap.keys()).filter((f) => /\.(js|jsx|ts|tsx)$/.test(f));
+  } else {
+    for (const [k, v] of Object.entries(input)) {
+      vfsContentMap.set(k.replace(/\\/g, '/').replace(/^\.\//, ''), v);
+    }
+    codeFiles = Array.from(vfsContentMap.keys()).filter((f) => /\.(js|jsx|ts|tsx)$/.test(f));
+  }
+
+  const errors: ProjectValidationError[] = [];
+  const warnings: ProjectValidationError[] = [];
+
+  for (const [file, content] of vfsContentMap.entries()) {
+    if (/\.(tsx?|jsx?)$/.test(file)) {
+      validateReactHookImports(file, content, errors);
+    }
+  }
+
+  const compilerOptions = getProjectCompilerOptions(vfsContentMap);
   const host = ts.createCompilerHost(compilerOptions);
   const defaultReadFile = host.readFile;
   const defaultFileExists = host.fileExists;
@@ -55,7 +168,6 @@ export async function validateGeneratedProject(conversationId: string): Promise<
     if (vfsContentMap.has(normalized)) {
       return vfsContentMap.get(normalized)!;
     }
-    // Search with src/ prefix fallback
     for (const [k, v] of vfsContentMap.entries()) {
       if (normalized.endsWith(k)) return v;
     }

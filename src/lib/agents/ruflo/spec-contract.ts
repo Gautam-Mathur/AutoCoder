@@ -115,14 +115,20 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
 
   // 5. Extract API Endpoints from backend_spec
   const apiEndpoints: ApiEndpointContract[] = [];
-  const endpointRegex = /(GET|POST|PUT|DELETE|PATCH)\s+([\/\w\-:\.\{\}]+)(?:\s+-\s+([^\n]+))?/gi;
+  const endpointRegex = /(GET|POST|PUT|DELETE|PATCH)\s+([\/\w\-:\.\{\}]+)/gi;
   let match: RegExpExecArray | null;
 
   while ((match = endpointRegex.exec(backend)) !== null) {
     const method = match[1].toUpperCase();
     const path = match[2].trim();
-    const notes = match[3] || '';
-    const isAuth = (/auth\s*required\s*:\s*yes|auth:\s*true|protected|private|requires\s+auth/i.test(notes) || authRequired) && !/auth\s*required\s*:\s*no|auth:\s*false/i.test(notes);
+    const startIndex = match.index;
+    const nextMatch = backend.slice(startIndex + match[0].length).search(/(GET|POST|PUT|DELETE|PATCH)\s+[\/\w\-:\.\{\}]+|###/i);
+    const blockText = nextMatch !== -1 ? backend.slice(startIndex, startIndex + match[0].length + nextMatch) : backend.slice(startIndex);
+
+    const hasExplicitAuthYes = /auth\s*required\s*:\s*yes|auth:\s*true|protected|private|requires\s+auth/i.test(blockText);
+    const hasExplicitAuthNo = /auth\s*required\s*:\s*no|auth:\s*false|public/i.test(blockText);
+
+    const isAuth = (hasExplicitAuthYes || (authRequired && !hasExplicitAuthNo));
 
     if (!apiEndpoints.some((e) => e.method === method && e.path === path)) {
       apiEndpoints.push({
@@ -232,6 +238,14 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
   };
 }
 
+function looksLikeServerEntry(file: string): boolean {
+  return /(^|\/)(server|api|app|index|main)\.(ts|tsx|js|jsx)$/i.test(file);
+}
+
+function looksLikeFrontendClient(file: string): boolean {
+  return /(^|\/)(apiClient|client|httpClient)\.(ts|tsx|js|jsx)$/i.test(file);
+}
+
 /**
  * Validates a ProjectContract for internal contradictions across specification documents.
  */
@@ -270,12 +284,30 @@ export function validateProjectContract(contract: ProjectContract): ContractVali
   }
 
   // Contradiction Check 4: Express Backend Topology Contradiction
-  const backendBoundary = contract.implementationBoundaries?.find((b) => b.kind === 'backend');
-  if (backendBoundary) {
-    const looksLikeClientFile = (f: string) => /(^|\/)(apiClient|client|httpClient)\.(ts|tsx|js|jsx)$/i.test(f);
-    const onlyHasClientFiles = backendBoundary.ownedFiles.length > 0 && backendBoundary.ownedFiles.every(looksLikeClientFile);
-    if ((backendBoundary.ownedFiles.length === 0 && !backendBoundary.entryPoint) || (onlyHasClientFiles && !backendBoundary.entryPoint)) {
-      errors.push('Backend topology contradiction: Express backend declared but owns no server entry point or owns only a frontend apiClient.');
+  const backendBoundary = contract.implementationBoundaries?.find((b) => b.kind === 'backend' || b.runtime === 'express');
+  if (backendBoundary || contract.implementationBoundaries?.some((b) => b.runtime === 'express')) {
+    const bBoundary = backendBoundary || contract.implementationBoundaries?.find((b) => b.runtime === 'express')!;
+    const hasServerEntry = Boolean(bBoundary.entryPoint) || bBoundary.ownedFiles.some(looksLikeServerEntry);
+    const onlyClientOrShared =
+      bBoundary.ownedFiles.length > 0 &&
+      bBoundary.ownedFiles.every(
+        (file) =>
+          looksLikeFrontendClient(file) ||
+          /(^|\/)(types|shared)\//i.test(file) ||
+          /(^|\/)types\.(ts|tsx|js|jsx)$/i.test(file) ||
+          file.endsWith('/types/index.ts')
+      );
+
+    if (!hasServerEntry) {
+      errors.push(
+        'Backend topology contradiction: Express backend is declared but no server entry point or server-owned implementation file is defined.'
+      );
+    }
+
+    if (onlyClientOrShared) {
+      errors.push(
+        'Backend topology contradiction: Express backend contains only frontend/shared files and no server implementation.'
+      );
     }
   }
 

@@ -87,6 +87,10 @@ export function validateFrameworkBoundaries(
     }
   }
 
+  if (targetFramework === 'REACT_WEBPACK_SPA') {
+    validateReactWebpackBootstrap(vfsFiles, errors);
+  }
+
   return {
     valid: errors.length === 0,
     routingStyle: targetFramework,
@@ -94,3 +98,63 @@ export function validateFrameworkBoundaries(
     warnings,
   };
 }
+
+function validateReactWebpackBootstrap(
+  vfsFiles: Record<string, string>,
+  errors: FrameworkValidationError[]
+): void {
+  const webpackConfig = Object.keys(vfsFiles).find((f) =>
+    /(^|\/)webpack\.config\.(js|cjs|mjs|ts)$/i.test(f)
+  );
+
+  if (!webpackConfig) {
+    errors.push({
+      file: 'webpack.config.js',
+      line: 1,
+      severity: 'ERROR',
+      message: 'REACT_WEBPACK_SPA requires a webpack configuration file.',
+    });
+  }
+
+  for (const [file, html] of Object.entries(vfsFiles)) {
+    if (!/\.html$/i.test(file)) continue;
+
+    const scripts = Array.from(
+      html.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi)
+    ).map((m) => m[1]);
+
+    const duplicates = [
+      ...new Set(scripts.filter((src, i) => scripts.indexOf(src) !== i)),
+    ];
+
+    for (const src of duplicates) {
+      errors.push({
+        file,
+        line: 1,
+        severity: 'ERROR',
+        message: `Duplicate script reference "${src}" in React/Webpack HTML.`,
+      });
+    }
+
+    for (const src of scripts) {
+      if (/\.tsx?$/i.test(src) || /^src\//i.test(src) || /^\.\/src\//i.test(src)) {
+        errors.push({
+          file,
+          line: 1,
+          severity: 'ERROR',
+          message: `React/Webpack HTML must not directly execute source module "${src}".`,
+        });
+      }
+    }
+
+    if (!/<div[^>]+id=["']root["']/i.test(html)) {
+      errors.push({
+        file,
+        line: 1,
+        severity: 'ERROR',
+        message: 'React/Webpack HTML is missing the React root container.',
+      });
+    }
+  }
+}
+

@@ -55,6 +55,14 @@ RULES:
 - Response shapes must use the entity names and fields from ### Database Design
 - Do NOT invent endpoints or auth features that aren't in the requirements
 
+BACKEND TOPOLOGY RULES:
+1. If Backend is Express, Backend Entry Point must be declared (e.g. server/index.ts or server/app.ts).
+2. Backend-owned files must contain actual server implementation.
+3. apiClient.ts is a frontend/client boundary, not an Express server.
+4. Shared types belong to a shared boundary or Shared Types module.
+5. Do not create User/auth entities unless requirements explicitly require users/accounts/ownership.
+6. Preserve architecture.md framework/database/ORM/auth decisions.
+
 ### Backend Services
 For each service, write:
 
