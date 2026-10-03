@@ -54,6 +54,38 @@ export function detectExplicitAuthRequired(text: string): boolean {
   ].some((pattern) => pattern.test(text));
 }
 
+export function inferFrameworkDependencies(
+  contract: Partial<ProjectContract> & {
+    framework?: string;
+    orm?: string;
+    dependencies?: string[];
+    implementationBoundaries?: ImplementationBoundary[];
+  }
+): string[] {
+  const deps = new Set<string>(contract.dependencies || []);
+
+  if (contract.framework === 'VITE_SPA' || contract.framework === 'REACT_WEBPACK_SPA') {
+    deps.add('react');
+    deps.add('react-dom');
+  }
+
+  if (contract.framework === 'VITE_SPA') {
+    deps.add('vite');
+  }
+
+  if (contract.orm === 'prisma') {
+    deps.add('prisma');
+    deps.add('@prisma/client');
+  }
+
+  const backendBoundary = contract.implementationBoundaries?.find((b) => b.kind === 'backend' || b.runtime === 'express');
+  if (backendBoundary?.runtime === 'express' || contract.implementationBoundaries?.some((b) => b.runtime === 'express')) {
+    deps.add('express');
+  }
+
+  return Array.from(deps);
+}
+
 /**
  * Deterministically extracts a unified ProjectContract from Markdown specification artifacts and project facts.
  */
@@ -196,7 +228,7 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
     entryPoints.push('app/page.tsx', 'app/layout.tsx');
   } else if (framework === 'NEXT_PAGES_ROUTER') {
     entryPoints.push('pages/index.tsx', 'pages/_app.tsx');
-  } else if (framework === 'REACT_WEBPACK_SPA') {
+  } else if (framework === 'REACT_WEBPACK_SPA' || framework === 'VITE_SPA') {
     const explicitEntry = arch.match(/Frontend Entry Point:\s*([^\n]+)/i)?.[1]?.trim().replace(/[*`'"]/g, '');
     entryPoints.push(explicitEntry || 'src/pages/index.tsx');
   } else {
@@ -224,18 +256,25 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
     });
   }
 
-  // 9. Extract Declared Dependencies using getPackageRoot
+  // 9. Extract raw dependencies from specs
   const dependencies: string[] = [];
-  const depMatches = combined.matchAll(/(?:dependency|dependencies|package|packages):\s*([^\n]+)/gi);
-  for (const dm of depMatches) {
-    const parts = dm[1].split(/[,;]/);
-    for (const p of parts) {
-      const pkgRoot = getPackageRoot(p);
-      if (pkgRoot && !pkgRoot.startsWith('.') && !pkgRoot.startsWith('@/') && !dependencies.includes(pkgRoot)) {
-        dependencies.push(pkgRoot);
-      }
+  const depMatches = combined.matchAll(/`([@a-z0-9\/-]+)`|[\-\*]\s+([@a-z0-9\/-]+)/gi);
+  for (const match of depMatches) {
+    const dep = (match[1] || match[2] || '').trim();
+    if (dep && !dep.startsWith('.') && !dep.startsWith('/') && !dependencies.includes(dep)) {
+      dependencies.push(dep);
     }
   }
+
+  const normalizedDependencies = inferFrameworkDependencies({
+    framework,
+    orm,
+    dependencies,
+    implementationBoundaries,
+  });
+
+  const moduleSystem: 'ESM' | 'COMMONJS' =
+    /import\s+.*from|export\s+/i.test(combined) || /ES6|ESM|module/i.test(combined) ? 'ESM' : 'COMMONJS';
 
   const rawContract = {
     framework,
@@ -250,10 +289,11 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
     routing: {
       style: routingStyle,
     },
+    moduleSystem,
     entryPoints,
     apiEndpoints,
     models,
-    dependencies,
+    dependencies: normalizedDependencies,
     implementationBoundaries,
   };
 

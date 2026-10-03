@@ -7,6 +7,8 @@ export interface PrismaValidationError {
 
 export interface PrismaValidationResult {
   valid: boolean;
+  schemaValid: boolean;
+  clientGenerationVerified: boolean;
   parsedModels: string[];
   errors: PrismaValidationError[];
   warnings: PrismaValidationError[];
@@ -54,12 +56,15 @@ export function validatePrismaUsage(
   schemaContent: string
 ): PrismaValidationResult {
   const schemaModels = parsePrismaSchema(schemaContent);
-  const parsedModelNames = Array.from(schemaModels.values()).map(m => m.name);
+  const parsedModelNames = Array.from(schemaModels.values()).map((m) => m.name);
   const errors: PrismaValidationError[] = [];
   const warnings: PrismaValidationError[] = [];
 
+  const clientGenerationVerified = Object.keys(vfsFiles).some((f) =>
+    f.includes('node_modules/@prisma/client') || f.includes('.prisma/client')
+  );
+
   if (schemaModels.size === 0) {
-    // Check if any file calls prisma.*
     for (const [filename, content] of Object.entries(vfsFiles)) {
       if (!/\.(js|jsx|ts|tsx)$/.test(filename) || !content) continue;
       if (/prisma\.[A-Za-z0-9_]+\.(find|create|update|delete|upsert)/i.test(content)) {
@@ -74,13 +79,23 @@ export function validatePrismaUsage(
 
     return {
       valid: errors.length === 0,
+      schemaValid: errors.length === 0,
+      clientGenerationVerified,
       parsedModels: [],
       errors,
       warnings,
     };
   }
 
-  // Scan all JS/TS files for prisma.<model>.<action> calls
+  if (!clientGenerationVerified) {
+    warnings.push({
+      file: 'prisma/schema.prisma',
+      line: 1,
+      model: 'system',
+      message: 'Prisma Client generation has not been run in local environment. Validation relies on static schema inspection.',
+    });
+  }
+
   for (const [filename, content] of Object.entries(vfsFiles)) {
     if (!/\.(js|jsx|ts|tsx)$/.test(filename) || !content) continue;
 
@@ -107,6 +122,8 @@ export function validatePrismaUsage(
 
   return {
     valid: errors.length === 0,
+    schemaValid: errors.length === 0,
+    clientGenerationVerified,
     parsedModels: parsedModelNames,
     errors,
     warnings,

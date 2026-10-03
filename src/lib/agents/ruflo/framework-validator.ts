@@ -87,6 +87,10 @@ export function validateFrameworkBoundaries(
     }
   }
 
+  if (targetFramework === 'VITE_SPA') {
+    validateViteBootstrap(vfsFiles, errors);
+  }
+
   if (targetFramework === 'REACT_WEBPACK_SPA') {
     validateReactWebpackBootstrap(vfsFiles, errors);
   }
@@ -97,6 +101,104 @@ export function validateFrameworkBoundaries(
     errors,
     warnings,
   };
+}
+
+function validateViteBootstrap(
+  vfsFiles: Record<string, string>,
+  errors: FrameworkValidationError[]
+): void {
+  const viteConfig = Object.keys(vfsFiles).find((f) =>
+    /(^|\/)vite\.config\.(js|cjs|mjs|ts)$/i.test(f)
+  );
+
+  if (!viteConfig) {
+    errors.push({
+      file: 'vite.config.js',
+      line: 1,
+      severity: 'ERROR',
+      message: 'VITE_SPA requires a vite configuration file (e.g. vite.config.js or vite.config.ts).',
+    });
+  }
+
+  let mountIdInCode: string | null = null;
+  for (const [file, code] of Object.entries(vfsFiles)) {
+    if (!/\.(js|jsx|ts|tsx)$/.test(file) || !code) continue;
+    const match = code.match(/document\.getElementById\(["']([^"']+)["']\)/i);
+    if (match) {
+      mountIdInCode = match[1];
+      break;
+    }
+  }
+
+  for (const [file, html] of Object.entries(vfsFiles)) {
+    if (!/\.html$/i.test(file)) continue;
+
+    const scriptMatches = Array.from(
+      html.matchAll(/<script\b([^>]*)>(?:<\/script>)?/gi)
+    );
+
+    let hasModuleScript = false;
+
+    for (const m of scriptMatches) {
+      const attrs = m[1];
+      const srcMatch = attrs.match(/src=["']([^"']+)["']/i);
+      const isModule = /type=["']module["']/i.test(attrs);
+
+      if (srcMatch) {
+        const src = srcMatch[1];
+        if (isModule) {
+          hasModuleScript = true;
+        }
+
+        if (/^(?:\/)?(server|api)\//i.test(src) || /(^|\/)(server|app)\.(js|ts)$/i.test(src)) {
+          errors.push({
+            file,
+            line: 1,
+            severity: 'ERROR',
+            message: `Vite HTML must not reference backend/server script "${src}".`,
+          });
+        }
+
+        if (/(^|\/)(components|services|types|utils|hooks)\//i.test(src)) {
+          errors.push({
+            file,
+            line: 1,
+            severity: 'ERROR',
+            message: `Vite HTML must not directly link non-entry source module "${src}". Import it in your entry module instead.`,
+          });
+        }
+      }
+    }
+
+    if (!hasModuleScript) {
+      errors.push({
+        file,
+        line: 1,
+        severity: 'ERROR',
+        message: 'Vite HTML must include a <script type="module" src="..."> entry point.',
+      });
+    }
+
+    const targetId = mountIdInCode || 'root';
+    const idRegex = new RegExp(`id=["']${targetId}["']`, 'i');
+    if (!idRegex.test(html)) {
+      if (mountIdInCode) {
+        errors.push({
+          file,
+          line: 1,
+          severity: 'ERROR',
+          message: `React mount target mismatch: React entry point mounts to element id="${mountIdInCode}" but "${file}" does not contain an element with id="${mountIdInCode}".`,
+        });
+      } else if (!/<div[^>]+id=["'](root|app)["']/i.test(html)) {
+        errors.push({
+          file,
+          line: 1,
+          severity: 'ERROR',
+          message: 'Vite HTML is missing a React mount container (e.g. <div id="root"> or <div id="app">).',
+        });
+      }
+    }
+  }
 }
 
 function validateReactWebpackBootstrap(

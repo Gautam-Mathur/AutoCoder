@@ -11,7 +11,12 @@ import { exec } from 'child_process';
 import { writeVirtualFile, readVirtualFile, listVirtualFiles, applyDiff, flushVfsToDisk, safeWriteFileSync } from './vfs';
 import { runLinter, runCrossFileImportCheck } from './linter';
 import { buildAndPersistStructuralGraph, detectAndPersistArchitectureDrift } from './structural-graph';
+import { ProjectContract } from './contracts';
 import { extractProjectContract, validateProjectContract } from './spec-contract';
+
+function escapeRegex(val: string): string {
+  return val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 import { resolveModule, parseTsConfigOptions } from './module-resolver';
 import { validatePackageDependencies } from './dependency-validator';
 import { validateGeneratedProject } from './project-validator';
@@ -746,6 +751,26 @@ export function validateBlueprintGraph(
     errors.push(`Dependency cycle detected in blueprint file graph.`);
   }
 
+  // 5. Runtime Boundary Validation
+  for (const [, section] of fileMap.entries()) {
+    if (section.file.endsWith('index.html') || section.file === 'index.html') {
+      for (const dep of section.dependencies) {
+        if (!dep || dep === 'None') continue;
+        if (
+          dep.startsWith('server/') ||
+          dep.startsWith('api/') ||
+          dep.includes('/server/') ||
+          dep.includes('/api/') ||
+          /(^|\/)(server|app)\.(js|ts)$/i.test(dep)
+        ) {
+          errors.push(
+            `Runtime Boundary Violation in Blueprint: Frontend entry "${section.file}" declares backend dependency "${dep}". HTML cannot import backend runtime files.`
+          );
+        }
+      }
+    }
+  }
+
   return {
     valid: errors.length === 0,
     errors,
@@ -821,32 +846,110 @@ export function extractFilesFromArchitecture(archContent: string): string[] {
  * Inspects generated HTML files and ensures all created CSS and JS files in VFS
  * are properly linked (<link rel="stylesheet"> and <script src="...">).
  */
+/**
+ * Post-Pass HTML Asset Link Synchronizer.
+ * Inspects generated HTML files and ensures appropriate frontend assets are linked,
+ * while preventing backend script injection and respecting bundler/framework contracts.
+ */
 export function syncHtmlAssetLinks(
   htmlContent: string,
-  allFiles: string[]
+  allFiles: string[],
+  contract?: ProjectContract
 ): { updatedHtml: string; syncedLinks: string[] } {
   let updatedHtml = htmlContent;
   const syncedLinks: string[] = [];
 
-  const cssFiles = allFiles.filter((f) => f.endsWith('.css'));
+  // 0. Remove any erroneously injected server/backend script tags from HTML
+  const serverScriptRegex = /<script\b[^>]*\bsrc=["'](?:(?:\/)?(?:server|api)\/|[^"']*\b(?:server|app)\.(?:js|ts))["'][^>]*>(?:<\/script>)?\n?/gi;
+  if (serverScriptRegex.test(updatedHtml)) {
+    updatedHtml = updatedHtml.replace(serverScriptRegex, '');
+    syncedLinks.push('Removed backend script reference from HTML');
+  }
+
+  const framework = contract?.framework || 'STATIC_HTML';
+
+  if (framework === 'VITE_SPA') {
+    const entryPoints = contract?.entryPoints || ['src/pages/index.tsx', 'src/main.tsx', 'src/index.tsx'];
+    const canonicalEntry = entryPoints.find((e: string) => allFiles.includes(e)) || entryPoints[0] || 'src/pages/index.tsx';
+    const normEntry = canonicalEntry.startsWith('/') ? canonicalEntry : `/${canonicalEntry}`;
+    const altEntry = canonicalEntry.replace(/^\//, '');
+
+    const scriptPattern = new RegExp(`<script\\b[^>]*\\bsrc=["'](?:${escapeRegex(normEntry)}|${escapeRegex(altEntry)}|${escapeRegex('/' + altEntry)})["'][^>]*>`, 'i');
+
+    if (scriptPattern.test(updatedHtml)) {
+      if (!/<script\b[^>]*type=["']module["'][^>]*\bsrc=/i.test(updatedHtml) && !/<script\b[^>]*\bsrc=[^>]*type=["']module["']/i.test(updatedHtml)) {
+        updatedHtml = updatedHtml.replace(
+          new RegExp(`(<script\\b)([^>]*\\bsrc=["'](?:${escapeRegex(normEntry)}|${escapeRegex(altEntry)}|${escapeRegex('/' + altEntry)})["'])`, 'i'),
+          '$1 type="module"$2'
+        );
+        syncedLinks.push(`Added type="module" to Vite entry script tag (${normEntry})`);
+      }
+    } else {
+      const scriptTag = `  <script type="module" src="${normEntry}"></script>\n`;
+      if (/<\/body>/i.test(updatedHtml)) {
+        updatedHtml = updatedHtml.replace(/<\/body>/i, `${scriptTag}</body>`);
+      } else if (/<\/head>/i.test(updatedHtml)) {
+        updatedHtml = updatedHtml.replace(/<\/head>/i, `${scriptTag}</head>`);
+      } else {
+        updatedHtml = `${updatedHtml}\n${scriptTag}`;
+      }
+      syncedLinks.push(`Connected Vite module script <script type="module" src="${normEntry}"></script>`);
+    }
+
+    const cssFiles = allFiles.filter((f) => f.endsWith('.css') && !f.includes('node_modules'));
+    for (const cssFile of cssFiles) {
+      const cssBasename = cssFile.split('/').pop() || cssFile;
+      const isLinked = updatedHtml.includes(cssFile) || updatedHtml.includes(cssBasename);
+      if (!isLinked) {
+        const linkTag = `  <link rel="stylesheet" href="${cssFile}">\n`;
+        if (/<\/head>/i.test(updatedHtml)) {
+          updatedHtml = updatedHtml.replace(/<\/head>/i, `${linkTag}</head>`);
+        } else {
+          updatedHtml = `${linkTag}` + updatedHtml;
+        }
+        syncedLinks.push(`Connected stylesheet <link rel="stylesheet" href="${cssFile}"> to <head>`);
+      }
+    }
+
+    return { updatedHtml, syncedLinks };
+  }
+
+  if (framework === 'REACT_WEBPACK_SPA') {
+    const entryPoints = contract?.entryPoints || ['src/index.tsx', 'src/pages/index.tsx'];
+    const canonicalEntry = entryPoints[0] || 'bundle.js';
+    const bundleName = canonicalEntry.endsWith('.js') ? canonicalEntry : 'bundle.js';
+
+    if (!updatedHtml.includes(bundleName) && !updatedHtml.includes('dist/bundle.js')) {
+      const scriptTag = `  <script src="${bundleName}" defer></script>\n`;
+      if (/<\/body>/i.test(updatedHtml)) {
+        updatedHtml = updatedHtml.replace(/<\/body>/i, `${scriptTag}</body>`);
+      } else {
+        updatedHtml = `${updatedHtml}\n${scriptTag}`;
+      }
+      syncedLinks.push(`Connected React Webpack bundle script <script src="${bundleName}" defer></script>`);
+    }
+    return { updatedHtml, syncedLinks };
+  }
+
+  const cssFiles = allFiles.filter((f) => f.endsWith('.css') && !f.includes('node_modules'));
   const jsFiles = allFiles.filter(
     (f) =>
       /\.(js|ts|jsx|tsx)$/.test(f) &&
       !f.endsWith('.d.ts') &&
       !f.includes('config') &&
-      !f.includes('test')
+      !f.includes('test') &&
+      !f.startsWith('server/') &&
+      !f.startsWith('api/') &&
+      !f.includes('/server/') &&
+      !f.includes('/api/')
   );
 
-  const lowerHtml = updatedHtml.toLowerCase();
-
-  // 1. Sync CSS files
   for (const cssFile of cssFiles) {
     const cssBasename = cssFile.split('/').pop() || cssFile;
     const isLinked = updatedHtml.includes(cssFile) || updatedHtml.includes(cssBasename);
-
     if (!isLinked) {
       const linkTag = `  <link rel="stylesheet" href="${cssFile}">\n`;
-      if (lowerHtml.includes('</head>')) {
+      if (/<\/head>/i.test(updatedHtml)) {
         updatedHtml = updatedHtml.replace(/<\/head>/i, `${linkTag}</head>`);
       } else {
         updatedHtml = `${linkTag}` + updatedHtml;
@@ -855,21 +958,19 @@ export function syncHtmlAssetLinks(
     }
   }
 
-  // 2. Sync JS / TS script files
   for (const jsFile of jsFiles) {
     const jsBasename = jsFile.split('/').pop() || jsFile;
     const isLinked = updatedHtml.includes(jsFile) || updatedHtml.includes(jsBasename);
-
     if (!isLinked) {
       const scriptTag = `  <script src="${jsFile}" defer></script>\n`;
-      if (lowerHtml.includes('</body>')) {
+      if (/<\/body>/i.test(updatedHtml)) {
         updatedHtml = updatedHtml.replace(/<\/body>/i, `${scriptTag}</body>`);
-      } else if (lowerHtml.includes('</head>')) {
+      } else if (/<\/head>/i.test(updatedHtml)) {
         updatedHtml = updatedHtml.replace(/<\/head>/i, `${scriptTag}</head>`);
       } else {
-        updatedHtml = updatedHtml + `\n${scriptTag}`;
+        updatedHtml = `${updatedHtml}\n${scriptTag}`;
       }
-      syncedLinks.push(`Connected script <script src="${jsFile}" defer></script> before </body>`);
+      syncedLinks.push(`Connected script <script src="${jsFile}" defer></script>`);
     }
   }
 
@@ -1542,10 +1643,17 @@ export async function runOrchestrator(
         }
 
         // R3-3: Post-Pass HTML Asset Link Synchronization & Auto-Connection
+        const syncSpecMap: Record<string, string> = {};
+        for (const sf of ['plan.md', 'requirements.md', 'architecture.md', 'backend_spec.md', 'ui_spec.md']) {
+          const sc = await readVirtualFile(conversationId, sf);
+          if (sc) syncSpecMap[sf] = sc;
+        }
+        const syncContract = extractProjectContract(syncSpecMap);
+
         for (const htmlFile of htmlFiles) {
           const rawHtml = (await readVirtualFile(conversationId, htmlFile)) || '';
           if (rawHtml) {
-            const { updatedHtml, syncedLinks } = syncHtmlAssetLinks(rawHtml, allVfs);
+            const { updatedHtml, syncedLinks } = syncHtmlAssetLinks(rawHtml, allVfs, syncContract);
             if (syncedLinks.length > 0) {
               await writeVirtualFile(conversationId, htmlFile, updatedHtml);
               writeProjectFile(conversationId, htmlFile, updatedHtml);
@@ -1792,9 +1900,9 @@ export async function runOrchestrator(
         const projVal = await validateGeneratedProject(conversationId);
         const packageVal = validatePackageDependencies(vfsFilesRecord, vfsFilesRecord['package.json'] || '');
         const prismaVal = validatePrismaUsage(vfsFilesRecord, vfsFilesRecord['prisma/schema.prisma'] || '');
-        const apiVal = validateApiContracts(specContract.apiEndpoints, vfsFilesRecord);
+        const apiVal = validateApiContracts(specContract, vfsFilesRecord);
         const frameworkVal = validateFrameworkBoundaries(vfsFilesRecord, specContract.framework);
-        const runtimeVal = await probeGeneratedProjectRoutes(specContract.apiEndpoints, vfsFilesRecord);
+        const runtimeVal = await probeGeneratedProjectRoutes(specContract, vfsFilesRecord);
         const securityVal = validateSecurityGate(vfsFilesRecord);
 
         const qGate = evaluateQualityGate({

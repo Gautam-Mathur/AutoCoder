@@ -59,6 +59,7 @@ export interface ProjectContract {
   routing: {
     style: 'app' | 'pages' | 'static';
   };
+  moduleSystem?: 'ESM' | 'COMMONJS';
   entryPoints: string[];
   apiEndpoints: ApiEndpointContract[];
   models: ModelContract[];

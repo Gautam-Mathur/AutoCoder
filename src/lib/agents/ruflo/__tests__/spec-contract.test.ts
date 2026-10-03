@@ -4,6 +4,7 @@ import { validateFrameworkBoundaries } from '../framework-validator';
 import { validateReactHookImports, ProjectValidationError } from '../project-validator';
 import { probeGeneratedProjectRoutes } from '../runtime-validator';
 import { validateApiContracts } from '../api-contract-validator';
+import { syncHtmlAssetLinks, validateBlueprintGraph } from '../orchestrator';
 
 export function runKanbanContractTests(): void {
   // Test A: Exact Kanban authentication contradiction
@@ -377,7 +378,82 @@ Frontend Entry Point: src/pages/index.tsx
   const resReg7 = validateProjectContract(contractReg7);
   assert.strictEqual(resReg7.warnings.length, 0, 'Expected model extraction to clear missing model warning');
 
-  console.log('✅ All Kanban spec contract regression assertions (A-T + Regressions 1-7) passed successfully.');
+  // Regression 8: syncHtmlAssetLinks Vite SPA idempotency and server script rejection
+  const vfsFilesReg8 = ['index.html', 'src/pages/index.tsx', 'src/components/Column.tsx', 'server/app.js'];
+  const contractReg8 = extractProjectContract({
+    'plan.md': '',
+    'requirements.md': '',
+    'architecture.md': 'Frontend: React\nBuild Tool: Vite\nFrontend Entry Point: src/pages/index.tsx\nBackend: Express',
+    'backend_spec.md': '',
+    'ui_spec.md': '',
+  });
+
+  const dirtyHtml = `<!DOCTYPE html><html><head></head><body><script src="server/app.js" defer></script><div id="root"></div></body></html>`;
+  const syncResult1 = syncHtmlAssetLinks(dirtyHtml, vfsFilesReg8, contractReg8);
+  assert.ok(!syncResult1.updatedHtml.includes('server/app.js'), 'Expected syncHtmlAssetLinks to strip server/app.js script tag');
+  assert.ok(syncResult1.updatedHtml.includes('type="module"'), 'Expected syncHtmlAssetLinks to add module script tag');
+  assert.ok(syncResult1.updatedHtml.includes('/src/pages/index.tsx'), 'Expected syncHtmlAssetLinks to reference canonical Vite entry');
+
+  const syncResult2 = syncHtmlAssetLinks(syncResult1.updatedHtml, vfsFilesReg8, contractReg8);
+  assert.strictEqual(syncResult2.syncedLinks.length, 0, 'Expected syncHtmlAssetLinks to be idempotent on second run');
+  assert.strictEqual(syncResult1.updatedHtml, syncResult2.updatedHtml, 'Expected HTML content to remain identical on second run');
+
+  // Regression 9: validateViteBootstrap checks
+  const resViteValid = validateFrameworkBoundaries(
+    {
+      'vite.config.ts': 'export default {};',
+      'index.html': '<!DOCTYPE html><html><body><div id="root"></div><script type="module" src="/src/pages/index.tsx"></script></body></html>',
+      'src/pages/index.tsx': 'import React from "react"; createRoot(document.getElementById("root")).render(<App />);',
+    },
+    'VITE_SPA'
+  );
+  assert.strictEqual(resViteValid.valid, true, 'Expected valid Vite SPA project to pass framework validation');
+
+  const resViteServerInjected = validateFrameworkBoundaries(
+    {
+      'vite.config.ts': 'export default {};',
+      'index.html': '<!DOCTYPE html><html><body><script src="server/app.js"></script><script type="module" src="/src/pages/index.tsx"></script></body></html>',
+    },
+    'VITE_SPA'
+  );
+  assert.strictEqual(resViteServerInjected.valid, false, 'Expected Vite HTML with server/app.js to fail framework validation');
+
+  // Regression 10: Express router prefix composition in validateApiContracts
+  const resRouterComp = validateApiContracts(
+    {
+      framework: 'VITE_SPA',
+      language: 'typescript',
+      orm: 'none',
+      database: 'none',
+      authentication: { required: false },
+      routing: { style: 'static' },
+      entryPoints: ['src/pages/index.tsx'],
+      apiEndpoints: [{ method: 'GET', path: '/api/boards', authRequired: false, source: 'backend_spec.md' }],
+      models: [],
+      dependencies: [],
+    },
+    {
+      'server/app.ts': 'app.use("/api", boardRouter);',
+      'server/routes/boards.ts': 'router.get("/boards", getBoards);',
+    }
+  );
+  assert.strictEqual(resRouterComp.valid, true, 'Expected Express sub-router prefix composition to be recognized by validateApiContracts');
+
+  // Regression 11: validateBlueprintGraph runtime boundary check
+  const bpBoundaryVal = validateBlueprintGraph([
+    {
+      file: 'index.html',
+      purpose: 'Entry HTML',
+      specsRequired: [],
+      exports: [],
+      dependencies: ['server/app.js', 'src/pages/index.tsx'],
+      details: '',
+      rawSection: 'File: index.html\nDependencies: server/app.js, src/pages/index.tsx',
+    },
+  ]);
+  assert.strictEqual(bpBoundaryVal.valid, false, 'Expected Blueprint graph declaring index.html -> server/app.js to fail runtime boundary validation');
+
+  console.log('✅ All Kanban spec contract regression assertions (A-T + Regressions 1-11) passed successfully.');
 }
 
 if (require.main === module) {

@@ -1,4 +1,4 @@
-import { ApiEndpointContract } from './contracts';
+import { ApiEndpointContract, ProjectContract } from './contracts';
 
 export interface ApiContractError {
   endpoint: string;
@@ -15,8 +15,13 @@ export interface ApiContractValidationResult {
   warnings: ApiContractError[];
 }
 
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function normalizeRoutePath(p: string): string {
+  return p
+    .trim()
+    .replace(/\/+/g, '/')
+    .replace(/\/$/, '')
+    .replace(/:[a-zA-Z0-9_]+/g, ':param')
+    .replace(/\{[a-zA-Z0-9_]+\}/g, ':param');
 }
 
 function expressRouteExists(
@@ -24,30 +29,74 @@ function expressRouteExists(
   vfsFiles: Record<string, string>
 ): string | undefined {
   const method = endpoint.method.toLowerCase();
-  const path = endpoint.path;
+  const targetNormPath = normalizeRoutePath(endpoint.path);
 
-  const pattern = new RegExp(
-    `\\.(?:${method}|all|use)\\s*\\(\\s*['"]${escapeRegex(path)}['"]`,
-    'i'
-  );
+  // 1. Direct Regex check in all JS/TS files
+  for (const [file, content] of Object.entries(vfsFiles)) {
+    if (!/\.(ts|tsx|js|jsx)$/.test(file)) continue;
+
+    const routeRegex = new RegExp(
+      `\\.(?:${method}|all|use)\\s*\\(\\s*['"]([^'"]+)['"]`,
+      'gi'
+    );
+    let match: RegExpExecArray | null;
+    while ((match = routeRegex.exec(content)) !== null) {
+      const declaredPath = match[1];
+      if (normalizeRoutePath(declaredPath) === targetNormPath) {
+        return file;
+      }
+    }
+  }
+
+  // 2. Router prefix composition check (e.g. app.use('/api', router) + router.get('/boards'))
+  const mounts: Array<{ prefix: string; file: string }> = [];
+  for (const [file, content] of Object.entries(vfsFiles)) {
+    if (!/\.(ts|tsx|js|jsx)$/.test(file)) continue;
+
+    const useMatches = content.matchAll(/app\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*([a-zA-Z0-9_\$]+)/g);
+    for (const um of useMatches) {
+      mounts.push({ prefix: um[1], file });
+    }
+  }
 
   for (const [file, content] of Object.entries(vfsFiles)) {
     if (!/\.(ts|tsx|js|jsx)$/.test(file)) continue;
-    if (pattern.test(content)) return file;
+
+    const routerMethodRegex = new RegExp(
+      `(?:router|app)\\.(?:${method}|all)\\s*\\(\\s*['"]([^'"]+)['"]`,
+      'gi'
+    );
+    let rm: RegExpExecArray | null;
+    while ((rm = routerMethodRegex.exec(content)) !== null) {
+      const subPath = rm[1];
+      for (const m of mounts) {
+        const combinedPath = normalizeRoutePath(`${m.prefix}/${subPath}`);
+        if (combinedPath === targetNormPath) {
+          return file;
+        }
+      }
+      if (normalizeRoutePath(subPath) === targetNormPath) {
+        return file;
+      }
+    }
   }
 
   return undefined;
 }
 
 /**
- * Validates implemented API routes in VFS against declared API endpoints from backend_spec.md.
+ * Validates implemented API routes in VFS against declared API endpoints from backend_spec.md or ProjectContract.
  */
 export function validateApiContracts(
-  declaredEndpoints: ApiEndpointContract[],
+  target: ApiEndpointContract[] | ProjectContract | { apiEndpoints: ApiEndpointContract[] },
   vfsFiles: Record<string, string>
 ): ApiContractValidationResult {
   const errors: ApiContractError[] = [];
   const warnings: ApiContractError[] = [];
+
+  const declaredEndpoints = Array.isArray(target)
+    ? target
+    : target.apiEndpoints || [];
 
   const vfsFilePaths = Object.keys(vfsFiles).map((f) => f.replace(/\\/g, '/').replace(/^\.\//, ''));
 
