@@ -94,6 +94,15 @@ function expressRouteExists(
   return undefined;
 }
 
+export function isValidNextDynamicSegment(segment: string): boolean {
+  if (!segment.startsWith('[') || !segment.endsWith(']')) return true;
+  return (
+    /^\[[A-Za-z0-9_$]+\]$/.test(segment) ||
+    /^\[\.\.\.[A-Za-z0-9_$]+\]$/.test(segment) ||
+    /^\[\[\.\.\.[A-Za-z0-9_$]+\]\]$/.test(segment)
+  );
+}
+
 function matchNextAppRoute(declPath: string, vfsFilePaths: string[]): string | undefined {
   const cleanPath = declPath.replace(/^\/+/, '').replace(/\/+$/, '');
   const parts = cleanPath.split('/');
@@ -126,6 +135,11 @@ function matchNextAppRoute(declPath: string, vfsFilePaths: string[]): string | u
       .replace(/\.(?:ts|tsx|js)$/, '');
 
     const dirParts = routeDir.split('/');
+
+    // Reject malformed / unnamed dynamic route segments (e.g. [...])
+    if (dirParts.some((part) => part.startsWith('[') && !isValidNextDynamicSegment(part))) {
+      continue;
+    }
 
     let matches = true;
     let pIdx = 0;

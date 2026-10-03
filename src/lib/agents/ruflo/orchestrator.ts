@@ -12,7 +12,7 @@ import { writeVirtualFile, readVirtualFile, listVirtualFiles, applyDiff, flushVf
 import { runLinter, runCrossFileImportCheck } from './linter';
 import { buildAndPersistStructuralGraph, detectAndPersistArchitectureDrift } from './structural-graph';
 import { ProjectContract } from './contracts';
-import { extractProjectContract, validateProjectContract } from './spec-contract';
+import { extractProjectContract, validateProjectContract, validateArchitectureArtifact } from './spec-contract';
 
 function escapeRegex(val: string): string {
   return val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -1578,8 +1578,17 @@ export async function runOrchestrator(
           return;
         }
 
+        // Extract authoritative contract for Coder stage blueprint validation
+        const coderSpecFiles = ['plan.md', 'requirements.md', 'architecture.md', 'backend_spec.md', 'ui_spec.md'];
+        const coderSpecContents: Record<string, string> = {};
+        for (const sf of coderSpecFiles) {
+          const sc = await readVirtualFile(conversationId, sf);
+          if (sc) coderSpecContents[sf] = sc;
+        }
+        const coderContract = extractProjectContract(coderSpecContents);
+
         // Validate blueprint graph gate (blocking on errors)
-        const blueprintValidation = validateBlueprintGraph(fileSections);
+        const blueprintValidation = validateBlueprintGraph(fileSections, undefined, coderContract);
         for (const bpw of blueprintValidation.warnings) {
           emit({ type: 'AGENT_LOG', agent: 'Coder', message: `⚠️ ${bpw}` });
         }
@@ -1815,6 +1824,23 @@ export async function runOrchestrator(
         }
 
         const archContent = specContents['architecture.md'] || '';
+
+        // Validate Architecture Artifact (folder tree alignment, module ownership, route syntax)
+        const archVal = validateArchitectureArtifact(archContent, specContract);
+        for (const warn of archVal.warnings) {
+          emit({ type: 'AGENT_LOG', agent: 'Blueprinter', message: `⚠️ Architecture Warning: ${warn}` });
+        }
+        if (!archVal.valid) {
+          for (const err of archVal.errors) {
+            emit({ type: 'AGENT_LOG', agent: 'Blueprinter', message: `❌ Architecture Error: ${err}` });
+          }
+          emit({
+            type: 'PIPELINE_ERROR',
+            message: `Architecture artifact validation failed: ${archVal.errors.join('; ')}`,
+          });
+          throw new Error(`Architecture artifact validation failed: ${archVal.errors.join('; ')}`);
+        }
+
         const targetFiles = extractFilesFromArchitecture(archContent);
 
         // Full artifact context — no truncation, no snapshot extraction
@@ -1861,7 +1887,7 @@ export async function runOrchestrator(
           // Parse generated sections and sort by topological dependency order
           const parsedSections = parseBlueprintFiles(rawJoined);
           if (parsedSections.length > 0) {
-            const bpVal = validateBlueprintGraph(parsedSections);
+            const bpVal = validateBlueprintGraph(parsedSections, undefined, specContract);
             if (bpVal.order.length === parsedSections.length) {
               const fileOrderMap = new Map(bpVal.order.map((f, i) => [f.toLowerCase(), i]));
               parsedSections.sort((a, b) => {
@@ -1895,7 +1921,7 @@ export async function runOrchestrator(
         // Parse, validate, and topologically order final blueprint sections before persisting
         const finalSections = parseBlueprintFiles(finalBlueprintText);
         if (finalSections.length > 0) {
-          const bpVal = validateBlueprintGraph(finalSections);
+          const bpVal = validateBlueprintGraph(finalSections, undefined, specContract);
           for (const warn of bpVal.warnings) {
             emit({ type: 'AGENT_LOG', agent: 'Blueprinter', message: `⚠️ ${warn}` });
           }

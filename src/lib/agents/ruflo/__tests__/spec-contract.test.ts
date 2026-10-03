@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { extractProjectContract, validateProjectContract, detectExplicitNoAuth, detectExplicitAuthRequired } from '../spec-contract';
+import { extractProjectContract, validateProjectContract, validateArchitectureArtifact, detectExplicitNoAuth, detectExplicitAuthRequired } from '../spec-contract';
 import { validateFrameworkBoundaries } from '../framework-validator';
 import { validateReactHookImports, ProjectValidationError } from '../project-validator';
 import { probeGeneratedProjectRoutes } from '../runtime-validator';
@@ -592,7 +592,346 @@ Frontend Entry Point: src/pages/index.tsx
   );
   assert.strictEqual(resNextAppEntry.valid, true, 'Expected src/app/page.tsx to satisfy Next.js App Router root entry requirement');
 
-  console.log('✅ All Kanban & E-Commerce spec contract regression assertions (A-T + Regressions 1-16) passed successfully.');
+  // ─── ARCHITECT RCA REGRESSIONS (Tests A-N + Full E-Commerce Fixture) ───
+
+  // Test A: Next src/app entry point preservation
+  const contractSrcEntry = extractProjectContract({
+    'architecture.md': 'Frontend: Next.js App Router\nFrontend Entry Point: src/app/page.tsx',
+  });
+  assert.strictEqual(contractSrcEntry.entryPoints[0], 'src/app/page.tsx', 'Expected src/app/page.tsx to be extracted as entry point');
+
+  // Test B: Next root app entry point fallback
+  const contractRootEntry = extractProjectContract({
+    'architecture.md': 'Frontend: Next.js App Router\nFrontend Entry Point: app/page.tsx',
+  });
+  assert.strictEqual(contractRootEntry.entryPoints[0], 'app/page.tsx', 'Expected app/page.tsx to be extracted as entry point');
+
+  // Test C: Invalid unnamed dynamic catch-all route segment rejected
+  const archUnnamedRoute = `
+### Project Folder Structure
+project-root/
+└── src/
+    └── app/
+        └── api/
+            └── [...]/
+                └── route.ts
+
+### Modules
+**Backend API**
+- Responsibility: Handles API routes
+- Owned Files: src/app/api/[...]/route.ts
+- Depends On: None
+- Supports Features: API
+`;
+  const valUnnamedRoute = validateArchitectureArtifact(archUnnamedRoute);
+  assert.strictEqual(valUnnamedRoute.valid, false, 'Expected unnamed dynamic catch-all segment [...] to be rejected');
+
+  // Test D: Valid named dynamic catch-all route segment accepted
+  const archValidRoute = `
+### Project Folder Structure
+project-root/
+└── src/
+    └── app/
+        └── api/
+            └── [...slug]/
+                └── route.ts
+
+### Modules
+**Backend API**
+- Responsibility: Handles API routes
+- Owned Files: src/app/api/[...slug]/route.ts
+- Depends On: None
+- Supports Features: API
+`;
+  const valValidRoute = validateArchitectureArtifact(archValidRoute);
+  assert.deepStrictEqual(valValidRoute.errors, [], 'Expected named dynamic catch-all segment [...slug] to be accepted');
+
+  // Test E: Duplicate module ownership rejected
+  const archDuplicateOwnership = `
+### Project Folder Structure
+project-root/
+└── src/
+    └── app/
+        └── components/
+            └── ProductCard.tsx
+
+### Modules
+**Frontend Pages**
+- Responsibility: Renders pages
+- Owned Files: src/app/components/ProductCard.tsx
+- Depends On: None
+- Supports Features: Catalog
+
+**Frontend Components**
+- Responsibility: UI components
+- Owned Files: src/app/components/ProductCard.tsx
+- Depends On: None
+- Supports Features: Catalog
+`;
+  const valDuplicateOwnership = validateArchitectureArtifact(archDuplicateOwnership);
+  assert.strictEqual(valDuplicateOwnership.valid, false, 'Expected duplicate file ownership to be rejected');
+
+  // Test F: Orphan module file rejected
+  const archOrphanFile = `
+### Project Folder Structure
+project-root/
+└── src/
+    └── app/
+        └── page.tsx
+
+### Modules
+**Frontend Module**
+- Responsibility: Main frontend
+- Owned Files: src/app/page.tsx, src/app/NonExistent.tsx
+- Depends On: None
+- Supports Features: UI
+`;
+  const valOrphanFile = validateArchitectureArtifact(archOrphanFile);
+  assert.strictEqual(valOrphanFile.valid, false, 'Expected orphan file claimed by module but missing from tree to be rejected');
+
+  // Test G: Unclaimed tree file rejected
+  const archUnclaimedFile = `
+### Project Folder Structure
+project-root/
+└── src/
+    └── app/
+        ├── page.tsx
+        └── Unclaimed.tsx
+
+### Modules
+**Frontend Module**
+- Responsibility: Main frontend
+- Owned Files: src/app/page.tsx
+- Depends On: None
+- Supports Features: UI
+`;
+  const valUnclaimedFile = validateArchitectureArtifact(archUnclaimedFile);
+  assert.strictEqual(valUnclaimedFile.valid, false, 'Expected tree file unclaimed by any module to be rejected');
+
+  // Test H: Stripe integration extraction
+  const contractStripe = extractProjectContract({
+    'architecture.md': 'Tech Stack: Next.js + Stripe\nAdditional: Stripe',
+    'backend_spec.md': 'Stripe checkout integration for payments',
+  });
+  assert.strictEqual(contractStripe.integrations?.includes('stripe'), true, 'Expected stripe to be extracted in integrations');
+
+  // Test I: Next Server Component -> Prisma allowed
+  const bpServerPrisma = validateBlueprintGraph(
+    [
+      {
+        file: 'src/app/page.tsx',
+        purpose: 'Server Component Page',
+        specsRequired: [],
+        exports: [],
+        dependencies: ['src/lib/prisma.ts'],
+        details: '',
+        rawSection: 'File: src/app/page.tsx\nDependencies: src/lib/prisma.ts',
+      },
+      {
+        file: 'src/lib/prisma.ts',
+        purpose: 'Prisma Client',
+        specsRequired: [],
+        exports: [],
+        dependencies: ['@prisma/client'],
+        details: '',
+        rawSection: 'File: src/lib/prisma.ts\nDependencies: @prisma/client',
+      },
+    ],
+    undefined,
+    contractNext
+  );
+  assert.strictEqual(bpServerPrisma.valid, true, 'Expected Next.js Server Component importing Prisma to pass boundary check');
+
+  // Test J: Next Client Component -> Prisma rejected
+  const bpClientPrisma = validateBlueprintGraph(
+    [
+      {
+        file: 'src/components/ProductCard.tsx',
+        purpose: 'Client Component',
+        specsRequired: [],
+        exports: [],
+        dependencies: ['src/lib/prisma.ts'],
+        details: '',
+        rawSection: 'File: src/components/ProductCard.tsx\nDependencies: src/lib/prisma.ts',
+      },
+      {
+        file: 'src/lib/prisma.ts',
+        purpose: 'Prisma Client',
+        specsRequired: [],
+        exports: [],
+        dependencies: ['@prisma/client'],
+        details: '',
+        rawSection: 'File: src/lib/prisma.ts\nDependencies: @prisma/client',
+      },
+    ],
+    undefined,
+    contractNext
+  );
+  assert.strictEqual(bpClientPrisma.valid, false, 'Expected Next.js Client Component importing Prisma to be rejected');
+
+  // Test K: Next Route Handler -> Prisma allowed
+  const bpRoutePrisma = validateBlueprintGraph(
+    [
+      {
+        file: 'src/app/api/products/route.ts',
+        purpose: 'Route Handler',
+        specsRequired: [],
+        exports: [],
+        dependencies: ['src/lib/prisma.ts'],
+        details: '',
+        rawSection: 'File: src/app/api/products/route.ts\nDependencies: src/lib/prisma.ts',
+      },
+      {
+        file: 'src/lib/prisma.ts',
+        purpose: 'Prisma Client',
+        specsRequired: [],
+        exports: [],
+        dependencies: ['@prisma/client'],
+        details: '',
+        rawSection: 'File: src/lib/prisma.ts\nDependencies: @prisma/client',
+      },
+    ],
+    undefined,
+    contractNext
+  );
+  assert.strictEqual(bpRoutePrisma.valid, true, 'Expected Next.js Route Handler importing Prisma to pass boundary check');
+
+  // Test L: Client Component referencing /api/products allowed
+  const resClientApi = validateFrameworkBoundaries(
+    {
+      'src/components/ProductList.tsx': '"use client"\nimport React from "react"; fetch("/api/products");',
+      'src/app/api/products/route.ts': 'export async function GET() { return Response.json([]); }',
+    },
+    'NEXT_APP_ROUTER',
+    contractNext
+  );
+  assert.strictEqual(resClientApi.valid, true, 'Expected Client component fetching /api/products to pass framework validation');
+
+  // Test M: Stripe client/server split allowed
+  const resStripeSplit = validateFrameworkBoundaries(
+    {
+      'src/components/CheckoutButton.tsx': '"use client"\nimport { loadStripe } from "@stripe/stripe-js";',
+      'src/app/api/checkout/route.ts': 'import Stripe from "stripe"; const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);',
+    },
+    'NEXT_APP_ROUTER',
+    contractNext
+  );
+  assert.strictEqual(resStripeSplit.valid, true, 'Expected Stripe client/server split to pass framework validation');
+
+  // Test N: Stripe secret leak in client component rejected
+  const resStripeLeakTestN = validateFrameworkBoundaries(
+    {
+      'src/components/CheckoutButton.tsx': '"use client"\nconst secret = process.env.STRIPE_SECRET_KEY;',
+    },
+    'NEXT_APP_ROUTER',
+    contractNext
+  );
+  assert.strictEqual(resStripeLeakTestN.valid, false, 'Expected Stripe secret key in client component to be rejected');
+
+  // ─── FULL E-COMMERCE INTEGRATION FIXTURE TEST (Section 23) ───
+  const ecomArch = `
+### Tech Stack
+- **Frontend**: Next.js App Router
+- **Frontend Entry Point**: src/app/page.tsx
+- **Backend**: Next.js API Routes
+- **Backend Entry Point**: src/app/api/[...slug]/route.ts
+- **Database**: SQLite
+- **ORM**: Prisma
+- **Authentication**: None — no auth needed
+- **Build Tool**: None
+- **Additional**: Stripe
+
+### Project Folder Structure
+project-root/
+└── src/
+    ├── app/
+    │   ├── page.tsx
+    │   ├── api/
+    │   │   └── [...slug]/
+    │   │       └── route.ts
+    │   └── components/
+    │       ├── ProductCard.tsx
+    │       ├── SearchBar.tsx
+    │       └── CartItem.tsx
+    ├── lib/
+    │   ├── prisma.ts
+    │   └── stripe.ts
+    └── styles/
+        └── globals.css
+
+### Modules
+**Frontend Module**
+- Responsibility: Main page and components
+- Owned Files: src/app/page.tsx, src/app/components/ProductCard.tsx, src/app/components/SearchBar.tsx, src/app/components/CartItem.tsx, src/styles/globals.css
+- Depends On: Database Module
+- Supports Features: Product Catalog & Search
+
+**Backend API Module**
+- Responsibility: Handles API routing and checkout
+- Owned Files: src/app/api/[...slug]/route.ts
+- Depends On: Database Module
+- Supports Features: API & Payments
+
+**Database Module**
+- Responsibility: Prisma client and Stripe helper
+- Owned Files: src/lib/prisma.ts, src/lib/stripe.ts
+- Depends On: None
+- Supports Features: Persistence & Payment API
+`;
+
+  const ecomContract = extractProjectContract({
+    'architecture.md': ecomArch,
+    'backend_spec.md': `
+### API Endpoints
+**GET /api/products** — Search catalog
+- Request Body: None
+- Auth Required: No
+
+**POST /api/checkout** — Stripe checkout
+- Request Body: Cart items
+- Auth Required: No
+`,
+    'prisma/schema.prisma': `
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Product {
+  id          String @id @default(uuid())
+  name        String
+  price       Float
+}
+`,
+  });
+
+  const valEcomArch = validateArchitectureArtifact(ecomArch, ecomContract);
+  assert.deepStrictEqual(valEcomArch.errors, [], 'Expected full E-Commerce architecture.md artifact to pass validation');
+
+  const valEcomContract = validateProjectContract(ecomContract);
+  assert.deepStrictEqual(valEcomContract.errors, [], 'Expected full E-Commerce contract to pass validation');
+
+  const valEcomApi = validateApiContracts(ecomContract, {
+    'src/app/api/[...slug]/route.ts': 'export async function GET() { return Response.json([]); } export async function POST() { return Response.json({ url: "" }); }',
+  });
+  assert.strictEqual(valEcomApi.valid, true, 'Expected E-Commerce API routes matching [...slug] to pass API validation');
+
+  const valEcomFramework = validateFrameworkBoundaries(
+    {
+      'src/app/page.tsx': 'import { prisma } from "../lib/prisma"; export default async function Page() { return <div>Store</div>; }',
+      'src/app/components/ProductCard.tsx': '"use client"\nimport React from "react"; export function ProductCard() { return <div>Card</div>; }',
+      'src/app/api/[...slug]/route.ts': 'import { prisma } from "../../../lib/prisma"; import Stripe from "stripe"; export async function GET() { return Response.json([]); }',
+    },
+    'NEXT_APP_ROUTER',
+    ecomContract
+  );
+  assert.strictEqual(valEcomFramework.valid, true, 'Expected E-Commerce framework boundary check to pass');
+
+  console.log('✅ All Kanban & E-Commerce spec contract regression assertions (A-T + Regressions 1-16 + Architect RCA Tests A-N + Full E-Commerce Fixture) passed successfully.');
 }
 
 if (require.main === module) {

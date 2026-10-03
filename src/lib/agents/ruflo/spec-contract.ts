@@ -224,22 +224,38 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
 
   // 7. Extract Entry Points
   const entryPoints: string[] = [];
+  const explicitFrontendEntry = arch.match(/Frontend Entry Point:\s*([^\n]+)/i)?.[1]?.trim().replace(/[*`'"]/g, '');
+
   if (framework === 'NEXT_APP_ROUTER') {
-    entryPoints.push('app/page.tsx', 'app/layout.tsx');
+    if (explicitFrontendEntry) {
+      entryPoints.push(explicitFrontendEntry);
+    } else if (/src\/app\/page\.(tsx|jsx|js|ts)/i.test(arch)) {
+      entryPoints.push('src/app/page.tsx');
+    } else {
+      entryPoints.push('app/page.tsx');
+    }
   } else if (framework === 'NEXT_PAGES_ROUTER') {
-    entryPoints.push('pages/index.tsx', 'pages/_app.tsx');
+    if (explicitFrontendEntry) {
+      entryPoints.push(explicitFrontendEntry);
+    } else if (/src\/pages\/index\.(tsx|jsx|js|ts)/i.test(arch)) {
+      entryPoints.push('src/pages/index.tsx');
+    } else {
+      entryPoints.push('pages/index.tsx');
+    }
   } else if (framework === 'REACT_WEBPACK_SPA' || framework === 'VITE_SPA') {
-    const explicitEntry = arch.match(/Frontend Entry Point:\s*([^\n]+)/i)?.[1]?.trim().replace(/[*`'"]/g, '');
-    entryPoints.push(explicitEntry || 'src/pages/index.tsx');
+    entryPoints.push(explicitFrontendEntry || 'src/pages/index.tsx');
   } else {
-    entryPoints.push('index.html');
+    entryPoints.push(explicitFrontendEntry || 'index.html');
   }
 
   // 8. Extract Implementation Boundaries from Architecture
   const implementationBoundaries: ImplementationBoundary[] = [];
-  const ownedMatches = arch.matchAll(/\*\*([^*]+)\*\*\s*\n(?:[^\n]+\n)*?- Owned Files:\s*([^\n]+)/gi);
+  const moduleSectionForBoundaries = (arch.match(/###\s*Modules[\s\S]*?(?=###\s*Conventions|###\s*Tech|###\s*Project|$)/i)?.[0] || arch)
+    .replace(/###\s*Modules/i, '');
+  const ownedMatches = moduleSectionForBoundaries.matchAll(/(?:\*\*|###)\s*\[?([^\*\#\]\n]+)\]?\s*(?:\*\*|\n)[\s\S]*?- Owned Files:\s*([^\n]+)/gi);
   for (const om of ownedMatches) {
     const moduleName = om[1].trim();
+    if (moduleName.toLowerCase() === 'modules') continue;
     const files = om[2].split(/[,;]/).map((s) => s.trim().replace(/[*`'"]/g, '')).filter(Boolean);
     let kind: ImplementationBoundary['kind'] = 'shared';
     if (/frontend/i.test(moduleName)) kind = 'frontend';
@@ -252,11 +268,11 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
       kind,
       ownedFiles: files,
       entryPoint: entryMatch ? entryMatch[1].trim().replace(/[*`'"]/g, '') : undefined,
-      runtime: kind === 'backend' && /express/i.test(combined) ? 'express' : undefined,
+      runtime: kind === 'backend' && !framework.startsWith('NEXT_') && /express/i.test(combined) ? 'express' : undefined,
     });
   }
 
-  // 9. Extract raw dependencies from specs
+  // 9. Extract raw dependencies & integrations from specs
   const dependencies: string[] = [];
   const depMatches = combined.matchAll(/`([@a-z0-9\/-]+)`|[\-\*]\s+([@a-z0-9\/-]+)/gi);
   for (const match of depMatches) {
@@ -264,6 +280,11 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
     if (dep && !dep.startsWith('.') && !dep.startsWith('/') && !dependencies.includes(dep)) {
       dependencies.push(dep);
     }
+  }
+
+  const integrations: string[] = [];
+  if (/\bstripe\b/i.test(combined)) {
+    integrations.push('stripe');
   }
 
   const normalizedDependencies = inferFrameworkDependencies({
@@ -294,6 +315,7 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
     apiEndpoints,
     models,
     dependencies: normalizedDependencies,
+    integrations,
     implementationBoundaries,
   };
 
@@ -306,8 +328,200 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
   };
 }
 
+export interface ArchitectureValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+/**
+ * Validates architecture.md artifact for folder tree alignment, module ownership uniqueness, and route validity.
+ */
+export function validateArchitectureArtifact(
+  architectureContent: string,
+  contract?: ProjectContract
+): ArchitectureValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  if (!architectureContent.trim()) {
+    return { valid: true, errors, warnings };
+  }
+
+  // 1. Extract Project Folder Structure ASCII tree files
+  const treeSectionMatch = architectureContent.match(/###\s*Project\s*Folder\s*Structure[\s\S]*?(?=###|$)/i);
+  const treeSection = treeSectionMatch ? treeSectionMatch[0] : '';
+
+  const rawTreeLines = treeSection
+    .split('\n')
+    .filter((l) => {
+      const t = l.trim();
+      return t && !t.startsWith('###') && !t.startsWith('Format:') && !t.startsWith('Rules') && !t.startsWith('-');
+    });
+
+  const treeFiles: string[] = [];
+  const pathStack: { depth: number; path: string }[] = [];
+
+  for (const line of rawTreeLines) {
+    const cleanName = line
+      .replace(/^[\s│\|├└─\+\-\\]+/, '')
+      .replace(/[*`'"]/g, '')
+      .trim();
+
+    if (!cleanName || cleanName.toLowerCase() === 'project-root/' || cleanName === '.') continue;
+
+    const nameStartCol = line.indexOf(cleanName);
+    const isDir = cleanName.endsWith('/');
+    const nameWithoutSlash = cleanName.replace(/\/$/, '');
+
+    while (pathStack.length > 0 && pathStack[pathStack.length - 1].depth >= nameStartCol) {
+      pathStack.pop();
+    }
+
+    const parentPath = pathStack.length > 0 ? pathStack[pathStack.length - 1].path : '';
+    const fullPath = parentPath ? `${parentPath}/${nameWithoutSlash}` : nameWithoutSlash;
+
+    if (isDir) {
+      pathStack.push({ depth: nameStartCol, path: fullPath });
+    } else {
+      treeFiles.push(fullPath);
+    }
+  }
+
+  const normalizedTreeFileSet = new Set(treeFiles.map((f) => f.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()));
+
+  // 2. Extract Modules and Owned Files
+  const moduleSectionMatch = architectureContent.match(/###\s*Modules[\s\S]*?(?=###\s*Conventions|###\s*Tech|###\s*Project|$)/i);
+  const moduleSection = moduleSectionMatch ? moduleSectionMatch[0] : architectureContent;
+
+  const moduleHeaderRegex = /(?:\*\*|###)\s*\[?([^\*\#\]\n]+)\]?\s*(?:\*\*|\n)/g;
+  const fileToModulesMap = new Map<string, string[]>();
+  const allModuleOwnedFiles = new Set<string>();
+
+  let mMatch: RegExpExecArray | null;
+  const headersFound: Array<{ name: string; index: number }> = [];
+
+  while ((mMatch = moduleHeaderRegex.exec(moduleSection)) !== null) {
+    const name = mMatch[1].trim();
+    const nameLower = name.toLowerCase();
+    if (
+      nameLower === 'modules' ||
+      nameLower.includes('tech stack') ||
+      nameLower.includes('folder structure') ||
+      nameLower.includes('conventions')
+    ) {
+      continue;
+    }
+    headersFound.push({ name, index: mMatch.index });
+  }
+
+  for (let i = 0; i < headersFound.length; i++) {
+    const modHeader = headersFound[i].name;
+    const startIdx = headersFound[i].index;
+    const endIdx = i + 1 < headersFound.length ? headersFound[i + 1].index : moduleSection.length;
+    const modBody = moduleSection.slice(startIdx, endIdx);
+
+    const ownedMatch = modBody.match(/- Owned Files:\s*([^\n]+)/i);
+    if (!ownedMatch) continue;
+
+    const ownedFilesRaw = ownedMatch[1].split(/[,;]/).map((s) => s.trim().replace(/[*`'"]/g, '')).filter(Boolean);
+
+    if (ownedFilesRaw.length === 0 || ownedFilesRaw[0].toLowerCase() === 'none') {
+      errors.push(`Architecture Contract Error: Module "${modHeader}" has no owned files.`);
+      continue;
+    }
+
+    for (const rawF of ownedFilesRaw) {
+      const normF = rawF.replace(/\\/g, '/').replace(/^\.\//, '');
+      const lowerF = normF.toLowerCase();
+
+      allModuleOwnedFiles.add(lowerF);
+      const existing = fileToModulesMap.get(lowerF) || [];
+      existing.push(modHeader);
+      fileToModulesMap.set(lowerF, existing);
+    }
+  }
+
+  // Check A: Duplicate file ownership
+  for (const [lowerFile, mods] of fileToModulesMap.entries()) {
+    if (mods.length > 1) {
+      const origFile = treeFiles.find((f) => f.toLowerCase() === lowerFile) || lowerFile;
+      errors.push(
+        `Architecture Contract Error: File "${origFile}" is claimed by modules "${mods.join('" and "')}". Each file must have exactly one owning module.`
+      );
+    }
+  }
+
+  // Check B: Orphan module files (claimed by module but missing from tree)
+  if (normalizedTreeFileSet.size > 0) {
+    for (const lowerFile of allModuleOwnedFiles) {
+      if (!normalizedTreeFileSet.has(lowerFile)) {
+        const mods = fileToModulesMap.get(lowerFile) || [];
+        errors.push(
+          `Architecture Contract Error: Module "${mods[0]}" claims file "${lowerFile}" which is absent from Project Folder Structure tree.`
+        );
+      }
+    }
+  }
+
+  // Check C: Unclaimed tree files (in tree but absent from all modules)
+  const IGNORED_ROOT_FILES = new Set([
+    'package.json',
+    'tsconfig.json',
+    'vite.config.ts',
+    'vite.config.js',
+    'next.config.js',
+    'next.config.mjs',
+    'next.config.ts',
+    'tailwind.config.js',
+    'postcss.config.js',
+    'readme.md',
+    '.gitignore',
+    '.env',
+    '.env.local',
+    'prisma/schema.prisma',
+    'schema.prisma',
+  ]);
+
+  for (const treeFile of treeFiles) {
+    const lowerFile = treeFile.toLowerCase();
+    if (IGNORED_ROOT_FILES.has(lowerFile)) continue;
+    if (!allModuleOwnedFiles.has(lowerFile)) {
+      errors.push(`Architecture Contract Error: File "${treeFile}" from Project Folder Structure is not claimed by any module.`);
+    }
+  }
+
+  // Check D: Next.js Unnamed Dynamic Segment Rule
+  for (const treeFile of treeFiles) {
+    if (/\/\[\s*\.\.\.\s*\]\//.test(treeFile) || /\/\[\s*\.\.\.\s*\]$/.test(treeFile) || /\/\[\s*\]\//.test(treeFile)) {
+      errors.push(
+        `Next.js Architecture Error: Invalid unnamed catch-all route segment "${treeFile}". Dynamic segments must be named (e.g., "[id]", "[...slug]", "[[...slug]]").`
+      );
+    }
+  }
+
+  // Check E: Integration coverage (e.g. Stripe)
+  if (contract?.integrations?.includes('stripe') || /\bStripe\b/i.test(architectureContent)) {
+    const hasStripeLocation =
+      treeFiles.some((f) => /stripe|payment|checkout/i.test(f)) ||
+      Array.from(allModuleOwnedFiles).some((f) => /stripe|payment|checkout/i.test(f));
+
+    if (!hasStripeLocation) {
+      warnings.push(
+        `Architecture Warning: Integration "stripe" was declared, but no dedicated Stripe/checkout file path (e.g. src/lib/stripe.ts or src/app/api/checkout/route.ts) was found in folder structure.`
+      );
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+  };
+}
+
 function looksLikeServerEntry(file: string): boolean {
-  return /(^|\/)(server|api|app|index|main)\.(ts|tsx|js|jsx)$/i.test(file);
+  return /(^|\/)(server|api|app|index|main|route)\.(ts|tsx|js|jsx)$/i.test(file) || file.endsWith('/route.ts') || file.endsWith('/route.js');
 }
 
 function looksLikeFrontendClient(file: string): boolean {

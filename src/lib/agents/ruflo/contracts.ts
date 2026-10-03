@@ -64,6 +64,7 @@ export interface ProjectContract {
   apiEndpoints: ApiEndpointContract[];
   models: ModelContract[];
   dependencies: string[];
+  integrations?: string[];
   implementationBoundaries?: ImplementationBoundary[];
 }
 

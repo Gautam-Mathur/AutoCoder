@@ -83,6 +83,16 @@ export function validateFrameworkBoundaries(
       content
     );
 
+    // Rule 0: Reject malformed / unnamed dynamic route segment paths
+    if (/(^|\/)(app|pages)\/.*\[\s*\.\.\.\s*\]/i.test(cleanPath) || /(^|\/)(app|pages)\/.*\[\s*\]/i.test(cleanPath)) {
+      errors.push({
+        file: cleanPath,
+        line: 1,
+        severity: 'ERROR',
+        message: `Next.js Invalid Route Segment: File path "${cleanPath}" contains an unnamed dynamic segment. Segment must be named (e.g., "[id]", "[...slug]", "[[...slug]]").`,
+      });
+    }
+
     // Rule A: React Hooks in App Router require 'use client'
     if (isAppRouterFile && usesReactHooks && !hasUseClient) {
       errors.push({

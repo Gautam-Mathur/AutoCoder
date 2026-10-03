@@ -30,11 +30,16 @@ CRITICAL RULES FOR TECH STACK:
 - If the project has NO backend logic and no user request for backend/database, set Backend to "None" and Database to "None".
 - FOR WEB APPLICATIONS:
   - Static HTML: index.html is the browser entry.
-  - React + Webpack: the source entry is the configured React entry, normally src/pages/index.tsx.
-  - Vite: preserve the declared Vite source entry.
-  - Next App Router: app/page.tsx.
-  - Next Pages Router: pages/index.tsx.
-  - Never treat the HTML shell as the React source entry when a bundler owns compilation.
+  - React + Webpack: the source entry is the configured React entry, e.g. src/pages/index.tsx or src/index.tsx.
+  - Vite: preserve the declared Vite source entry (index.html + src/main.tsx).
+  - Next.js App Router: app/page.tsx OR src/app/page.tsx.
+  - Next.js Pages Router: pages/index.tsx OR src/pages/index.tsx.
+  - Do not invent an index.html for Next.js App Router projects.
+- NEXT.JS ROUTE SEGMENT RULE:
+  - [id] is a named dynamic segment.
+  - [...slug] is a named catch-all segment.
+  - [[...slug]] is a named optional catch-all segment.
+  - NEVER emit unnamed dynamic segments such as [...], [[]], or [...]/route.ts.
 - Do NOT choose React/Vue/Angular for simple 1-3 page static projects unless explicitly requested.
 
 ### Project Folder Structure
@@ -48,7 +53,11 @@ project-root/
 └── README.md
 
 Rules for folder structure:
-- FOR WEB APPS: index.html MUST be listed as File #1 at project root or inside public/. NEVER omit index.html for a web app!
+- FOLDER TREE ENTRY RULES:
+  - Static HTML projects MUST include index.html.
+  - React + Webpack projects MUST include the HTML shell required by their webpack configuration.
+  - Vite projects MUST include their HTML entry (e.g. index.html).
+  - Next.js App Router projects MUST NOT add index.html merely because they are web apps.
 - Config files (package.json, vite.config.js, tsconfig.json) MUST be at project root.
 - Every file must have a clear purpose. Do not add empty placeholder files.
 - Only include files that will actually contain code. No empty __init__.py or .gitkeep.
