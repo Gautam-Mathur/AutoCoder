@@ -8,6 +8,8 @@ import {
   ImplementationBoundary,
 } from './contracts';
 
+import { isValidNextDynamicSegment } from './api-contract-validator';
+
 export type { ApiEndpointContract, ModelContract, ProjectContract, ContractValidation, ContractEvidence, ImplementationBoundary };
 
 export function getPackageRoot(specifier: string): string {
@@ -224,7 +226,7 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
 
   // 7. Extract Entry Points
   const entryPoints: string[] = [];
-  const explicitFrontendEntry = arch.match(/Frontend Entry Point:\s*([^\n]+)/i)?.[1]?.trim().replace(/[*`'"]/g, '');
+  const explicitFrontendEntry = arch.match(/Frontend Entry Point(?:\*\*)?:\s*([^\n]+)/i)?.[1]?.trim().replace(/[*`'"]/g, '');
 
   if (framework === 'NEXT_APP_ROUTER') {
     if (explicitFrontendEntry) {
@@ -246,6 +248,20 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
     entryPoints.push(explicitFrontendEntry || 'src/pages/index.tsx');
   } else {
     entryPoints.push(explicitFrontendEntry || 'index.html');
+  }
+
+  const backendEntryPoints: string[] = [];
+  const backendEntryMatch = arch.match(/Backend Entry Point[s]?(?:\*\*)?:\s*([^\n]+)/i);
+  if (backendEntryMatch) {
+    const rawVal = backendEntryMatch[1].trim().replace(/[*`'"]/g, '');
+    if (rawVal && rawVal.toLowerCase() !== 'none') {
+      const splitEntries = rawVal.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+      for (const e of splitEntries) {
+        if (!backendEntryPoints.includes(e)) {
+          backendEntryPoints.push(e);
+        }
+      }
+    }
   }
 
   // 8. Extract Implementation Boundaries from Architecture
@@ -312,6 +328,7 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
     },
     moduleSystem,
     entryPoints,
+    backendEntryPoints,
     apiEndpoints,
     models,
     dependencies: normalizedDependencies,
@@ -394,9 +411,10 @@ export function validateArchitectureArtifact(
   const moduleSectionMatch = architectureContent.match(/###\s*Modules[\s\S]*?(?=###\s*Conventions|###\s*Tech|###\s*Project|$)/i);
   const moduleSection = moduleSectionMatch ? moduleSectionMatch[0] : architectureContent;
 
-  const moduleHeaderRegex = /(?:\*\*|###)\s*\[?([^\*\#\]\n]+)\]?\s*(?:\*\*|\n)/g;
+  const moduleHeaderRegex = /(?:^|\n)(?:###|\*\*)\s*\[?([^\*\#\]\r\n]+?)\]?(?:\*\*)?(?=\r?\n|$)/g;
   const fileToModulesMap = new Map<string, string[]>();
   const allModuleOwnedFiles = new Set<string>();
+  const allDeclaredModulesMap = new Map<string, { name: string; deps: string[] }>();
 
   let mMatch: RegExpExecArray | null;
   const headersFound: Array<{ name: string; index: number }> = [];
@@ -432,14 +450,24 @@ export function validateArchitectureArtifact(
     }
 
     for (const rawF of ownedFilesRaw) {
-      const normF = rawF.replace(/\\/g, '/').replace(/^\.\//, '');
-      const lowerF = normF.toLowerCase();
-
-      allModuleOwnedFiles.add(lowerF);
-      const existing = fileToModulesMap.get(lowerF) || [];
-      existing.push(modHeader);
-      fileToModulesMap.set(lowerF, existing);
+      const cleanF = rawF.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
+      if (!cleanF) continue;
+      allModuleOwnedFiles.add(cleanF);
+      const existingMods = fileToModulesMap.get(cleanF) || [];
+      existingMods.push(modHeader);
+      fileToModulesMap.set(cleanF, existingMods);
     }
+
+    // Extract Depends On dependencies for graph validation
+    const dependsOnMatch = modBody.match(/- Depends On:\s*([^\n]+)/i);
+    const modDeps = dependsOnMatch
+      ? dependsOnMatch[1]
+          .split(/[,;]/)
+          .map((s) => s.trim().replace(/[*`'"]/g, ''))
+          .filter((s) => s && s.toLowerCase() !== 'none')
+      : [];
+
+    allDeclaredModulesMap.set(modHeader.toLowerCase(), { name: modHeader, deps: modDeps });
   }
 
   // Check A: Duplicate file ownership
@@ -491,16 +519,54 @@ export function validateArchitectureArtifact(
     }
   }
 
-  // Check D: Next.js Unnamed Dynamic Segment Rule
-  for (const treeFile of treeFiles) {
-    if (/\/\[\s*\.\.\.\s*\]\//.test(treeFile) || /\/\[\s*\.\.\.\s*\]$/.test(treeFile) || /\/\[\s*\]\//.test(treeFile)) {
-      errors.push(
-        `Next.js Architecture Error: Invalid unnamed catch-all route segment "${treeFile}". Dynamic segments must be named (e.g., "[id]", "[...slug]", "[[...slug]]").`
-      );
+  // Check D: Module Dependency Graph Validation (Rule 1 & Rule 2)
+  for (const [modLower, modInfo] of allDeclaredModulesMap.entries()) {
+    for (const depName of modInfo.deps) {
+      const depLower = depName.toLowerCase();
+      if (depLower === modLower) {
+        errors.push(`Architecture Contract Error: Module "${modInfo.name}" cannot depend on itself.`);
+      } else if (!allDeclaredModulesMap.has(depLower)) {
+        errors.push(`Architecture Contract Error: Module "${modInfo.name}" depends on unknown module "${depName}".`);
+      }
     }
   }
 
-  // Check E: Integration coverage (e.g. Stripe)
+  // Check E: Next.js Unnamed Dynamic Segment Rule & Backend Entry Validation
+  const framework = contract?.framework || (/next\.js|nextjs|app router/i.test(architectureContent) ? 'NEXT_APP_ROUTER' : 'STATIC_HTML');
+
+  for (const treeFile of treeFiles) {
+    const segments = treeFile.split('/');
+    for (const seg of segments) {
+      if (seg.includes('[') || seg.includes(']')) {
+        if (!isValidNextDynamicSegment(seg)) {
+          errors.push(
+            `Next.js Architecture Error: Invalid dynamic route segment "${seg}" in path "${treeFile}". Dynamic segments must be named (e.g., "[id]", "[...slug]", "[[...slug]]").`
+          );
+        }
+      }
+    }
+  }
+
+  const backendEntryMatch = architectureContent.match(/Backend Entry Point[s]?:\s*([^\n]+)/i)?.[1]?.trim().replace(/[*`'"]/g, '');
+  if (backendEntryMatch && backendEntryMatch.toLowerCase() !== 'none') {
+    const rawEntries = backendEntryMatch.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+    for (const entry of rawEntries) {
+      if (/\/\[\s*\.\.\.\s*\]\//.test(entry) || /\/\[\s*\.\.\.\s*\]$/.test(entry) || entry.includes('[...]')) {
+        errors.push(
+          `Next.js Architecture Error: Invalid unnamed dynamic segment in Backend Entry Point "${entry}". Dynamic segments must be named (e.g., "[id]", "[...slug]", "[[...slug]]").`
+        );
+      } else if (framework === 'NEXT_APP_ROUTER') {
+        const cleanEntry = entry.replace(/\\/g, '/').replace(/^\.\//, '');
+        if (!/(^|\/)app\/.*route\.(ts|tsx|js|jsx)$/i.test(cleanEntry) && !cleanEntry.endsWith('/route.ts')) {
+          errors.push(
+            `Next.js Architecture Error: Backend Entry Point "${entry}" must be a valid Next.js App Router route handler (e.g., "src/app/api/[...slug]/route.ts").`
+          );
+        }
+      }
+    }
+  }
+
+  // Check F: Integration coverage (e.g. Stripe)
   if (contract?.integrations?.includes('stripe') || /\bStripe\b/i.test(architectureContent)) {
     const hasStripeLocation =
       treeFiles.some((f) => /stripe|payment|checkout/i.test(f)) ||

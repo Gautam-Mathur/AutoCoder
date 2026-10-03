@@ -4,9 +4,9 @@ import { validateFrameworkBoundaries } from '../framework-validator';
 import { validateReactHookImports, ProjectValidationError } from '../project-validator';
 import { probeGeneratedProjectRoutes } from '../runtime-validator';
 import { validateApiContracts } from '../api-contract-validator';
-import { syncHtmlAssetLinks, validateBlueprintGraph } from '../orchestrator';
+import { syncHtmlAssetLinks, validateBlueprintGraph, validateArchitectOutput } from '../orchestrator';
 
-export function runKanbanContractTests(): void {
+export async function runKanbanContractTests(): Promise<void> {
   // Test A: Exact Kanban authentication contradiction
   const contractA = extractProjectContract({
     'plan.md': '',
@@ -931,9 +931,188 @@ model Product {
   );
   assert.strictEqual(valEcomFramework.valid, true, 'Expected E-Commerce framework boundary check to pass');
 
-  console.log('✅ All Kanban & E-Commerce spec contract regression assertions (A-T + Regressions 1-16 + Architect RCA Tests A-N + Full E-Commerce Fixture) passed successfully.');
+  // ─── ARCHITECT ROUTE REGRESSION TESTS (Tests 1-13) ───
+
+  // Test 1: Direct architecture validator rejects [...]
+  const archUnnamed1 = `
+### Tech Stack
+- **Frontend**: Next.js App Router
+- **Frontend Entry Point**: src/app/page.tsx
+- **Backend Entry Point**: src/app/api/[...]/route.ts
+
+### Project Folder Structure
+project-root/
+└── src/
+    └── app/
+        ├── page.tsx
+        └── api/
+            └── [...]/
+                └── route.ts
+
+### Modules
+**App Module**
+- Responsibility: App
+- Owned Files: src/app/page.tsx, src/app/api/[...]/route.ts
+- Depends On: None
+`;
+  const valArchUnnamed1 = validateArchitectureArtifact(archUnnamed1);
+  assert.strictEqual(valArchUnnamed1.valid, false, 'Test 1: Expected [...] to be rejected by validateArchitectureArtifact');
+
+  // Test 2: Architect acceptance gate rejects invalid architecture
+  const valAcceptGate2 = await validateArchitectOutput('test-convo-2', archUnnamed1);
+  assert.strictEqual(valAcceptGate2.valid, false, 'Test 2: Expected validateArchitectOutput to reject unnamed dynamic segment');
+  assert.ok(
+    valAcceptGate2.errors.some((e) => e.includes('[...]') || e.includes('dynamic')),
+    'Test 2: Expected dynamic segment error message'
+  );
+
+  // Test 3 & 4: Retry logic & valid structure acceptance
+  const archValid3 = archUnnamed1.replace(/\[\.\.\.\]/g, '[...slug]');
+  const valAcceptGate3 = await validateArchitectOutput('test-convo-3', archValid3);
+  assert.strictEqual(valAcceptGate3.valid, true, 'Test 3: Expected [...slug] to pass validateArchitectOutput');
+
+  // Test 5: Valid Next catch-all
+  const archCatchAll5 = `
+### Tech Stack
+- **Frontend**: Next.js App Router
+- **Frontend Entry Point**: src/app/page.tsx
+- **Backend Entry Point**: src/app/api/[...slug]/route.ts
+
+### Project Folder Structure
+project-root/
+└── src/
+    └── app/
+        ├── page.tsx
+        └── api/
+            └── [...slug]/
+                └── route.ts
+
+### Modules
+**App Module**
+- Responsibility: App
+- Owned Files: src/app/page.tsx, src/app/api/[...slug]/route.ts
+- Depends On: None
+`;
+  const valArch5 = validateArchitectureArtifact(archCatchAll5);
+  assert.strictEqual(valArch5.valid, true, 'Test 5: Expected [...slug] catch-all route to pass architecture validation');
+
+  // Test 6: Optional catch-all
+  const archOptCatchAll6 = archCatchAll5.replace(/\[\.\.\.slug\]/g, '[[...slug]]');
+  const valArch6 = validateArchitectureArtifact(archOptCatchAll6);
+  assert.strictEqual(valArch6.valid, true, 'Test 6: Expected [[...slug]] optional catch-all route to pass architecture validation');
+
+  // Test 7: Named dynamic route
+  const archNamedDyn7 = archCatchAll5.replace(/\[\.\.\.slug\]/g, '[id]');
+  const valArch7 = validateArchitectureArtifact(archNamedDyn7);
+  assert.strictEqual(valArch7.valid, true, 'Test 7: Expected [id] dynamic route to pass architecture validation');
+
+  // Test 8: Invalid empty segment
+  const archEmptySeg8 = archCatchAll5.replace(/\[\.\.\.slug\]/g, '[[]');
+  const valArch8 = validateArchitectureArtifact(archEmptySeg8);
+  assert.strictEqual(valArch8.valid, false, 'Test 8: Expected malformed segment [[] to be rejected');
+
+  // Test 9: Backend entry contract extraction
+  const contractBackendEntry9 = extractProjectContract({
+    'architecture.md': `
+### Tech Stack
+- **Frontend**: Next.js App Router
+- **Backend Entry Point**: src/app/api/[...slug]/route.ts
+`,
+  });
+  assert.ok(
+    contractBackendEntry9.backendEntryPoints?.includes('src/app/api/[...slug]/route.ts'),
+    'Test 9: Expected backendEntryPoints to include src/app/api/[...slug]/route.ts'
+  );
+
+  // Test 10: Invalid backend entry in contract
+  const archInvalidBackend10 = `
+### Tech Stack
+- **Frontend**: Next.js App Router
+- **Frontend Entry Point**: src/app/page.tsx
+- **Backend Entry Point**: src/app/api/[...]/route.ts
+
+### Project Folder Structure
+project-root/
+└── src/
+    └── app/
+        ├── page.tsx
+        └── api/
+            └── [...]/
+                └── route.ts
+
+### Modules
+**App Module**
+- Responsibility: App
+- Owned Files: src/app/page.tsx, src/app/api/[...]/route.ts
+- Depends On: None
+`;
+  const contract10 = extractProjectContract({ 'architecture.md': archInvalidBackend10 });
+  const valArch10 = validateArchitectureArtifact(archInvalidBackend10, contract10);
+  assert.strictEqual(valArch10.valid, false, 'Test 10: Expected invalid backend entry in contract to fail architecture validation');
+
+  // Test 11: Module dependency integrity (Missing module)
+  const archMissingDep11 = `
+### Tech Stack
+- **Frontend**: React
+- **Frontend Entry Point**: src/index.tsx
+
+### Project Folder Structure
+project-root/
+└── src/
+    └── index.tsx
+
+### Modules
+**Frontend Module**
+- Responsibility: UI
+- Owned Files: src/index.tsx
+- Depends On: NonExistentService
+`;
+  const valArch11 = validateArchitectureArtifact(archMissingDep11);
+  assert.strictEqual(valArch11.valid, false, 'Test 11: Expected dependency on missing module to fail architecture validation');
+  assert.ok(
+    valArch11.errors.some((e) => e.includes('NonExistentService')),
+    'Test 11: Expected error specifying missing dependency module'
+  );
+
+  // Test 12: Self dependency
+  const archSelfDep12 = `
+### Tech Stack
+- **Frontend**: React
+- **Frontend Entry Point**: src/index.tsx
+
+### Project Folder Structure
+project-root/
+└── src/
+    └── index.tsx
+
+### Modules
+**Frontend Module**
+- Responsibility: UI
+- Owned Files: src/index.tsx
+- Depends On: Frontend Module
+`;
+  const valArch12 = validateArchitectureArtifact(archSelfDep12);
+  assert.strictEqual(valArch12.valid, false, 'Test 12: Expected self-dependency to fail architecture validation');
+  assert.ok(
+    valArch12.errors.some((e) => e.toLowerCase().includes('cannot depend on itself')),
+    'Test 12: Expected self-dependency error message'
+  );
+
+  // Test 13: API matching strictly rejects unrelated substring files
+  const resApiMatch13 = validateApiContracts(
+    [{ method: 'GET', path: '/api/products', authRequired: false, source: 'backend_spec.md' }],
+    {
+      'src/app/api/products-old-backup.ts': 'export async function GET() { return Response.json([]); }',
+    }
+  );
+  assert.strictEqual(resApiMatch13.valid, false, 'Test 13: Expected /api/products NOT to match src/app/api/products-old-backup.ts');
+
+  console.log('✅ All Kanban & E-Commerce spec contract regression assertions (A-T + Regressions 1-16 + Architect RCA Tests A-N + Full E-Commerce Fixture + Route Regression Tests 1-13) passed successfully.');
 }
 
 if (require.main === module) {
-  runKanbanContractTests();
+  runKanbanContractTests().catch((err) => {
+    console.error('❌ Test suite failed:', err);
+    process.exit(1);
+  });
 }

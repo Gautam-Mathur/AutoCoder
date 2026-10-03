@@ -181,7 +181,7 @@ function matchNextAppRoute(declPath: string, vfsFilePaths: string[]): string | u
     }
   }
 
-  return vfsFilePaths.find((f) => f.toLowerCase().includes(cleanPath.toLowerCase()));
+  return undefined;
 }
 
 /**

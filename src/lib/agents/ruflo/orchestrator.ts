@@ -328,6 +328,49 @@ export function parseSpecsRequired(blueprintSection: string): Array<{ file: stri
   }).filter(e => e.file && e.section);
 }
 
+/**
+ * Validates Architect candidate output against project specifications and architecture contracts.
+ */
+export async function validateArchitectOutput(
+  conversationId: string,
+  content: string
+): Promise<{
+  valid: boolean;
+  contract?: ProjectContract;
+  errors: string[];
+  warnings: string[];
+}> {
+  const specContents: Record<string, string> = {
+    'architecture.md': content,
+  };
+
+  const planContent = await readVirtualFile(conversationId, 'plan.md');
+  if (planContent) specContents['plan.md'] = planContent;
+
+  const reqContent = await readVirtualFile(conversationId, 'requirements.md');
+  if (reqContent) specContents['requirements.md'] = reqContent;
+
+  const backendContent = await readVirtualFile(conversationId, 'backend_spec.md');
+  if (backendContent) specContents['backend_spec.md'] = backendContent;
+
+  const uiContent = await readVirtualFile(conversationId, 'ui_spec.md');
+  if (uiContent) specContents['ui_spec.md'] = uiContent;
+
+  const contract = extractProjectContract(specContents);
+  const specVal = validateProjectContract(contract);
+  const archVal = validateArchitectureArtifact(content, contract);
+
+  const errors = Array.from(new Set([...specVal.errors, ...archVal.errors]));
+  const warnings = Array.from(new Set([...specVal.warnings, ...archVal.warnings]));
+
+  return {
+    valid: errors.length === 0,
+    contract,
+    errors,
+    warnings,
+  };
+}
+
 export async function extractSection(conversationId: string, vfsPath: string, sectionName: string): Promise<string> {
   const fullContent = (await readVirtualFile(conversationId, vfsPath)) || '';
   const section = extractMdSection(fullContent, sectionName);
@@ -2058,16 +2101,85 @@ export async function runOrchestrator(
         extraContext = `=== ORIGINAL USER REQUEST (HIGHEST PRIORITY TECH STACK PREFERENCES) ===\n${userPrompt}\n\n`;
       }
 
-      const stageOutput = await runAgent(
-        conversationId,
-        stageName,
-        userPrompt,
-        emit,
-        ledger,
-        1,
-        extraContext,
-        executionSignal
-      );
+      let stageOutput: any = null;
+
+      if (stageName === 'Architect') {
+        const MAX_ARCHITECT_VALIDATION_RETRIES = 2;
+        let validationErrorFeedback: string | undefined = undefined;
+        let accepted = false;
+
+        for (let attempt = 1; attempt <= MAX_ARCHITECT_VALIDATION_RETRIES + 1; attempt++) {
+          if (executionSignal.aborted) throw new Error('Pipeline compilation aborted by user.');
+
+          let customContext = extraContext || '';
+          if (validationErrorFeedback) {
+            customContext += `=== ARCHITECT VALIDATION FAILURE (ATTEMPT ${attempt - 1}) ===\n${validationErrorFeedback}\n=== END VALIDATION FAILURE ===\n\n`;
+          }
+
+          stageOutput = await runAgent(
+            conversationId,
+            'Architect',
+            userPrompt,
+            emit,
+            ledger,
+            attempt,
+            customContext,
+            executionSignal,
+            validationErrorFeedback
+          );
+
+          const validation = await validateArchitectOutput(conversationId, stageOutput.content);
+
+          for (const warn of validation.warnings) {
+            emit({ type: 'AGENT_LOG', agent: 'Architect', message: `⚠️ Architect Warning: ${warn}` });
+          }
+
+          if (validation.valid) {
+            accepted = true;
+            break;
+          }
+
+          for (const err of validation.errors) {
+            emit({
+              type: 'AGENT_LOG',
+              agent: 'Architect',
+              message: `❌ Architect Validation Error (Attempt ${attempt}/${MAX_ARCHITECT_VALIDATION_RETRIES + 1}): ${err}`,
+            });
+          }
+
+          if (attempt <= MAX_ARCHITECT_VALIDATION_RETRIES) {
+            emit({
+              type: 'AGENT_LOG',
+              agent: 'Architect',
+              message: `⚠️ Architect output failed validation. Retrying (${attempt}/${MAX_ARCHITECT_VALIDATION_RETRIES + 1})...`,
+            });
+            validationErrorFeedback = `=== ARCHITECT VALIDATION FAILURE ===\n\nThe previous architecture.md is invalid.\n\nErrors:\n${validation.errors.map((e) => `- ${e}`).join('\n')}\n\nRegenerate the COMPLETE architecture.md.\nDo not preserve invalid paths from the previous attempt.\nDo not explain the correction.\nOutput only the required architecture.md document.`;
+          } else {
+            await writeVirtualFile(conversationId, 'architecture.md', '');
+            const errSummary = validation.errors.join('; ');
+            emit({
+              type: 'PIPELINE_ERROR',
+              message: `Architect validation failed after ${attempt} attempts: ${errSummary}`,
+            });
+            throw new Error(`Architect validation failed after ${attempt} attempts: ${errSummary}`);
+          }
+        }
+
+        if (!accepted) {
+          throw new Error('Architect output validation failed.');
+        }
+      } else {
+        stageOutput = await runAgent(
+          conversationId,
+          stageName,
+          userPrompt,
+          emit,
+          ledger,
+          1,
+          extraContext,
+          executionSignal
+        );
+      }
 
       emit({
         type: 'AGENT_COMPLETE',

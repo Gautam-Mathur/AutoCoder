@@ -61,6 +61,7 @@ export interface ProjectContract {
   };
   moduleSystem?: 'ESM' | 'COMMONJS';
   entryPoints: string[];
+  backendEntryPoints?: string[];
   apiEndpoints: ApiEndpointContract[];
   models: ModelContract[];
   dependencies: string[];
