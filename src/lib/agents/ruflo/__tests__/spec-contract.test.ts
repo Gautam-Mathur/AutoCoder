@@ -453,7 +453,146 @@ Frontend Entry Point: src/pages/index.tsx
   ]);
   assert.strictEqual(bpBoundaryVal.valid, false, 'Expected Blueprint graph declaring index.html -> server/app.js to fail runtime boundary validation');
 
-  console.log('✅ All Kanban spec contract regression assertions (A-T + Regressions 1-11) passed successfully.');
+  // Regression 12: Directional Blueprint Runtime Boundary Checks (Vite vs Next.js)
+  const contractVite = extractProjectContract({
+    'plan.md': '',
+    'requirements.md': '',
+    'architecture.md': 'Frontend: React\nBuild Tool: Vite\nFrontend Entry Point: src/pages/index.tsx',
+    'backend_spec.md': '',
+    'ui_spec.md': '',
+  });
+
+  const bpVitePrisma = validateBlueprintGraph(
+    [
+      {
+        file: 'src/App.tsx',
+        purpose: 'App',
+        specsRequired: [],
+        exports: [],
+        dependencies: ['src/lib/prisma.ts'],
+        details: '',
+        rawSection: 'File: src/App.tsx\nDependencies: src/lib/prisma.ts',
+      },
+      {
+        file: 'src/lib/prisma.ts',
+        purpose: 'Prisma Client',
+        specsRequired: [],
+        exports: [],
+        dependencies: ['@prisma/client'],
+        details: '',
+        rawSection: 'File: src/lib/prisma.ts\nDependencies: @prisma/client',
+      },
+    ],
+    undefined,
+    contractVite
+  );
+  assert.strictEqual(bpVitePrisma.valid, false, 'Expected Vite frontend component importing src/lib/prisma.ts to fail blueprint boundary check');
+
+  const contractNext = extractProjectContract({
+    'plan.md': '',
+    'requirements.md': '',
+    'architecture.md': 'Frontend: Next.js App Router\nFrontend Entry Point: src/app/page.tsx',
+    'backend_spec.md': '',
+    'ui_spec.md': '',
+  });
+
+  const bpNextServerPrisma = validateBlueprintGraph(
+    [
+      {
+        file: 'src/app/api/products/route.ts',
+        purpose: 'API Route',
+        specsRequired: [],
+        exports: [],
+        dependencies: ['src/lib/prisma.ts'],
+        details: '',
+        rawSection: 'File: src/app/api/products/route.ts\nDependencies: src/lib/prisma.ts',
+      },
+      {
+        file: 'src/lib/prisma.ts',
+        purpose: 'Prisma Client',
+        specsRequired: [],
+        exports: [],
+        dependencies: ['@prisma/client'],
+        details: '',
+        rawSection: 'File: src/lib/prisma.ts\nDependencies: @prisma/client',
+      },
+    ],
+    undefined,
+    contractNext
+  );
+  assert.strictEqual(bpNextServerPrisma.valid, true, 'Expected Next.js server route handler importing src/lib/prisma.ts to pass blueprint boundary check');
+
+  // Regression 13: Stripe Secret Boundary Check
+  const resStripeLeak = validateFrameworkBoundaries(
+    {
+      'src/components/Checkout.tsx': '"use client"\nconst key = "sk_test_123456789";',
+    },
+    'NEXT_APP_ROUTER'
+  );
+  assert.strictEqual(resStripeLeak.valid, false, 'Expected client component with Stripe secret key to fail framework validation');
+
+  const resStripeSafe = validateFrameworkBoundaries(
+    {
+      'src/components/Checkout.tsx': '"use client"\nimport { loadStripe } from "@stripe/stripe-js";',
+      'src/app/api/checkout/route.ts': 'import Stripe from "stripe"; const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);',
+    },
+    'NEXT_APP_ROUTER'
+  );
+  assert.strictEqual(resStripeSafe.valid, true, 'Expected client component with @stripe/stripe-js and server route handler with Stripe SDK to pass framework validation');
+
+  // Regression 14: Next.js Dynamic Catch-All API Route Matching
+  const resDynamicRoute = validateApiContracts(
+    {
+      framework: 'NEXT_APP_ROUTER',
+      language: 'typescript',
+      orm: 'prisma',
+      database: 'sqlite',
+      authentication: { required: false },
+      routing: { style: 'app' },
+      entryPoints: ['src/app/page.tsx'],
+      apiEndpoints: [{ method: 'GET', path: '/api/products', authRequired: false }],
+      models: [],
+      dependencies: [],
+    },
+    {
+      'src/app/api/[...slug]/route.ts': 'export async function GET() { return Response.json([]); }',
+    }
+  );
+  assert.strictEqual(resDynamicRoute.valid, true, 'Expected /api/products to match src/app/api/[...slug]/route.ts export async function GET()');
+
+  // Regression 15: Contract Hash Verification in Blueprint
+  const contractWithHash = {
+    ...contractVite,
+    contractHash: '1111111122222222333333334444444455555555666666667777777788888888',
+  };
+  const bpStaleHash = validateBlueprintGraph(
+    [
+      {
+        file: 'src/main.tsx',
+        purpose: 'Entry',
+        specsRequired: [],
+        exports: [],
+        dependencies: [],
+        details: '',
+        rawSection: '### File: src/main.tsx\n<!-- Contract Hash: 9999999999999999999999999999999999999999999999999999999999999999 -->',
+      },
+    ],
+    undefined,
+    contractWithHash
+  );
+  assert.strictEqual(bpStaleHash.valid, false, 'Expected stale blueprint contract hash to fail blueprint graph validation');
+
+  // Regression 16: Next.js Canonical Entry Resolution for src/app/page.tsx
+  const resNextAppEntry = validateFrameworkBoundaries(
+    {
+      'src/app/page.tsx': 'export default function Page() { return <div>Store</div>; }',
+    },
+    'NEXT_APP_ROUTER',
+    contractNext
+  );
+  assert.strictEqual(resNextAppEntry.valid, true, 'Expected src/app/page.tsx to satisfy Next.js App Router root entry requirement');
+
+  console.log('✅ All Kanban & E-Commerce spec contract regression assertions (A-T + Regressions 1-16) passed successfully.');
 }
 
 if (require.main === module) {

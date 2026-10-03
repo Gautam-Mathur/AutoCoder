@@ -1,4 +1,4 @@
-import { ContractValidation } from './spec-contract';
+import { ContractValidation, ProjectContract } from './spec-contract';
 import { BlueprintGraphValidation } from './orchestrator';
 import { ProjectValidationResult } from './project-validator';
 import { DependencyValidationResult } from './dependency-validator';
@@ -11,6 +11,7 @@ import { SecurityGateResult } from './security-gate';
 export type QualityGateStatus = 'PASS' | 'REPAIR_REQUIRED' | 'BLOCKED';
 
 export interface QualityGateEvaluationInput {
+  specContract?: ProjectContract;
   specValidation?: ContractValidation;
   blueprintValidation?: BlueprintGraphValidation;
   projectValidation?: ProjectValidationResult;
@@ -52,7 +53,12 @@ export function evaluateQualityGate(input: QualityGateEvaluationInput): QualityG
   const blueprintValid = input.blueprintValidation ? input.blueprintValidation.valid : false;
   const projectCompiles = input.projectValidation ? input.projectValidation.success : false;
   const packagesValid = input.packageValidation ? input.packageValidation.valid : false;
-  const prismaValid = input.prismaValidation ? input.prismaValidation.valid : true; // Optional if no DB
+
+  const requiresPrisma = input.specContract ? input.specContract.orm === 'prisma' : Boolean(input.prismaValidation && input.prismaValidation.parsedModels.length > 0);
+  const prismaValid = requiresPrisma
+    ? Boolean(input.prismaValidation && input.prismaValidation.valid && input.prismaValidation.clientGenerationVerified)
+    : input.prismaValidation ? input.prismaValidation.valid : true;
+
   const apiContractsValid = input.apiValidation ? input.apiValidation.valid : true; // Optional if no API
   const frameworkBoundariesValid = input.frameworkValidation ? input.frameworkValidation.valid : false;
   const runtimeProbesValid = input.runtimeValidation ? input.runtimeValidation.success : true; // Optional structural probe
@@ -92,9 +98,14 @@ export function evaluateQualityGate(input: QualityGateEvaluationInput): QualityG
   }
 
   // Collect Prisma Database Contract Errors
-  if (input.prismaValidation && !input.prismaValidation.valid) {
-    for (const e of input.prismaValidation.errors) {
-      blockingReasons.push(`Prisma DB Contract Error (${e.file}:${e.line}): ${e.message}`);
+  if (input.prismaValidation) {
+    if (!input.prismaValidation.valid) {
+      for (const e of input.prismaValidation.errors) {
+        blockingReasons.push(`Prisma DB Contract Error (${e.file}:${e.line}): ${e.message}`);
+      }
+    }
+    if (requiresPrisma && !input.prismaValidation.clientGenerationVerified) {
+      blockingReasons.push(`Prisma Client Generation Error: Prisma ORM is required by contract, but Prisma client generation was not verified.`);
     }
   }
 

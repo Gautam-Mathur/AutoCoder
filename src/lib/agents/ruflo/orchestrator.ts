@@ -671,7 +671,8 @@ export function classifyBlueprintDependency(dep: string): 'LOCAL_FILE' | 'PACKAG
  */
 export function validateBlueprintGraph(
   sections: BlueprintFileSection[],
-  tsConfigContent?: string
+  tsConfigContent?: string,
+  contract?: ProjectContract
 ): BlueprintGraphValidation {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -751,23 +752,91 @@ export function validateBlueprintGraph(
     errors.push(`Dependency cycle detected in blueprint file graph.`);
   }
 
-  // 5. Runtime Boundary Validation
+  // 5. Framework-Aware Directional Runtime Boundary Validation
+  const framework = contract?.framework || 'STATIC_HTML';
+
   for (const [, section] of fileMap.entries()) {
-    if (section.file.endsWith('index.html') || section.file === 'index.html') {
-      for (const dep of section.dependencies) {
-        if (!dep || dep === 'None') continue;
-        if (
-          dep.startsWith('server/') ||
-          dep.startsWith('api/') ||
-          dep.includes('/server/') ||
-          dep.includes('/api/') ||
-          /(^|\/)(server|app)\.(js|ts)$/i.test(dep)
-        ) {
+    const srcFile = section.file.replace(/\\/g, '/').replace(/^\.\//, '');
+    const isHtml = srcFile.endsWith('.html');
+    const isNextServerFile =
+      framework === 'NEXT_APP_ROUTER' &&
+      (/(^|\/)api\//i.test(srcFile) ||
+        srcFile.endsWith('/route.ts') ||
+        srcFile.endsWith('/route.js') ||
+        srcFile.includes('lib/prisma') ||
+        srcFile.includes('lib/db'));
+
+    const isClientFile =
+      !isNextServerFile &&
+      !srcFile.startsWith('server/') &&
+      !srcFile.startsWith('api/') &&
+      (isHtml ||
+        srcFile.startsWith('src/') ||
+        /(^|\/)(main|index|app)\.(tsx|jsx|ts|js)$/i.test(srcFile) ||
+        /(^|\/)(components|hooks|styles|pages|services|utils)\//i.test(srcFile) ||
+        (contract?.entryPoints?.includes(srcFile) ?? false));
+
+    for (const dep of section.dependencies) {
+      if (!dep || dep === 'None') continue;
+      const cleanDep = dep.replace(/\\/g, '/').replace(/^\.\//, '');
+
+      const isServerDep =
+        cleanDep.startsWith('server/') ||
+        cleanDep.startsWith('api/') ||
+        cleanDep.includes('/server/') ||
+        cleanDep.includes('/api/') ||
+        /(^|\/)(server|app)\.(js|ts)$/i.test(cleanDep);
+
+      const isDatabaseDep =
+        cleanDep.startsWith('prisma/') ||
+        cleanDep.includes('/prisma/') ||
+        cleanDep.endsWith('prisma/schema.prisma') ||
+        cleanDep.includes('lib/prisma') ||
+        cleanDep === '@prisma/client' ||
+        cleanDep === 'prisma';
+
+      if (isHtml) {
+        if (isServerDep || isDatabaseDep) {
           errors.push(
-            `Runtime Boundary Violation in Blueprint: Frontend entry "${section.file}" declares backend dependency "${dep}". HTML cannot import backend runtime files.`
+            `Blueprint Runtime Boundary Error: HTML entry "${srcFile}" cannot depend on server/database file "${cleanDep}". HTML cannot import server/database runtime files.`
           );
         }
+      } else if (framework === 'VITE_SPA' || framework === 'REACT_WEBPACK_SPA' || framework === 'STATIC_HTML') {
+        if (isClientFile && (isServerDep || isDatabaseDep)) {
+          errors.push(
+            `Blueprint Runtime Boundary Error: Frontend file "${srcFile}" cannot depend on server/database file "${cleanDep}". Client code cannot import server/database runtime files.`
+          );
+        }
+      } else if (framework === 'NEXT_APP_ROUTER') {
+        if (!isNextServerFile && isDatabaseDep && !cleanDep.startsWith('/api/') && !cleanDep.startsWith('api/')) {
+          const purposeLower = section.purpose.toLowerCase();
+          const isClientComponent =
+            /(^|\/)components\//i.test(srcFile) ||
+            (purposeLower.includes('client') && !purposeLower.includes('prisma') && !purposeLower.includes('db'));
+          if (isClientComponent) {
+            errors.push(
+              `Blueprint Runtime Boundary Error: Next.js client component "${srcFile}" cannot depend on server-only database file "${cleanDep}".`
+            );
+          }
+        }
       }
+    }
+  }
+
+  // 6. Contract Hash Enforcement
+  if (contract?.contractHash) {
+    let bpHash: string | undefined;
+    for (const s of sections) {
+      const match = s.rawSection.match(/(?:Contract\s*Hash|contractHash)\s*:\s*([a-f0-9]{64})/i);
+      if (match) {
+        bpHash = match[1];
+        break;
+      }
+    }
+    if (bpHash && bpHash !== contract.contractHash) {
+      errors.push(
+        `Contract Hash Mismatch: Blueprint was generated from contract hash ${bpHash}, but current spec contract hash is ${contract.contractHash}.`
+      );
     }
   }
 
@@ -914,6 +983,15 @@ export function syncHtmlAssetLinks(
     return { updatedHtml, syncedLinks };
   }
 
+  if (framework === 'NEXT_APP_ROUTER' || framework === 'NEXT_PAGES_ROUTER') {
+    const badScriptRegex = /<script\b[^>]*\bsrc=["'](?:(?:\/)?(?:server|api|src\/components|components|src\/services)\/|[^"']*\.(?:tsx|jsx|ts))["'][^>]*>(?:<\/script>)?\n?/gi;
+    if (badScriptRegex.test(updatedHtml)) {
+      updatedHtml = updatedHtml.replace(badScriptRegex, '');
+      syncedLinks.push('Removed raw component/server script reference from Next.js HTML');
+    }
+    return { updatedHtml, syncedLinks };
+  }
+
   if (framework === 'REACT_WEBPACK_SPA') {
     const entryPoints = contract?.entryPoints || ['src/index.tsx', 'src/pages/index.tsx'];
     const canonicalEntry = entryPoints[0] || 'bundle.js';
@@ -940,8 +1018,12 @@ export function syncHtmlAssetLinks(
       !f.includes('test') &&
       !f.startsWith('server/') &&
       !f.startsWith('api/') &&
+      !f.startsWith('src/components/') &&
+      !f.startsWith('src/services/') &&
+      !f.startsWith('src/hooks/') &&
       !f.includes('/server/') &&
-      !f.includes('/api/')
+      !f.includes('/api/') &&
+      !f.includes('/components/')
   );
 
   for (const cssFile of cssFiles) {
@@ -1895,17 +1977,18 @@ export async function runOrchestrator(
 
         const blueprintText = (await readVirtualFile(conversationId, 'blueprint.md')) || '';
         const fileSections = parseBlueprintFiles(blueprintText);
-        const blueprintVal = validateBlueprintGraph(fileSections);
+        const blueprintVal = validateBlueprintGraph(fileSections, undefined, specContract);
 
         const projVal = await validateGeneratedProject(conversationId);
         const packageVal = validatePackageDependencies(vfsFilesRecord, vfsFilesRecord['package.json'] || '');
         const prismaVal = validatePrismaUsage(vfsFilesRecord, vfsFilesRecord['prisma/schema.prisma'] || '');
         const apiVal = validateApiContracts(specContract, vfsFilesRecord);
-        const frameworkVal = validateFrameworkBoundaries(vfsFilesRecord, specContract.framework);
+        const frameworkVal = validateFrameworkBoundaries(vfsFilesRecord, specContract.framework, specContract);
         const runtimeVal = await probeGeneratedProjectRoutes(specContract, vfsFilesRecord);
         const securityVal = validateSecurityGate(vfsFilesRecord);
 
         const qGate = evaluateQualityGate({
+          specContract,
           specValidation: specVal,
           blueprintValidation: blueprintVal,
           projectValidation: projVal,

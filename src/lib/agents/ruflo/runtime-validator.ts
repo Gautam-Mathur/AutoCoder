@@ -2,6 +2,8 @@ import { ApiEndpointContract, ProjectContract } from './contracts';
 
 export interface RuntimeTestResult {
   success: boolean;
+  structuralChecksPassed: boolean;
+  executionVerified: boolean;
   probedRoutes: Array<{ route: string; status: number; ok: boolean }>;
   errors: string[];
 }
@@ -75,6 +77,8 @@ export async function probeGeneratedProjectRoutes(
 
   return {
     success: errors.length === 0,
+    structuralChecksPassed: errors.length === 0,
+    executionVerified: false,
     probedRoutes,
     errors,
   };

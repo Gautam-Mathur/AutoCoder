@@ -1,3 +1,5 @@
+import { ProjectContract } from './contracts';
+
 export interface FrameworkValidationError {
   file: string;
   line: number;
@@ -17,16 +19,22 @@ export interface FrameworkValidationResult {
  */
 export function validateFrameworkBoundaries(
   vfsFiles: Record<string, string>,
-  targetFramework: 'NEXT_APP_ROUTER' | 'NEXT_PAGES_ROUTER' | 'VITE_SPA' | 'REACT_WEBPACK_SPA' | 'STATIC_HTML' = 'NEXT_APP_ROUTER'
+  targetFramework: 'NEXT_APP_ROUTER' | 'NEXT_PAGES_ROUTER' | 'VITE_SPA' | 'REACT_WEBPACK_SPA' | 'STATIC_HTML' = 'NEXT_APP_ROUTER',
+  contract?: ProjectContract
 ): FrameworkValidationResult {
   const errors: FrameworkValidationError[] = [];
   const warnings: FrameworkValidationError[] = [];
 
-  const filePaths = Object.keys(vfsFiles).map(f => f.replace(/\\/g, '/').replace(/^\.\//, ''));
+  const filePaths = Object.keys(vfsFiles).map((f) => f.replace(/\\/g, '/').replace(/^\.\//, ''));
 
   // 1. Router Style Consistency Check
-  const appRoutes = filePaths.filter(f => f.startsWith('app/') || f.startsWith('src/app/'));
-  const pagesRoutes = filePaths.filter(f => (f.startsWith('pages/') || f.startsWith('src/pages/')) && !f.includes('pages/_app') && !f.includes('pages/_document'));
+  const appRoutes = filePaths.filter((f) => f.startsWith('app/') || f.startsWith('src/app/'));
+  const pagesRoutes = filePaths.filter(
+    (f) =>
+      (f.startsWith('pages/') || f.startsWith('src/pages/')) &&
+      !f.includes('pages/_app') &&
+      !f.includes('pages/_document')
+  );
 
   if (targetFramework === 'NEXT_APP_ROUTER' && pagesRoutes.length > 0 && appRoutes.length > 0) {
     errors.push({
@@ -46,7 +54,23 @@ export function validateFrameworkBoundaries(
     });
   }
 
-  // 2. App Router Client/Server Execution Boundary Validation
+  if (targetFramework === 'NEXT_APP_ROUTER') {
+    const entryPoints = contract?.entryPoints || ['src/app/page.tsx', 'app/page.tsx'];
+    const hasCanonicalEntry =
+      entryPoints.some((ep) => filePaths.includes(ep) || filePaths.some((f) => f === ep || f.endsWith(ep))) ||
+      appRoutes.length > 0;
+
+    if (!hasCanonicalEntry) {
+      errors.push({
+        file: entryPoints[0] || 'src/app/page.tsx',
+        line: 1,
+        severity: 'ERROR',
+        message: `Next.js App Router project is missing a root page entry point (${entryPoints.join(' or ')}).`,
+      });
+    }
+  }
+
+  // 2. App Router Client/Server Execution Boundary & Stripe Secret Validation
   const SERVER_ONLY_IMPORTS = ['prisma', '@prisma/client', '@/lib/prisma', 'lib/prisma', 'fs', 'fs/promises', 'child_process'];
 
   for (const [filename, content] of Object.entries(vfsFiles)) {
@@ -55,7 +79,9 @@ export function validateFrameworkBoundaries(
 
     const isAppRouterFile = cleanPath.startsWith('app/') || cleanPath.startsWith('src/app/');
     const hasUseClient = /^\s*['"]use client['"]/m.test(content);
-    const usesReactHooks = /\b(useState|useEffect|useContext|useReducer|useCallback|useMemo|useRef|useLayoutEffect|useTransition)\b/.test(content);
+    const usesReactHooks = /\b(useState|useEffect|useContext|useReducer|useCallback|useMemo|useRef|useLayoutEffect|useTransition)\b/.test(
+      content
+    );
 
     // Rule A: React Hooks in App Router require 'use client'
     if (isAppRouterFile && usesReactHooks && !hasUseClient) {
@@ -85,10 +111,25 @@ export function validateFrameworkBoundaries(
         }
       }
     }
+
+    // Rule C: Client components / browser files CANNOT expose Stripe secrets or server Stripe SDK
+    if (hasUseClient || cleanPath.startsWith('src/components/') || cleanPath.startsWith('components/')) {
+      if (
+        /STRIPE_SECRET_KEY|sk_live_|sk_test_/i.test(content) ||
+        /require\(['"]stripe['"]\)|from\s+['"]stripe['"]|new\s+Stripe\(/i.test(content)
+      ) {
+        errors.push({
+          file: cleanPath,
+          line: 1,
+          severity: 'ERROR',
+          message: `Security & Boundary Violation: Client component "${cleanPath}" exposes Stripe secret key or server-side Stripe SDK. Move Stripe secret operations to API route handlers or Server Components.`,
+        });
+      }
+    }
   }
 
   if (targetFramework === 'VITE_SPA') {
-    validateViteBootstrap(vfsFiles, errors);
+    validateViteBootstrap(vfsFiles, errors, contract);
   }
 
   if (targetFramework === 'REACT_WEBPACK_SPA') {
@@ -105,11 +146,10 @@ export function validateFrameworkBoundaries(
 
 function validateViteBootstrap(
   vfsFiles: Record<string, string>,
-  errors: FrameworkValidationError[]
+  errors: FrameworkValidationError[],
+  contract?: ProjectContract
 ): void {
-  const viteConfig = Object.keys(vfsFiles).find((f) =>
-    /(^|\/)vite\.config\.(js|cjs|mjs|ts)$/i.test(f)
-  );
+  const viteConfig = Object.keys(vfsFiles).find((f) => /(^|\/)vite\.config\.(js|cjs|mjs|ts)$/i.test(f));
 
   if (!viteConfig) {
     errors.push({
@@ -121,21 +161,33 @@ function validateViteBootstrap(
   }
 
   let mountIdInCode: string | null = null;
-  for (const [file, code] of Object.entries(vfsFiles)) {
-    if (!/\.(js|jsx|ts|tsx)$/.test(file) || !code) continue;
-    const match = code.match(/document\.getElementById\(["']([^"']+)["']\)/i);
-    if (match) {
-      mountIdInCode = match[1];
-      break;
+  const canonicalEntries = contract?.entryPoints || [];
+  for (const entry of canonicalEntries) {
+    const code = vfsFiles[entry] || vfsFiles[`./${entry}`] || vfsFiles[`/${entry}`];
+    if (code) {
+      const match = code.match(/document\.getElementById\(["']([^"']+)["']\)/i);
+      if (match) {
+        mountIdInCode = match[1];
+        break;
+      }
+    }
+  }
+
+  if (!mountIdInCode) {
+    for (const [file, code] of Object.entries(vfsFiles)) {
+      if (!/\.(js|jsx|ts|tsx)$/.test(file) || !code) continue;
+      const match = code.match(/document\.getElementById\(["']([^"']+)["']\)/i);
+      if (match) {
+        mountIdInCode = match[1];
+        break;
+      }
     }
   }
 
   for (const [file, html] of Object.entries(vfsFiles)) {
     if (!/\.html$/i.test(file)) continue;
 
-    const scriptMatches = Array.from(
-      html.matchAll(/<script\b([^>]*)>(?:<\/script>)?/gi)
-    );
+    const scriptMatches = Array.from(html.matchAll(/<script\b([^>]*)>(?:<\/script>)?/gi));
 
     let hasModuleScript = false;
 
@@ -201,13 +253,8 @@ function validateViteBootstrap(
   }
 }
 
-function validateReactWebpackBootstrap(
-  vfsFiles: Record<string, string>,
-  errors: FrameworkValidationError[]
-): void {
-  const webpackConfig = Object.keys(vfsFiles).find((f) =>
-    /(^|\/)webpack\.config\.(js|cjs|mjs|ts)$/i.test(f)
-  );
+function validateReactWebpackBootstrap(vfsFiles: Record<string, string>, errors: FrameworkValidationError[]): void {
+  const webpackConfig = Object.keys(vfsFiles).find((f) => /(^|\/)webpack\.config\.(js|cjs|mjs|ts)$/i.test(f));
 
   if (!webpackConfig) {
     errors.push({
@@ -221,13 +268,9 @@ function validateReactWebpackBootstrap(
   for (const [file, html] of Object.entries(vfsFiles)) {
     if (!/\.html$/i.test(file)) continue;
 
-    const scripts = Array.from(
-      html.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi)
-    ).map((m) => m[1]);
+    const scripts = Array.from(html.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi)).map((m) => m[1]);
 
-    const duplicates = [
-      ...new Set(scripts.filter((src, i) => scripts.indexOf(src) !== i)),
-    ];
+    const duplicates = [...new Set(scripts.filter((src, i) => scripts.indexOf(src) !== i))];
 
     for (const src of duplicates) {
       errors.push({
@@ -259,4 +302,3 @@ function validateReactWebpackBootstrap(
     }
   }
 }
-

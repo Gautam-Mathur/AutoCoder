@@ -53,9 +53,19 @@ function expressRouteExists(
   for (const [file, content] of Object.entries(vfsFiles)) {
     if (!/\.(ts|tsx|js|jsx)$/.test(file)) continue;
 
-    const useMatches = content.matchAll(/app\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*([a-zA-Z0-9_\$]+)/g);
+    const useMatches = content.matchAll(/(?:app|router)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*([a-zA-Z0-9_\$]+)/g);
     for (const um of useMatches) {
       mounts.push({ prefix: um[1], file });
+    }
+
+    // Support constant assignment: const PREFIX = '/api'; app.use(PREFIX, router)
+    const constMatches = content.matchAll(/const\s+([A-Z0-9_]+)\s*=\s*['"]([^'"]+)['"]/g);
+    for (const cm of constMatches) {
+      const varName = cm[1];
+      const varValue = cm[2];
+      if (content.includes(`app.use(${varName}`)) {
+        mounts.push({ prefix: varValue, file });
+      }
     }
   }
 
@@ -82,6 +92,82 @@ function expressRouteExists(
   }
 
   return undefined;
+}
+
+function matchNextAppRoute(declPath: string, vfsFilePaths: string[]): string | undefined {
+  const cleanPath = declPath.replace(/^\/+/, '').replace(/\/+$/, '');
+  const parts = cleanPath.split('/');
+
+  // 1. Direct exact candidates
+  const exactCandidates = [
+    `app/${cleanPath}/route.ts`,
+    `app/${cleanPath}/route.tsx`,
+    `app/${cleanPath}/route.js`,
+    `src/app/${cleanPath}/route.ts`,
+    `src/app/${cleanPath}/route.tsx`,
+    `src/app/${cleanPath}/route.js`,
+    `pages/${cleanPath}.ts`,
+    `pages/${cleanPath}.tsx`,
+    `src/pages/${cleanPath}.ts`,
+    `src/pages/${cleanPath}.tsx`,
+  ];
+
+  for (const cand of exactCandidates) {
+    if (vfsFilePaths.includes(cand)) return cand;
+  }
+
+  // 2. Dynamic and Catch-all routes matching
+  for (const filePath of vfsFilePaths) {
+    if (!/(^|\/)(app|pages)\/.*route\.(ts|tsx|js)$/i.test(filePath) && !/(^|\/)pages\/.*\.(ts|tsx|js)$/i.test(filePath)) continue;
+
+    const routeDir = filePath
+      .replace(/^(?:src\/)?(?:app|pages)\//, '')
+      .replace(/\/route\.(?:ts|tsx|js)$/, '')
+      .replace(/\.(?:ts|tsx|js)$/, '');
+
+    const dirParts = routeDir.split('/');
+
+    let matches = true;
+    let pIdx = 0;
+    let dIdx = 0;
+
+    while (pIdx < parts.length && dIdx < dirParts.length) {
+      const pPart = parts[pIdx];
+      const dPart = dirParts[dIdx];
+
+      if (dPart.startsWith('[[...') && dPart.endsWith(']]')) {
+        pIdx = parts.length;
+        dIdx = dirParts.length;
+        break;
+      }
+
+      if (dPart.startsWith('[...') && dPart.endsWith(']')) {
+        pIdx = parts.length;
+        dIdx = dirParts.length;
+        break;
+      }
+
+      if (dPart.startsWith('[') && dPart.endsWith(']')) {
+        pIdx++;
+        dIdx++;
+        continue;
+      }
+
+      if (pPart.toLowerCase() === dPart.toLowerCase()) {
+        pIdx++;
+        dIdx++;
+      } else {
+        matches = false;
+        break;
+      }
+    }
+
+    if (matches && (pIdx === parts.length || dIdx === dirParts.length)) {
+      return filePath;
+    }
+  }
+
+  return vfsFilePaths.find((f) => f.toLowerCase().includes(cleanPath.toLowerCase()));
 }
 
 /**
@@ -114,32 +200,16 @@ export function validateApiContracts(
     }
 
     // Check 2: Next.js App Router & Pages Router filesystem routes
-    const appRoutePath = `app/${cleanPath}/route.ts`;
-    const appRoutePathTsx = `app/${cleanPath}/route.tsx`;
-    const appRoutePathJs = `app/${cleanPath}/route.js`;
-    const pagesRoutePath = `pages/${cleanPath}.ts`;
-    const pagesRoutePathTsx = `pages/${cleanPath}.tsx`;
-
-    const matchingFile = vfsFilePaths.find(
-      (f) =>
-        f === appRoutePath ||
-        f === appRoutePathTsx ||
-        f === appRoutePathJs ||
-        f === pagesRoutePath ||
-        f === pagesRoutePathTsx ||
-        f.toLowerCase().includes(cleanPath.toLowerCase())
-    );
+    const matchingFile = matchNextAppRoute(decl.path, vfsFilePaths);
 
     if (!matchingFile) {
       errors.push({
         endpoint: decl.path,
         method: decl.method,
-        message: `Declared API endpoint "${decl.method} ${decl.path}" has no corresponding route handler implementation in VFS (expected Express route registration or ${appRoutePath}).`,
+        message: `Declared API endpoint "${decl.method} ${decl.path}" has no corresponding route handler implementation in VFS (expected Express route registration or App Router route handler).`,
       });
       continue;
     }
-
-    implementedCount++;
 
     // Method Handler Check for App Router (exports GET, POST, etc.)
     const fileContent = vfsFiles[matchingFile] || '';
@@ -155,8 +225,11 @@ export function validateApiContracts(
           file: matchingFile,
           message: `API route file "${matchingFile}" exists for "${decl.path}", but does not export HTTP handler function "${methodUpper}".`,
         });
+        continue;
       }
     }
+
+    implementedCount++;
   }
 
   return {
