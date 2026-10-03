@@ -1,10 +1,10 @@
 import assert from 'node:assert';
-import { extractProjectContract, validateProjectContract, validateArchitectureArtifact, detectExplicitNoAuth, detectExplicitAuthRequired } from '../spec-contract';
+import { extractProjectContract, validateProjectContract, validateArchitectureArtifact, detectExplicitNoAuth, detectExplicitAuthRequired, parseArchitectureModules } from '../spec-contract';
 import { validateFrameworkBoundaries } from '../framework-validator';
 import { validateReactHookImports, ProjectValidationError } from '../project-validator';
 import { probeGeneratedProjectRoutes } from '../runtime-validator';
 import { validateApiContracts } from '../api-contract-validator';
-import { syncHtmlAssetLinks, validateBlueprintGraph, validateArchitectOutput } from '../orchestrator';
+import { syncHtmlAssetLinks, validateBlueprintGraph, validateArchitectOutput, composeAgentUserContent, shouldPersistAgentOutput } from '../orchestrator';
 
 export async function runKanbanContractTests(): Promise<void> {
   // Test A: Exact Kanban authentication contradiction
@@ -828,7 +828,7 @@ project-root/
   );
   assert.strictEqual(resStripeLeakTestN.valid, false, 'Expected Stripe secret key in client component to be rejected');
 
-  // ─── FULL E-COMMERCE INTEGRATION FIXTURE TEST (Section 23) ───
+  // ─── FULL E-COMMERCE INTEGRATION FIXTURE TEST (Section 23 & Patch 59) ───
   const ecomArch = `
 ### Tech Stack
 - **Frontend**: Next.js App Router
@@ -843,8 +843,11 @@ project-root/
 
 ### Project Folder Structure
 project-root/
+├── public/
+│   └── next.svg
 └── src/
     ├── app/
+    │   ├── layout.tsx
     │   ├── page.tsx
     │   ├── api/
     │   │   └── [...slug]/
@@ -860,23 +863,35 @@ project-root/
         └── globals.css
 
 ### Modules
-**Frontend Module**
-- Responsibility: Main page and components
-- Owned Files: src/app/page.tsx, src/app/components/ProductCard.tsx, src/app/components/SearchBar.tsx, src/app/components/CartItem.tsx, src/styles/globals.css
-- Depends On: Database Module
+**Application Shell**
+- Responsibility: Provides the root App Router shell
+- Owned Files: src/app/layout.tsx, src/app/page.tsx
+- Depends On: Storefront Components
+- Supports Features: Storefront
+
+**Storefront Components**
+- Responsibility: Renders product and search components
+- Owned Files: src/app/components/ProductCard.tsx, src/app/components/SearchBar.tsx, src/app/components/CartItem.tsx, src/styles/globals.css
+- Depends On: Data Access
 - Supports Features: Product Catalog & Search
 
-**Backend API Module**
-- Responsibility: Handles API routing and checkout
+**API Routes**
+- Responsibility: Handles API routes and checkout
 - Owned Files: src/app/api/[...slug]/route.ts
-- Depends On: Database Module
+- Depends On: Data Access
 - Supports Features: API & Payments
 
-**Database Module**
-- Responsibility: Prisma client and Stripe helper
+**Data Access**
+- Responsibility: Provides database and payment integration access
 - Owned Files: src/lib/prisma.ts, src/lib/stripe.ts
 - Depends On: None
-- Supports Features: Persistence & Payment API
+- Supports Features: Persistence & Payments
+
+**Static Assets**
+- Responsibility: Provides public static assets
+- Owned Files: public/next.svg
+- Depends On: None
+- Supports Features: Static Assets
 `;
 
   const ecomContract = extractProjectContract({
@@ -922,7 +937,7 @@ model Product {
 
   const valEcomFramework = validateFrameworkBoundaries(
     {
-      'src/app/page.tsx': 'import { prisma } from "../lib/prisma"; export default async function Page() { return <div>Store</div>; }',
+      'src/app/page.tsx': 'import { prisma } from "../lib/prisma"; export default async function Page() { return <div>Store</div>;',
       'src/app/components/ProductCard.tsx': '"use client"\nimport React from "react"; export function ProductCard() { return <div>Card</div>; }',
       'src/app/api/[...slug]/route.ts': 'import { prisma } from "../../../lib/prisma"; import Stripe from "stripe"; export async function GET() { return Response.json([]); }',
     },
@@ -1107,7 +1122,372 @@ project-root/
   );
   assert.strictEqual(resApiMatch13.valid, false, 'Test 13: Expected /api/products NOT to match src/app/api/products-old-backup.ts');
 
-  console.log('✅ All Kanban & E-Commerce spec contract regression assertions (A-T + Regressions 1-16 + Architect RCA Tests A-N + Full E-Commerce Fixture + Route Regression Tests 1-13) passed successfully.');
+  // ─── SPEC FIX PATCHES 37-65 NEW TESTS ───
+
+  // Context Test A & B
+  const composedA = composeAgentUserContent({
+    upstreamContext: '=== ARTIFACT: plan.md ===\nPLAN_SENTINEL\n=== END ARTIFACT: plan.md ===',
+    customUserContent: 'CUSTOM_SENTINEL',
+    userPromptText: 'USER_SENTINEL',
+    attempt: 1,
+  });
+  assert.ok(composedA.includes('PLAN_SENTINEL'));
+  assert.ok(composedA.includes('CUSTOM_SENTINEL'));
+  assert.ok(composedA.includes('USER_SENTINEL'));
+  assert.ok(composedA.indexOf('PLAN_SENTINEL') < composedA.indexOf('CUSTOM_SENTINEL'));
+  assert.ok(composedA.indexOf('CUSTOM_SENTINEL') < composedA.indexOf('USER_SENTINEL'));
+
+  // Context Test C: Retry
+  const composedRetry = composeAgentUserContent({
+    upstreamContext: '=== ARTIFACT: plan.md ===\nPLAN_SENTINEL',
+    customUserContent: 'CUSTOM_SENTINEL',
+    userPromptText: 'USER_SENTINEL',
+    attempt: 2,
+    validationError: 'VALIDATION_SENTINEL',
+  });
+  assert.ok(composedRetry.includes('PLAN_SENTINEL'));
+  assert.ok(composedRetry.includes('CUSTOM_SENTINEL'));
+  assert.ok(composedRetry.includes('USER_SENTINEL'));
+  assert.ok(composedRetry.includes('VALIDATION_SENTINEL'));
+
+  // Context Test D: No custom content
+  const composedNoCustom = composeAgentUserContent({
+    upstreamContext: 'UPSTREAM_SENTINEL',
+    customUserContent: undefined,
+    userPromptText: 'USER_SENTINEL',
+    attempt: 1,
+  });
+  assert.ok(composedNoCustom.includes('UPSTREAM_SENTINEL'));
+  assert.ok(composedNoCustom.includes('USER_SENTINEL'));
+
+  // Context Test E: No upstream content
+  const composedNoUpstream = composeAgentUserContent({
+    upstreamContext: '',
+    customUserContent: 'CUSTOM_SENTINEL',
+    userPromptText: 'USER_SENTINEL',
+    attempt: 1,
+  });
+  assert.ok(composedNoUpstream.includes('CUSTOM_SENTINEL'));
+  assert.ok(composedNoUpstream.includes('USER_SENTINEL'));
+
+  // Test Strict Module Parser
+  const validModulesFixture = `
+### Modules
+
+**Storefront**
+- Responsibility: Renders the storefront
+- Owned Files: src/app/page.tsx, src/components/ProductCard.tsx
+- Depends On: Data Access
+- Supports Features: Catalog
+
+**Data Access**
+- Responsibility: Provides persistence access
+- Owned Files: src/lib/prisma.ts
+- Depends On: None
+- Supports Features: Persistence
+
+### Conventions
+- **File Naming**: kebab-case
+`;
+  const parsedModules = parseArchitectureModules(validModulesFixture);
+  assert.deepStrictEqual(parsedModules.modules.map((m) => m.name), ['Storefront', 'Data Access']);
+  assert.strictEqual(parsedModules.errors.length, 0);
+
+  // Test Field-Line False Positive
+  const fieldFixture = `
+### Modules
+
+**Storefront**
+- Responsibility: Renders the storefront
+- Owned Files: src/app/page.tsx
+- Depends On: None
+- Supports Features: Catalog
+
+### Conventions
+- **File Naming**: kebab-case
+`;
+  const parsedField = parseArchitectureModules(fieldFixture);
+  assert.deepStrictEqual(parsedField.modules.map((m) => m.name), ['Storefront']);
+  assert.ok(!parsedField.modules.some((m) => m.name.startsWith('- Responsibility')));
+
+  // Test Exact Current Failure Shape
+  const failingModuleFixture = `
+### Modules
+
+**Storefront**
+- Responsibility: Renders the main storefront and search pages
+- Owned Files: src/app/page.tsx
+- Depends On: ProductCard, SearchBar
+- Supports Features: Product browsing
+
+**API Routes**
+- Responsibility: Handles API routes
+- Owned Files: src/app/api/[...slug]/route.ts
+- Depends On: Prisma client
+- Supports Features: API
+`;
+  const parsedFailing = parseArchitectureModules(failingModuleFixture);
+  assert.deepStrictEqual(parsedFailing.modules.map((m) => m.name), ['Storefront', 'API Routes']);
+  const valFailing = validateArchitectureArtifact(`
+### Tech Stack
+- **Frontend**: Next.js App Router
+- **Frontend Entry Point**: src/app/page.tsx
+- **Backend Entry Point**: src/app/api/[...slug]/route.ts
+
+### Project Folder Structure
+project-root/
+└── src/
+    └── app/
+        ├── page.tsx
+        └── api/
+            └── [...slug]/
+                └── route.ts
+
+${failingModuleFixture}
+`);
+  assert.strictEqual(valFailing.valid, false);
+  assert.ok(valFailing.errors.some((e) => e.includes('ProductCard') || e.includes('SearchBar') || e.includes('Prisma client')));
+
+  // Test Valid Component Ownership
+  const validCompOwnership = `
+### Tech Stack
+- **Frontend**: Next.js App Router
+- **Frontend Entry Point**: src/app/page.tsx
+
+### Project Folder Structure
+project-root/
+└── src/
+    ├── app/
+    │   └── page.tsx
+    ├── components/
+    │   ├── ProductCard.tsx
+    │   └── SearchBar.tsx
+    └── lib/
+        └── prisma.ts
+
+### Modules
+**Storefront**
+- Responsibility: UI
+- Owned Files: src/app/page.tsx, src/components/ProductCard.tsx, src/components/SearchBar.tsx
+- Depends On: Data Access
+
+**Data Access**
+- Responsibility: Database
+- Owned Files: src/lib/prisma.ts
+- Depends On: None
+`;
+  const valCompOwnership = validateArchitectureArtifact(validCompOwnership);
+  assert.strictEqual(valCompOwnership.valid, true);
+
+  // Test Unclaimed layout.tsx
+  const layoutUnclaimed = `
+### Tech Stack
+- **Frontend**: Next.js App Router
+- **Frontend Entry Point**: src/app/page.tsx
+
+### Project Folder Structure
+project-root/
+└── src/
+    └── app/
+        ├── page.tsx
+        └── layout.tsx
+
+### Modules
+**App**
+- Responsibility: Main application
+- Owned Files: src/app/page.tsx
+- Depends On: None
+- Supports Features: App
+`;
+  const valLayoutUnclaimed = validateArchitectureArtifact(layoutUnclaimed);
+  assert.strictEqual(valLayoutUnclaimed.valid, false);
+  assert.ok(valLayoutUnclaimed.errors.some((e) => e.includes('src/app/layout.tsx')));
+
+  // Test Valid layout.tsx Ownership
+  const layoutClaimed = layoutUnclaimed.replace('Owned Files: src/app/page.tsx', 'Owned Files: src/app/page.tsx, src/app/layout.tsx');
+  const valLayoutClaimed = validateArchitectureArtifact(layoutClaimed);
+  assert.strictEqual(valLayoutClaimed.valid, true);
+
+  // Test Root Public Asset
+  const rootPublicAsset = `
+### Tech Stack
+- **Frontend**: Next.js App Router
+- **Frontend Entry Point**: src/app/page.tsx
+
+### Project Folder Structure
+project-root/
+├── public/
+│   └── next.svg
+└── src/
+    └── app/
+        └── page.tsx
+
+### Modules
+**App**
+- Responsibility: Main app
+- Owned Files: src/app/page.tsx, public/next.svg
+- Depends On: None
+`;
+  const valRootPublic = validateArchitectureArtifact(rootPublicAsset);
+  assert.strictEqual(valRootPublic.valid, true);
+
+  // Test src/public Rejection
+  const srcPublicAsset = `
+### Tech Stack
+- **Frontend**: Next.js App Router
+- **Frontend Entry Point**: src/app/page.tsx
+
+### Project Folder Structure
+project-root/
+└── src/
+    ├── public/
+    │   └── next.svg
+    └── app/
+        └── page.tsx
+
+### Modules
+**App**
+- Responsibility: Main app
+- Owned Files: src/app/page.tsx, src/public/next.svg
+- Depends On: None
+`;
+  const valSrcPublic = validateArchitectureArtifact(srcPublicAsset);
+  assert.strictEqual(valSrcPublic.valid, false);
+  assert.ok(valSrcPublic.errors.some((e) => e.includes('must be placed under project-root "public/"')));
+
+  // Test Backend Entry Escape Hatch
+  const invalidBackendEntryEscape = `
+### Tech Stack
+- **Frontend**: Next.js App Router
+- **Frontend Entry Point**: src/app/page.tsx
+- **Backend Entry Point**: src/foo/route.ts
+
+### Project Folder Structure
+project-root/
+└── src/
+    ├── app/
+    │   └── page.tsx
+    └── foo/
+        └── route.ts
+
+### Modules
+**App**
+- Responsibility: Main app
+- Owned Files: src/app/page.tsx, src/foo/route.ts
+- Depends On: None
+`;
+  const valInvalidEscape = validateArchitectureArtifact(invalidBackendEntryEscape);
+  assert.strictEqual(valInvalidEscape.valid, false);
+  assert.ok(valInvalidEscape.errors.some((e) => e.includes('Backend Entry Point')));
+
+  // Test Module Cycle
+  const cycleFixture = `
+### Tech Stack
+- **Frontend**: React
+- **Frontend Entry Point**: src/a.ts
+
+### Project Folder Structure
+project-root/
+└── src/
+    ├── a.ts
+    └── b.ts
+
+### Modules
+**Module A**
+- Responsibility: A
+- Owned Files: src/a.ts
+- Depends On: Module B
+
+**Module B**
+- Responsibility: B
+- Owned Files: src/b.ts
+- Depends On: Module A
+`;
+  const valCycle = validateArchitectureArtifact(cycleFixture);
+  assert.strictEqual(valCycle.valid, false);
+  assert.ok(valCycle.errors.some((e) => e.toLowerCase().includes('cycle detected')));
+
+  // Test Package Dependency Rejection
+  const pkgDepFixture = `
+### Tech Stack
+- **Frontend**: Next.js App Router
+- **Frontend Entry Point**: src/app/page.tsx
+
+### Project Folder Structure
+project-root/
+└── src/
+    └── app/
+        └── page.tsx
+
+### Modules
+**App**
+- Responsibility: UI
+- Owned Files: src/app/page.tsx
+- Depends On: @prisma/client
+`;
+  const valPkgDep = validateArchitectureArtifact(pkgDepFixture);
+  assert.strictEqual(valPkgDep.valid, false);
+  assert.ok(valPkgDep.errors.some((e) => e.includes('@prisma/client')));
+
+  // Test Full Negative E-Commerce Fixture (Patch 60)
+  const ecomNegativeArch = `
+### Tech Stack
+- **Frontend**: Next.js App Router
+- **Frontend Entry Point**: src/app/page.tsx
+- **Backend**: Next.js API Routes
+- **Backend Entry Point**: src/app/api/[...]/route.ts
+- **Database**: SQLite
+- **ORM**: Prisma
+- **Authentication**: None — no auth needed
+- **Build Tool**: None
+- **Additional**: Stripe
+
+### Project Folder Structure
+project-root/
+└── src/
+    ├── app/
+    │   ├── layout.tsx
+    │   ├── page.tsx
+    │   └── api/
+    │       └── [...]/
+    │           └── route.ts
+    ├── public/
+    │   └── next.svg
+    ├── lib/
+    │   ├── prisma.ts
+    │   └── stripe.ts
+    └── styles/
+        └── globals.css
+
+### Modules
+**Storefront**
+- Responsibility: Renders the storefront
+- Owned Files: src/app/page.tsx
+- Depends On: ProductCard, SearchBar
+
+**API Routes**
+- Responsibility: Handles API routes
+- Owned Files: src/app/api/[...]/route.ts
+- Depends On: Prisma client
+
+**Data Access**
+- Responsibility: Provides persistence access
+- Owned Files: src/lib/prisma.ts, src/lib/stripe.ts
+- Depends On: None
+`;
+  const valEcomNegative = validateArchitectureArtifact(ecomNegativeArch);
+  assert.strictEqual(valEcomNegative.valid, false, 'Expected Full Negative E-Commerce fixture to fail validation');
+  assert.ok(valEcomNegative.errors.some((e) => e.includes('[...]')));
+  assert.ok(valEcomNegative.errors.some((e) => e.includes('src/app/layout.tsx')));
+  assert.ok(valEcomNegative.errors.some((e) => e.includes('src/public/next.svg')));
+  assert.ok(valEcomNegative.errors.some((e) => e.includes('ProductCard') || e.includes('SearchBar') || e.includes('Prisma client')));
+
+  // Test Persistence Decision
+  assert.strictEqual(shouldPersistAgentOutput('Architect', false), false);
+  assert.strictEqual(shouldPersistAgentOutput('Architect', true), true);
+  assert.strictEqual(shouldPersistAgentOutput('Planner', true), true);
+
+  console.log('✅ All Kanban & E-Commerce spec contract regression assertions (A-T + Regressions 1-16 + Architect RCA Tests A-N + Full E-Commerce Fixture + Route Regression Tests 1-13 + Patches 37-65 New Tests) passed successfully.');
 }
 
 if (require.main === module) {

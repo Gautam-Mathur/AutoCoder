@@ -1130,6 +1130,53 @@ export function sanitizeCoderOutputForFile(raw: string, filePath?: string): stri
   return cleaned.trim();
 }
 
+export function composeAgentUserContent(params: {
+  upstreamContext: string;
+  customUserContent?: string;
+  userPromptText: string;
+  attempt: number;
+  validationError?: string;
+}): string {
+  const {
+    upstreamContext,
+    customUserContent,
+    userPromptText,
+    attempt,
+    validationError,
+  } = params;
+
+  const retryPrefix =
+    attempt > 1
+      ? `[RETRY ${attempt}/3] Your previous output failed verification. Error: ${
+          validationError ||
+          'Ensure ALL required section headers are present.'
+        }.\n\n`
+      : '';
+
+  const parts: string[] = [];
+
+  if (upstreamContext.trim()) {
+    parts.push(
+      `Upstream Specification Context:\n${upstreamContext.trim()}`
+    );
+  }
+
+  if (customUserContent?.trim()) {
+    parts.push(customUserContent.trim());
+  }
+
+  parts.push(`Original Request:\n"${userPromptText}"`);
+
+  return retryPrefix + parts.join('\n\n');
+}
+
+export function shouldPersistAgentOutput(
+  agentName: string,
+  persistOutput: boolean
+): boolean {
+  return Boolean(VFS_OUTPUT_MAP[agentName]) && persistOutput;
+}
+
 // ─── Stage Execution Helper (runAgent) ─────────────────────────────────────
 
 export async function runAgent(
@@ -1142,7 +1189,8 @@ export async function runAgent(
   customUserContent?: string,
   signal?: AbortSignal,
   validationError?: string,
-  targetFile?: string
+  targetFile?: string,
+  persistOutput: boolean = true
 ): Promise<any> {
   const agentDef = AGENT_DEFS[agentName];
   if (!agentDef) {
@@ -1165,9 +1213,39 @@ export async function runAgent(
 - Do NOT wrap your entire response in markdown code blocks (\`\`\`markdown). Return raw text directly.`;
 
   const systemInstructions = agentDef.systemPrompt + constraintsBlock;
-  const retryPrefix = attempt > 1 ? `[RETRY ${attempt}/3] Your previous output failed verification. Error: ${validationError || 'Ensure ALL required section headers are present.'}.\n\n` : '';
-  const baseUserContent = customUserContent || (upstreamContext ? `Upstream Specification Context:\n${upstreamContext}\n\nOriginal Request:\n"${userPromptText}"` : `Original Request:\n"${userPromptText}"`);
-  const userContent = retryPrefix + baseUserContent;
+  
+  const userContent = composeAgentUserContent({
+    upstreamContext,
+    customUserContent,
+    userPromptText,
+    attempt,
+    validationError,
+  });
+
+  const requiredArtifactNames = STAGE_ARTIFACT_DEPS[agentName] ?? [];
+
+  const contextTelemetry = {
+    requiredArtifacts: requiredArtifactNames,
+    upstreamContextIncluded: upstreamContext.trim().length > 0,
+    customContextIncluded: !!customUserContent?.trim(),
+    originalRequestIncluded: userContent.includes('Original Request:'),
+    requiredArtifactsPresent: requiredArtifactNames.map((artifact) => ({
+      artifact,
+      included: userContent.includes(`=== ARTIFACT: ${artifact} ===`),
+    })),
+  };
+
+  if (agentName === 'Architect') {
+    const missingRequiredContext = contextTelemetry.requiredArtifactsPresent
+      .filter((item) => !item.included)
+      .map((item) => item.artifact);
+
+    if (missingRequiredContext.length > 0) {
+      throw new Error(
+        `Architect context invariant violated. Required artifacts were not included in the inference input: ${missingRequiredContext.join(', ')}`
+      );
+    }
+  }
 
   const { budget, timeoutMs } = calculateTokenBudget(agentName, ledger);
 
@@ -1247,7 +1325,7 @@ export async function runAgent(
 
   // If agent specifies an output filename in VFS_OUTPUT_MAP, write to VFS
   const outputFilename = VFS_OUTPUT_MAP[agentName];
-  if (outputFilename) {
+  if (outputFilename && persistOutput) {
     await writeVirtualFile(conversationId, outputFilename, finalContent);
   }
 
@@ -1262,7 +1340,7 @@ export async function runAgent(
       telemetryType: 'rich_step_log',
       executionMemory: { stage: agentName },
       orchestration: { durationMs },
-      inflow: { systemInstructions, userContent },
+      inflow: { systemInstructions, userContent, context: contextTelemetry },
       thought: finalContent,
       model: config.ollamaModel,
       budget,
@@ -2125,7 +2203,9 @@ export async function runOrchestrator(
             attempt,
             customContext,
             executionSignal,
-            validationErrorFeedback
+            validationErrorFeedback,
+            undefined,
+            false
           );
 
           const validation = await validateArchitectOutput(conversationId, stageOutput.content);
@@ -2135,6 +2215,11 @@ export async function runOrchestrator(
           }
 
           if (validation.valid) {
+            await writeVirtualFile(
+              conversationId,
+              'architecture.md',
+              stageOutput.content
+            );
             accepted = true;
             break;
           }
@@ -2155,7 +2240,6 @@ export async function runOrchestrator(
             });
             validationErrorFeedback = `=== ARCHITECT VALIDATION FAILURE ===\n\nThe previous architecture.md is invalid.\n\nErrors:\n${validation.errors.map((e) => `- ${e}`).join('\n')}\n\nRegenerate the COMPLETE architecture.md.\nDo not preserve invalid paths from the previous attempt.\nDo not explain the correction.\nOutput only the required architecture.md document.`;
           } else {
-            await writeVirtualFile(conversationId, 'architecture.md', '');
             const errSummary = validation.errors.join('; ');
             emit({
               type: 'PIPELINE_ERROR',

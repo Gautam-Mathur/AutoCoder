@@ -345,6 +345,317 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
   };
 }
 
+export interface ParsedArchitectureModule {
+  name: string;
+  responsibility: string;
+  ownedFiles: string[];
+  dependsOn: string[];
+  supportsFeatures: string[];
+  startLine: number;
+  endLine: number;
+}
+
+export interface ParsedArchitectureArtifact {
+  treeFiles: string[];
+  modules: ParsedArchitectureModule[];
+  parserErrors: string[];
+}
+
+const MODULE_HEADER_RE = /^\*\*\s*([^*\r\n]+?)\s*\*\*\s*$/;
+const RESPONSIBILITY_RE = /^-\s*Responsibility:\s*(.*)$/i;
+const OWNED_FILES_RE = /^-\s*Owned Files:\s*(.*)$/i;
+const DEPENDS_ON_RE = /^-\s*Depends On:\s*(.*)$/i;
+const SUPPORTS_FEATURES_RE = /^-\s*Supports Features:\s*(.*)$/i;
+
+export function parseArchitectureModules(
+  architectureContent: string
+): {
+  modules: ParsedArchitectureModule[];
+  errors: string[];
+} {
+  const lines = architectureContent.replace(/\r\n/g, '\n').split('\n');
+
+  const modules: ParsedArchitectureModule[] = [];
+  const errors: string[] = [];
+
+  const modulesHeadingIndex = lines.findIndex((line) =>
+    /^###\s*Modules\s*$/i.test(line.trim())
+  );
+
+  if (modulesHeadingIndex === -1) {
+    return {
+      modules: [],
+      errors: ['Architecture Parser Error: Missing "### Modules" section.'],
+    };
+  }
+
+  const conventionsHeadingIndex = lines.findIndex(
+    (line, index) =>
+      index > modulesHeadingIndex &&
+      /^###\s*Conventions\s*$/i.test(line.trim())
+  );
+
+  const endIndex =
+    conventionsHeadingIndex === -1
+      ? lines.length
+      : conventionsHeadingIndex;
+
+  let current: ParsedArchitectureModule | null = null;
+  let currentStartLine = -1;
+
+  const finishCurrent = (endLine: number) => {
+    if (!current) return;
+
+    current.endLine = endLine;
+
+    if (!current.responsibility.trim()) {
+      errors.push(
+        `Architecture Parser Error: Module "${current.name}" is missing "- Responsibility:".`
+      );
+    }
+
+    if (current.ownedFiles.length === 0) {
+      errors.push(
+        `Architecture Parser Error: Module "${current.name}" has no "- Owned Files:" entries.`
+      );
+    }
+
+    modules.push(current);
+    current = null;
+    currentStartLine = -1;
+  };
+
+  for (let index = modulesHeadingIndex + 1; index < endIndex; index++) {
+    const rawLine = lines[index];
+    const line = rawLine.trim();
+
+    if (!line) continue;
+
+    const moduleMatch = line.match(MODULE_HEADER_RE);
+
+    if (moduleMatch) {
+      finishCurrent(index);
+
+      const name = moduleMatch[1].trim();
+
+      if (!name || name.includes(':')) {
+        errors.push(
+          `Architecture Parser Error: Invalid module name "${name}".`
+        );
+        continue;
+      }
+
+      currentStartLine = index + 1;
+
+      current = {
+        name,
+        responsibility: '',
+        ownedFiles: [],
+        dependsOn: [],
+        supportsFeatures: [],
+        startLine: currentStartLine,
+        endLine: currentStartLine,
+      };
+
+      continue;
+    }
+
+    if (!current) {
+      errors.push(
+        `Architecture Parser Error: Unexpected content in "### Modules" at line ${index + 1}: "${line}"`
+      );
+      continue;
+    }
+
+    const responsibilityMatch = line.match(RESPONSIBILITY_RE);
+    if (responsibilityMatch) {
+      current.responsibility = responsibilityMatch[1].trim();
+      continue;
+    }
+
+    const ownedFilesMatch = line.match(OWNED_FILES_RE);
+    if (ownedFilesMatch) {
+      const rawFiles = ownedFilesMatch[1].trim();
+
+      if (
+        rawFiles &&
+        rawFiles.toLowerCase() !== 'none'
+      ) {
+        current.ownedFiles = rawFiles
+          .split(/[,;]/)
+          .map((file) =>
+            file
+              .trim()
+              .replace(/[*`'"]/g, '')
+              .replace(/^\.\/+/, '')
+              .replace(/^\/+/, '')
+          )
+          .filter(Boolean);
+      }
+
+      continue;
+    }
+
+    const dependsOnMatch = line.match(DEPENDS_ON_RE);
+    if (dependsOnMatch) {
+      const rawDeps = dependsOnMatch[1].trim();
+
+      if (
+        rawDeps &&
+        rawDeps.toLowerCase() !== 'none'
+      ) {
+        current.dependsOn = rawDeps
+          .split(/[,;]/)
+          .map((dep) =>
+            dep
+              .trim()
+              .replace(/[*`'"]/g, '')
+          )
+          .filter(Boolean);
+      }
+
+      continue;
+    }
+
+    const supportsFeaturesMatch = line.match(SUPPORTS_FEATURES_RE);
+    if (supportsFeaturesMatch) {
+      const rawFeatures = supportsFeaturesMatch[1].trim();
+
+      if (
+        rawFeatures &&
+        rawFeatures.toLowerCase() !== 'none'
+      ) {
+        current.supportsFeatures = rawFeatures
+          .split(/[,;]/)
+          .map((feature) =>
+            feature.trim().replace(/[*`'"]/g, '')
+          )
+          .filter(Boolean);
+      }
+
+      continue;
+    }
+  }
+
+  finishCurrent(endIndex);
+
+  const seen = new Set<string>();
+
+  for (const module of modules) {
+    const key = module.name.toLowerCase();
+
+    if (seen.has(key)) {
+      errors.push(
+        `Architecture Parser Error: Duplicate module declaration "${module.name}".`
+      );
+    }
+
+    seen.add(key);
+  }
+
+  return {
+    modules,
+    errors,
+  };
+}
+
+export function looksLikeArchitectureModuleName(value: string): boolean {
+  const clean = value.trim();
+
+  if (!clean) return false;
+
+  if (
+    clean.includes('/') ||
+    clean.includes('\\') ||
+    clean.includes('@') ||
+    clean.includes('.') ||
+    clean.includes(':')
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+export function detectModuleDependencyCycles(
+  modules: Map<string, { name: string; deps: string[] }>
+): string[] {
+  const errors: string[] = [];
+
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const stack: string[] = [];
+
+  const visit = (node: string) => {
+    if (visiting.has(node)) {
+      const cycleStart = stack.indexOf(node);
+      const cycle =
+        cycleStart >= 0
+          ? [...stack.slice(cycleStart), node]
+          : [...stack, node];
+
+      errors.push(
+        `Architecture Contract Error: Module dependency cycle detected: ${cycle.join(' -> ')}.`
+      );
+
+      return;
+    }
+
+    if (visited.has(node)) return;
+
+    visiting.add(node);
+    stack.push(node);
+
+    const info = modules.get(node);
+
+    if (info) {
+      for (const dep of info.deps) {
+        const depLower = dep.toLowerCase();
+
+        if (modules.has(depLower)) {
+          visit(depLower);
+        }
+      }
+    }
+
+    stack.pop();
+    visiting.delete(node);
+    visited.add(node);
+  };
+
+  for (const key of modules.keys()) {
+    visit(key);
+  }
+
+  return errors;
+}
+
+export function validateNextPublicAssetPath(
+  treeFiles: string[],
+  framework: ProjectContract['framework']
+): string[] {
+  if (
+    framework !== 'NEXT_APP_ROUTER' &&
+    framework !== 'NEXT_PAGES_ROUTER'
+  ) {
+    return [];
+  }
+
+  const errors: string[] = [];
+
+  for (const file of treeFiles) {
+    const clean = file.replace(/\\/g, '/');
+
+    if (/^src\/public\//i.test(clean)) {
+      errors.push(
+        `Next.js Architecture Error: Static public asset "${file}" must be placed under project-root "public/" rather than "src/public/".`
+      );
+    }
+  }
+
+  return errors;
+}
+
 export interface ArchitectureValidationResult {
   valid: boolean;
   errors: string[];
@@ -407,67 +718,58 @@ export function validateArchitectureArtifact(
 
   const normalizedTreeFileSet = new Set(treeFiles.map((f) => f.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()));
 
-  // 2. Extract Modules and Owned Files
-  const moduleSectionMatch = architectureContent.match(/###\s*Modules[\s\S]*?(?=###\s*Conventions|###\s*Tech|###\s*Project|$)/i);
-  const moduleSection = moduleSectionMatch ? moduleSectionMatch[0] : architectureContent;
+  // 2. Extract Modules and Owned Files via Strict Module Parser
+  const parsedModules = parseArchitectureModules(architectureContent);
 
-  const moduleHeaderRegex = /(?:^|\n)(?:###|\*\*)\s*\[?([^\*\#\]\r\n]+?)\]?(?:\*\*)?(?=\r?\n|$)/g;
-  const fileToModulesMap = new Map<string, string[]>();
-  const allModuleOwnedFiles = new Set<string>();
-  const allDeclaredModulesMap = new Map<string, { name: string; deps: string[] }>();
-
-  let mMatch: RegExpExecArray | null;
-  const headersFound: Array<{ name: string; index: number }> = [];
-
-  while ((mMatch = moduleHeaderRegex.exec(moduleSection)) !== null) {
-    const name = mMatch[1].trim();
-    const nameLower = name.toLowerCase();
-    if (
-      nameLower === 'modules' ||
-      nameLower.includes('tech stack') ||
-      nameLower.includes('folder structure') ||
-      nameLower.includes('conventions')
-    ) {
-      continue;
-    }
-    headersFound.push({ name, index: mMatch.index });
+  for (const parserError of parsedModules.errors) {
+    errors.push(parserError);
   }
 
-  for (let i = 0; i < headersFound.length; i++) {
-    const modHeader = headersFound[i].name;
-    const startIdx = headersFound[i].index;
-    const endIdx = i + 1 < headersFound.length ? headersFound[i + 1].index : moduleSection.length;
-    const modBody = moduleSection.slice(startIdx, endIdx);
+  const fileToModulesMap = new Map<string, string[]>();
+  const allModuleOwnedFiles = new Set<string>();
+  const allDeclaredModulesMap = new Map<
+    string,
+    { name: string; deps: string[] }
+  >();
 
-    const ownedMatch = modBody.match(/- Owned Files:\s*([^\n]+)/i);
-    if (!ownedMatch) continue;
-
-    const ownedFilesRaw = ownedMatch[1].split(/[,;]/).map((s) => s.trim().replace(/[*`'"]/g, '')).filter(Boolean);
-
-    if (ownedFilesRaw.length === 0 || ownedFilesRaw[0].toLowerCase() === 'none') {
-      errors.push(`Architecture Contract Error: Module "${modHeader}" has no owned files.`);
-      continue;
+  for (const module of parsedModules.modules) {
+    if (module.name.length > 120) {
+      errors.push(
+        `Architecture Parser Error: Module "${module.name}" exceeds the 120-character module-name limit.`
+      );
     }
 
-    for (const rawF of ownedFilesRaw) {
-      const cleanF = rawF.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
+    if (module.name.includes(':')) {
+      errors.push(
+        `Architecture Parser Error: Module "${module.name}" contains ":" and is not a valid module identifier.`
+      );
+    }
+
+    if (module.name.startsWith('-')) {
+      errors.push(
+        `Architecture Parser Error: Module "${module.name}" begins with a Markdown list marker and is invalid.`
+      );
+    }
+
+    for (const rawFile of module.ownedFiles) {
+      const cleanF = rawFile
+        .replace(/\\/g, '/')
+        .replace(/^\.\//, '')
+        .toLowerCase();
+
       if (!cleanF) continue;
+
       allModuleOwnedFiles.add(cleanF);
+
       const existingMods = fileToModulesMap.get(cleanF) || [];
-      existingMods.push(modHeader);
+      existingMods.push(module.name);
       fileToModulesMap.set(cleanF, existingMods);
     }
 
-    // Extract Depends On dependencies for graph validation
-    const dependsOnMatch = modBody.match(/- Depends On:\s*([^\n]+)/i);
-    const modDeps = dependsOnMatch
-      ? dependsOnMatch[1]
-          .split(/[,;]/)
-          .map((s) => s.trim().replace(/[*`'"]/g, ''))
-          .filter((s) => s && s.toLowerCase() !== 'none')
-      : [];
-
-    allDeclaredModulesMap.set(modHeader.toLowerCase(), { name: modHeader, deps: modDeps });
+    allDeclaredModulesMap.set(module.name.toLowerCase(), {
+      name: module.name,
+      deps: module.dependsOn,
+    });
   }
 
   // Check A: Duplicate file ownership
@@ -519,20 +821,36 @@ export function validateArchitectureArtifact(
     }
   }
 
-  // Check D: Module Dependency Graph Validation (Rule 1 & Rule 2)
+  // Check D: Module Dependency Graph Validation (Rule 1, Rule 2, & Cycle Detection)
   for (const [modLower, modInfo] of allDeclaredModulesMap.entries()) {
     for (const depName of modInfo.deps) {
       const depLower = depName.toLowerCase();
+
+      if (!looksLikeArchitectureModuleName(depName)) {
+        errors.push(
+          `Architecture Contract Error: Module "${modInfo.name}" has invalid dependency "${depName}". "Depends On" must contain declared architecture module names only, not files, packages, components, or technologies.`
+        );
+        continue;
+      }
+
       if (depLower === modLower) {
-        errors.push(`Architecture Contract Error: Module "${modInfo.name}" cannot depend on itself.`);
+        errors.push(
+          `Architecture Contract Error: Module "${modInfo.name}" cannot depend on itself.`
+        );
       } else if (!allDeclaredModulesMap.has(depLower)) {
-        errors.push(`Architecture Contract Error: Module "${modInfo.name}" depends on unknown module "${depName}".`);
+        errors.push(
+          `Architecture Contract Error: Module "${modInfo.name}" depends on unknown module "${depName}".`
+        );
       }
     }
   }
 
+  errors.push(...detectModuleDependencyCycles(allDeclaredModulesMap));
+
   // Check E: Next.js Unnamed Dynamic Segment Rule & Backend Entry Validation
   const framework = contract?.framework || (/next\.js|nextjs|app router/i.test(architectureContent) ? 'NEXT_APP_ROUTER' : 'STATIC_HTML');
+
+  errors.push(...validateNextPublicAssetPath(treeFiles, framework));
 
   for (const treeFile of treeFiles) {
     const segments = treeFile.split('/');
@@ -547,7 +865,7 @@ export function validateArchitectureArtifact(
     }
   }
 
-  const backendEntryMatch = architectureContent.match(/Backend Entry Point[s]?:\s*([^\n]+)/i)?.[1]?.trim().replace(/[*`'"]/g, '');
+  const backendEntryMatch = architectureContent.match(/Backend Entry Point[s]?(?:\*\*)?:\s*([^\n]+)/i)?.[1]?.trim().replace(/[*`'"]/g, '');
   if (backendEntryMatch && backendEntryMatch.toLowerCase() !== 'none') {
     const rawEntries = backendEntryMatch.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
     for (const entry of rawEntries) {
@@ -557,7 +875,8 @@ export function validateArchitectureArtifact(
         );
       } else if (framework === 'NEXT_APP_ROUTER') {
         const cleanEntry = entry.replace(/\\/g, '/').replace(/^\.\//, '');
-        if (!/(^|\/)app\/.*route\.(ts|tsx|js|jsx)$/i.test(cleanEntry) && !cleanEntry.endsWith('/route.ts')) {
+        const isNextAppRouteHandler = /^(?:src\/)?app\/.+\/route\.(ts|tsx|js|jsx)$/i.test(cleanEntry);
+        if (!isNextAppRouteHandler) {
           errors.push(
             `Next.js Architecture Error: Backend Entry Point "${entry}" must be a valid Next.js App Router route handler (e.g., "src/app/api/[...slug]/route.ts").`
           );
