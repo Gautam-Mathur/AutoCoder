@@ -37,6 +37,12 @@ model Conversation {
   debuggerOutput      DebuggerStageOutput?
   reviewerOutput      ReviewerStageOutput?
   securityOutput      SecurityStageOutput?
+
+  stageExecutions     StageExecution[]
+  artifactVersions    ArtifactVersion[]
+  pipelineEvents      PipelineEvent[]
+  gateDecisions       GateDecision[]
+  verificationRuns    VerificationRun[]
 }
 
 model AgentOutput {
@@ -90,6 +96,12 @@ model PipelineRun {
   leaseExpiresAt DateTime?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+
+  stageExecutions StageExecution[]
+  artifactVersions ArtifactVersion[]
+  pipelineEvents PipelineEvent[]
+  gateDecisions GateDecision[]
+  verificationRuns VerificationRun[]
 }
 
 model ExecutiveMemory {
@@ -450,4 +462,131 @@ model VirtualFile {
   @@unique([conversationId, filePath])
   @@index([conversationId])
 }
+
+// ====================================================
+// NEW PIPELINE EXECUTION & ARTIFACT PROVENANCE MODELS
+// ====================================================
+
+model StageExecution {
+  id                 String   @id @default(uuid())
+  conversationId     String
+  pipelineRunId      String
+  stageName          String
+  attempt            Int
+  state              String   // "PENDING" | "RUNNING" | "ACCEPTED" | "FAILED" | "RETRYING"
+
+  candidateHash      String?
+  artifactPath       String?
+  artifactVersion    Int?
+
+  validationErrors   String?
+  validationWarnings String?
+
+  startedAt          DateTime @default(now())
+  completedAt        DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  pipelineRun PipelineRun   @relation(fields: [pipelineRunId], references: [id], onDelete: Cascade)
+
+  artifactVersions ArtifactVersion[]
+
+  @@index([conversationId, stageName])
+  @@index([pipelineRunId, stageName])
+  @@unique([pipelineRunId, stageName, attempt])
+}
+
+model ArtifactVersion {
+  id                    String   @id @default(uuid())
+  conversationId        String
+  pipelineRunId         String
+  stageExecutionId      String?
+
+  stageName             String   // e.g. "Queen", "Planner", "Architect", "System", "Designer", "Blueprinter", "Coder", "Tester", "Debugger", "Reviewer", "Security"
+  filePath              String
+  version               Int
+
+  contentHash           String
+  content               String
+
+  contractName          String?
+  contractVersion       String?
+  contractHash          String?
+  validatorVersion      String?
+  promptVersion         String?
+
+  parentArtifactIds     String?  // Stringified JSON array
+  dependencyFingerprint String?
+
+  state                 String   // "CANDIDATE" | "ACCEPTED" | "SUPERSEDED" | "INVALIDATED"
+  createdAt             DateTime @default(now())
+
+  conversation Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  pipelineRun PipelineRun     @relation(fields: [pipelineRunId], references: [id], onDelete: Cascade)
+  stageExecution StageExecution? @relation(fields: [stageExecutionId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, filePath, version])
+  @@index([conversationId, stageName, state])
+}
+
+model PipelineEvent {
+  id             String   @id @default(uuid())
+  conversationId String
+  pipelineRunId  String
+  sequence       Int
+
+  eventType      String
+  stageName      String?
+  payload        String
+
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  pipelineRun PipelineRun   @relation(fields: [pipelineRunId], references: [id], onDelete: Cascade)
+
+  @@unique([pipelineRunId, sequence])
+  @@index([conversationId, sequence])
+}
+
+model GateDecision {
+  id              String   @id @default(uuid())
+  conversationId  String
+  pipelineRunId   String
+  stageName       String
+  gateName        String
+  decision        String
+  actor           String
+  artifactVersion Int?
+  reason          String?
+  createdAt       DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  pipelineRun PipelineRun   @relation(fields: [pipelineRunId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, gateName])
+}
+
+model VerificationRun {
+  id               String   @id @default(uuid())
+  conversationId   String
+  pipelineRunId    String
+  stageExecutionId String?
+  cycle            Int
+
+  workspaceHash    String
+  success          Boolean
+
+  failuresJson     String
+  warningsJson     String
+
+  createdAt        DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  pipelineRun PipelineRun   @relation(fields: [pipelineRunId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, cycle])
+  @@index([pipelineRunId, cycle])
+}
+
 

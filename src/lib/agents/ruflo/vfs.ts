@@ -250,3 +250,37 @@ export async function flushVfsToDisk(conversationId: string): Promise<number> {
 
   return records.length;
 }
+
+export function normalizeWorkspacePath(filePath: string): string {
+  return filePath
+    .replaceAll('\\', '/')
+    .replace(/^\.\/+/, '')
+    .replace(/\/+/g, '/')
+    .trim();
+}
+
+export function resolveUniqueWorkspacePath(
+  fileMap: Map<string, string>,
+  requested: string
+): string {
+  const normalized = normalizeWorkspacePath(requested);
+
+  if (fileMap.has(normalized)) {
+    return normalized;
+  }
+
+  const matches = [...fileMap.keys()].filter(
+    (p) => normalizeWorkspacePath(p) === normalized
+  );
+
+  if (matches.length > 1) {
+    throw new Error(`Ambiguous workspace path: ${requested}`);
+  }
+
+  if (matches.length === 1) {
+    return matches[0];
+  }
+
+  throw new Error(`Workspace file not found: ${requested}`);
+}
+

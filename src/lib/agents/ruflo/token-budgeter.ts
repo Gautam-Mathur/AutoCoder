@@ -12,83 +12,86 @@ export interface TokenBudgetResult {
   };
 }
 
-function countMarkdownItems(state: any): number {
-  if (!state) return 0;
-  const content = typeof state === 'string' ? state : state.content || '';
-  if (!content) return 0;
-  const lines = content.split('\n');
-  const bulletLines = lines.filter((l: string) => /^\s*[-*]\s+/.test(l));
-  return bulletLines.length || 3;
+export const DEFAULT_STAGE_TIMEOUT_MS: Record<string, number> = {
+  Queen: 60_000,
+  Planner: 90_000,
+  Architect: 120_000,
+  System: 120_000,
+  Designer: 120_000,
+  Blueprinter: 180_000,
+  Coder: 180_000,
+  Tester: 120_000,
+  Debugger: 180_000,
+  Security: 120_000,
+  Reviewer: 120_000,
+};
+
+export function countSectionItems(markdown: string, sectionName: string): number {
+  if (!markdown) return 0;
+  const escaped = sectionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = markdown.match(
+    new RegExp(`^#{1,4}\\s*${escaped}\\s*$([\\s\\S]*?)(?=^#{1,4}\\s+|$)`, 'im')
+  );
+  if (!match) return 0;
+  return match[1].split('\n').filter((line) => /^\s*(?:[-*]|\d+\.)\s+/.test(line)).length;
 }
 
 export function calculateTokenBudget(
   agentName: string,
   ledger: StageLedger
 ): TokenBudgetResult {
-  let budget = 16384; // Default base fallback
+  let budget = 16384;
   const breakdown: {
     featuresCount?: number;
     fileCount?: number;
     totalCodeChars?: number;
     formulaApplied: string;
   } = {
-    formulaApplied: 'base_default'
+    formulaApplied: 'base_default',
   };
 
-  // 1. Task-based Scaling Math
-  // NOTE: Ledger stores agent outputs as { content: "markdown_string" }, NOT as structured JSON.
-  // The structured field accesses below (e.g., taskSpec?.mvpScope) will always return undefined,
-  // falling through to countMarkdownItems() which counts bullet points as a heuristic.
-  // This is the intended behavior for markdown-based pipeline outputs.
   if (agentName === 'Planner') {
     const taskSpec = ledger.read('taskSpec');
-    const featuresCount = taskSpec?.mvpScope?.included?.length || countMarkdownItems(taskSpec);
-    budget = 16384 + (featuresCount * 1024);
+    const featuresCount = countSectionItems(typeof taskSpec === 'string' ? taskSpec : taskSpec?.content || '', 'Features') || 3;
+    budget = 16384 + featuresCount * 1024;
     breakdown.featuresCount = featuresCount;
     breakdown.formulaApplied = '16384 + (featuresCount * 1024)';
-  } 
-  else if (agentName === 'Architect') {
+  } else if (agentName === 'Architect') {
     const planner = ledger.read('planner');
-    const featuresCount = planner?.features?.length || countMarkdownItems(planner);
-    budget = 16384 + (featuresCount * 1024);
+    const featuresCount = countSectionItems(typeof planner === 'string' ? planner : planner?.content || '', 'Features') || 3;
+    budget = 16384 + featuresCount * 1024;
     breakdown.featuresCount = featuresCount;
     breakdown.formulaApplied = '16384 + (featuresCount * 1024)';
-  }
-  else if (agentName === 'System' || agentName === 'Designer') {
+  } else if (agentName === 'System' || agentName === 'Designer') {
     const planner = ledger.read('planner');
-    const featuresCount = planner?.features?.length || countMarkdownItems(planner);
+    const featuresCount = countSectionItems(typeof planner === 'string' ? planner : planner?.content || '', 'Features') || 3;
     const architect = ledger.read('architect');
-    const fileCount = architect?.projectStructure?.files?.length || countMarkdownItems(architect);
-    budget = 16384 + (featuresCount * 1024) + (fileCount * 1024);
+    const fileCount = countSectionItems(typeof architect === 'string' ? architect : architect?.content || '', 'Project Folder Structure') || 5;
+    budget = 16384 + featuresCount * 1024 + fileCount * 1024;
     breakdown.featuresCount = featuresCount;
     breakdown.fileCount = fileCount;
     breakdown.formulaApplied = '16384 + (featuresCount * 1024) + (fileCount * 1024)';
-  } 
-  else if (agentName === 'Coder') {
+  } else if (agentName === 'Coder') {
     const architect = ledger.read('architect');
-    const fileCount = architect?.projectStructure?.files?.length || countMarkdownItems(architect);
-    budget = 32768 + (fileCount * 2048);
+    const fileCount = countSectionItems(typeof architect === 'string' ? architect : architect?.content || '', 'Project Folder Structure') || 5;
+    budget = 32768 + fileCount * 2048;
     breakdown.fileCount = fileCount;
     breakdown.formulaApplied = '32768 + (fileCount * 2048)';
-  } 
-  else if (agentName === 'Debugger' || agentName === 'Tester') {
+  } else if (agentName === 'Debugger' || agentName === 'Tester') {
     const coderState = ledger.read('coder') || {};
     let totalChars = 0;
     Object.values(coderState).forEach((code: any) => {
-      const codeStr = typeof code === 'string' ? code : (code?.content ?? '');
+      const codeStr = typeof code === 'string' ? code : code?.content ?? '';
       totalChars += codeStr.length;
     });
     const totalTokens = Math.round(totalChars / 4);
     budget = Math.max(16384, Math.round(totalTokens * 0.5));
     breakdown.totalCodeChars = totalChars;
     breakdown.formulaApplied = 'max(16384, round((totalCodeChars / 4) * 0.5))';
-  } 
-  else if (agentName === 'Security' || agentName === 'Reviewer') {
+  } else if (agentName === 'Security' || agentName === 'Reviewer') {
     budget = 8192;
     breakdown.formulaApplied = 'fixed_8192_for_audit_agents';
-  } 
-  else {
-    // For other agents (Queen, etc.), fall back to metadata configurations
+  } else {
     const def = AGENT_DEFS[agentName];
     if (def && typeof def.maxTokens === 'number') {
       budget = Math.max(16384, def.maxTokens);
@@ -96,16 +99,14 @@ export function calculateTokenBudget(
     breakdown.formulaApplied = 'agent_def_max_tokens_fallback';
   }
 
-  // Clamp budget to a safe upper limit matching local LLM context window
-  const MAX_BUDGET = (agentName === 'Coder' || agentName === 'Debugger') ? 65536 : 32768;
+  const MAX_BUDGET = agentName === 'Coder' || agentName === 'Debugger' ? 65536 : 32768;
   budget = Math.min(budget, MAX_BUDGET);
 
-  // 2. Timeout Math: 400 hours (1,440,000s / 1,440,000,000 ms) to permanently prevent inference timeouts
-  const timeoutMs = 1440000000; // 400 hours
+  const timeoutMs = DEFAULT_STAGE_TIMEOUT_MS[agentName] || 120_000;
 
   return {
     budget,
     timeoutMs,
-    breakdown
+    breakdown,
   };
 }

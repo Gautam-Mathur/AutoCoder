@@ -1,0 +1,81 @@
+export const CONTRACT_VERSIONS = {
+  Queen: {
+    name: 'QueenOutput',
+    version: '1.0.0',
+    promptVersion: '1.0.0',
+    validatorVersion: '1.0.0',
+    outputArtifactName: 'requirements.md',
+  },
+  Planner: {
+    name: 'PlannerOutput',
+    version: '1.0.0',
+    promptVersion: '1.0.0',
+    validatorVersion: '1.0.0',
+    outputArtifactName: 'plan.md',
+  },
+  Architect: {
+    name: 'ArchitectureOutput',
+    version: '1.0.0',
+    promptVersion: '1.0.0',
+    validatorVersion: '1.0.0',
+    outputArtifactName: 'architecture.md',
+  },
+  System: {
+    name: 'SystemOutput',
+    version: '1.0.0',
+    promptVersion: '1.0.0',
+    validatorVersion: '1.0.0',
+    outputArtifactName: 'system_spec.md',
+  },
+  Designer: {
+    name: 'DesignerOutput',
+    version: '1.0.0',
+    promptVersion: '1.0.0',
+    validatorVersion: '1.0.0',
+    outputArtifactName: 'ui_spec.md',
+  },
+  Blueprinter: {
+    name: 'BlueprintOutput',
+    version: '1.0.0',
+    promptVersion: '1.0.0',
+    validatorVersion: '1.0.0',
+    outputArtifactName: 'blueprint.json',
+  },
+  Coder: {
+    name: 'CoderOutput',
+    version: '1.0.0',
+    promptVersion: '1.0.0',
+    validatorVersion: '1.0.0',
+    outputArtifactName: 'workspace',
+  },
+  Tester: {
+    name: 'TesterOutput',
+    version: '1.0.0',
+    promptVersion: '1.0.0',
+    validatorVersion: '1.0.0',
+    outputArtifactName: 'test_report.md',
+  },
+  Debugger: {
+    name: 'DebuggerOutput',
+    version: '1.0.0',
+    promptVersion: '1.0.0',
+    validatorVersion: '1.0.0',
+    outputArtifactName: 'debugger_report.md',
+  },
+  Reviewer: {
+    name: 'ReviewerOutput',
+    version: '1.0.0',
+    promptVersion: '1.0.0',
+    validatorVersion: '1.0.0',
+    outputArtifactName: 'reviewer_report.md',
+  },
+  Security: {
+    name: 'SecurityOutput',
+    version: '1.0.0',
+    promptVersion: '1.0.0',
+    validatorVersion: '1.0.0',
+    outputArtifactName: 'security_report.md',
+  },
+} as const;
+
+export type StageName = keyof typeof CONTRACT_VERSIONS;

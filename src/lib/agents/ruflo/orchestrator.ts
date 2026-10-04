@@ -26,6 +26,11 @@ import { validateFrameworkBoundaries } from './framework-validator';
 import { probeGeneratedProjectRoutes } from './runtime-validator';
 import { validateSecurityGate } from './security-gate';
 import { evaluateQualityGate } from './quality-gate';
+import { acquirePipelineLease, releasePipelineLease, renewPipelineLease } from './pipeline-lease';
+import { appendPipelineEvent } from './pipeline-events';
+import { commitAcceptedArtifact } from './artifact-store';
+import { validateStageCandidate } from './stage-acceptance';
+import { createContentHash } from './contracts/fingerprints';
 
 // Global Event Emitter for decoupling browser SSE streams from background Node pipeline compilation
 export const pipelineEvents = new EventEmitter();
@@ -1399,6 +1404,79 @@ export async function runAgent(
   return { content: finalContent, raw: rawResponse };
 }
 
+export const localActivePipelines = new Map<string, string>();
+
+export interface StageCandidate {
+  stage: string;
+  executionId: string;
+  attempt: number;
+  content: string;
+  contentHash: string;
+  generatedAt: Date;
+}
+
+export async function generateStageCandidate(params: {
+  conversationId: string;
+  agentName: string;
+  userPromptText: string;
+  attempt: number;
+  customUserContent?: string;
+  validationError?: string;
+  executionSignal?: AbortSignal;
+}): Promise<StageCandidate> {
+  const executionId = path.basename(params.conversationId) + '-' + Math.random().toString(36).substring(2, 9);
+  const upstreamContext = await buildArtifactContext(params.conversationId, params.agentName);
+
+  const contextStr = params.customUserContent || JSON.stringify(upstreamContext);
+
+  const result = await runInference(
+    [
+      { role: 'system', content: AGENT_DEFS[params.agentName as keyof typeof AGENT_DEFS]?.systemPrompt || '' },
+      { role: 'user', content: `${params.userPromptText}\n\n[CONTEXT]\n${contextStr}` },
+    ],
+    { signal: params.executionSignal }
+  );
+
+  const content = sanitizeStageOutput(result, EXPECTED_FIRST_HEADERS[params.agentName]);
+  if (!content.trim()) {
+    throw new Error(`${params.agentName} produced an empty candidate`);
+  }
+
+  return {
+    stage: params.agentName,
+    executionId,
+    attempt: params.attempt,
+    content,
+    contentHash: createContentHash(content),
+    generatedAt: new Date(),
+  };
+}
+
+export async function startPipelineIfUnowned(
+  conversationId: string,
+  userPrompt: string,
+  onEvent?: PipelineEventCallback,
+  startStage?: string
+): Promise<{ started: boolean }> {
+  const lease = await acquirePipelineLease(conversationId);
+  if (!lease.acquired) {
+    return { started: false };
+  }
+
+  runOrchestrator(
+    conversationId,
+    userPrompt,
+    onEvent || (() => {}),
+    undefined,
+    startStage,
+    lease.ownerId
+  ).catch(async (error) => {
+    await releasePipelineLease(conversationId, lease.ownerId, 'FAILED');
+  });
+
+  return { started: true };
+}
+
 // ─── Main Pipeline Orchestrator Loop (11 Stages) ───────────────────────────
 
 export async function runOrchestrator(
@@ -1406,18 +1484,26 @@ export async function runOrchestrator(
   userPrompt: string,
   onEvent: PipelineEventCallback,
   signal?: AbortSignal,
-  startStage?: string
+  startStage?: string,
+  existingLeaseOwnerId?: string
 ): Promise<void> {
   if (signal?.aborted) {
     throw new Error('Pipeline compilation aborted due to client disconnect.');
   }
 
-  if (activePipelines.has(conversationId)) {
-    const attachMsg = { type: 'AGENT_LOG', message: 'Reattached to active background compilation loop.' };
-    onEvent(attachMsg as any);
-    pipelineEvents.emit(`event:${conversationId}`, attachMsg);
-    return;
+  let leaseOwnerId = existingLeaseOwnerId;
+  if (!leaseOwnerId) {
+    const lease = await acquirePipelineLease(conversationId);
+    if (!lease.acquired) {
+      const attachMsg = { type: 'AGENT_LOG', message: 'Reattached to active background compilation loop.' };
+      onEvent(attachMsg as any);
+      pipelineEvents.emit(`event:${conversationId}`, attachMsg);
+      return;
+    }
+    leaseOwnerId = lease.ownerId;
   }
+
+  localActivePipelines.set(conversationId, leaseOwnerId);
   activePipelines.add(conversationId);
 
   // Dedicated internal AbortController for background execution (decoupled from browser reload signals)
@@ -1425,9 +1511,22 @@ export async function runOrchestrator(
   pipelineAbortControllers.set(conversationId, internalController);
   const executionSignal = internalController.signal;
 
-  // Single Event Emission: Emits to global EventEmitter for browser SSE streams
+  let finalPipelineState = 'COMPLETED';
+
+  // Single Event Emission: Emits to global EventEmitter for browser SSE streams & persists to DB
   const emit = (event: any) => {
     pipelineEvents.emit(`event:${conversationId}`, event);
+    prisma.pipelineRun.findUnique({ where: { conversationId } }).then((run) => {
+      if (run) {
+        appendPipelineEvent({
+          conversationId,
+          pipelineRunId: run.id,
+          eventType: event.type || 'AGENT_LOG',
+          stageName: event.agent || event.stage,
+          payload: event,
+        }).catch(() => {});
+      }
+    }).catch(() => {});
   };
 
   try {
@@ -1986,24 +2085,37 @@ export async function runOrchestrator(
             batches.push(targetFiles.slice(i, i + BATCH_SIZE));
           }
 
-          const batchPromises = batches.map(async (batchFiles) => {
+          const batchPromises = batches.map(async (batchFiles, batchIndex) => {
             const batchPrompt = `${userPrompt}\n\n=== TARGET FILES TO BLUEPRINT ===\nSynthesize blueprint sections ONLY for the following file(s):\n${batchFiles.map(f => `- ${f}`).join('\n')}\n\nStart your output immediately with ### File: ${batchFiles[0]}`;
             const batchContext = `${prunedContext}\n=== BATCH TARGET FILES ===\n${batchFiles.join(', ')}`;
-            const res = await runAgent(
+            
+            const candidate = await generateStageCandidate({
               conversationId,
-              'Blueprinter',
-              batchPrompt,
-              emit,
-              ledger,
-              1,
-              batchContext,
-              executionSignal
-            );
-            return res ? res.content : '';
+              agentName: 'Blueprinter',
+              userPromptText: batchPrompt,
+              attempt: 1,
+              customUserContent: batchContext,
+              executionSignal,
+            });
+
+            return {
+              batchIndex,
+              candidate,
+              files: batchFiles,
+            };
           });
 
-          const batchOutputs = await Promise.all(batchPromises);
-          const rawJoined = batchOutputs.join('\n\n');
+          const batchCandidates = await Promise.all(batchPromises);
+          
+          // Verify all batch candidates are non-empty and valid
+          const invalidCandidates = batchCandidates.filter(
+            (b) => !b.candidate.content || b.candidate.content.trim().length === 0
+          );
+          if (invalidCandidates.length > 0) {
+            throw new Error(`Blueprinter produced ${invalidCandidates.length} invalid batch candidates.`);
+          }
+
+          const rawJoined = batchCandidates.map((b) => b.candidate.content).join('\n\n');
 
           // Parse generated sections and sort by topological dependency order
           const parsedSections = parseBlueprintFiles(rawJoined);
@@ -2019,7 +2131,6 @@ export async function runOrchestrator(
             }
             finalBlueprintText = parsedSections.map((s) => s.rawSection).join('\n\n');
           } else {
-            // Fallback to raw output if parseBlueprintFiles returned empty
             finalBlueprintText = rawJoined;
           }
         }
@@ -2035,8 +2146,15 @@ export async function runOrchestrator(
           for (const [sf, sc] of Object.entries(specContents)) {
             fullContext += `=== ${sf.toUpperCase()} ===\n${sc}\n\n`;
           }
-          const bpOut = await runAgent(conversationId, 'Blueprinter', userPrompt, emit, ledger, 1, fullContext.trim(), executionSignal);
-          finalBlueprintText = bpOut.content;
+          const candidate = await generateStageCandidate({
+            conversationId,
+            agentName: 'Blueprinter',
+            userPromptText: userPrompt,
+            attempt: 1,
+            customUserContent: fullContext.trim(),
+            executionSignal,
+          });
+          finalBlueprintText = candidate.content;
         }
 
         // Parse, validate, and topologically order final blueprint sections before persisting
@@ -2067,8 +2185,15 @@ export async function runOrchestrator(
           }
         }
 
-        // Save blueprint.md to VFS and flush to disk
-        await writeVirtualFile(conversationId, 'blueprint.md', finalBlueprintText);
+        // Commit accepted blueprint.md artifact atomically
+        const run = await prisma.pipelineRun.findUnique({ where: { conversationId } });
+        await commitAcceptedArtifact({
+          conversationId,
+          pipelineRunId: run?.id || 'default-run',
+          stage: 'Blueprinter',
+          filePath: 'blueprint.md',
+          content: finalBlueprintText,
+        });
         writeProjectFile(conversationId, 'blueprint.md', finalBlueprintText);
         await flushVfsToDisk(conversationId);
 
@@ -2329,10 +2454,15 @@ export async function runOrchestrator(
       where: { id: conversationId },
       data: { status: 'Failed' },
     });
+    finalPipelineState = 'FAILED';
   } finally {
     stopOllamaKeepAlive();
     pipelineAbortControllers.delete(conversationId);
     await flushVfsToDisk(conversationId).catch(() => {});
+    localActivePipelines.delete(conversationId);
     activePipelines.delete(conversationId);
+    if (leaseOwnerId) {
+      await releasePipelineLease(conversationId, leaseOwnerId, finalPipelineState).catch(() => {});
+    }
   }
 }
