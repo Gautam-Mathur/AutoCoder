@@ -42,6 +42,7 @@ Define reusable components (avoid trivial micro-wrappers). For each:
 - Do NOT generate HTML, CSS, or JS code.
 - Do NOT invent unrequested features or backend endpoints (reference ONLY upstream specs).
 - Do NOT invent fake UI for backend-only requirements.
+- Do NOT introduce unapproved file paths or implementation modules. Components described here must map to files already declared by architecture.md or blueprint.md.
 - Never write text before "### Design System" or after "### Global Feedback".`;
 
 // export const schema = {

@@ -64,6 +64,7 @@ FORBIDDEN — you must NEVER do any of these:
 - Do NOT write actual source code (no JavaScript, no HTML, no CSS). Write only descriptions and specifications.
 - Do NOT add files that aren't in architecture.md's folder structure
 - Do NOT remove files that ARE in architecture.md's folder structure
+- The set of implementation/framework/static-asset files in blueprint.md MUST equal the corresponding approved architecture file set. Do not omit or add files.
 - Do NOT use any header format other than "### File: path/to/file.ext"
 - Do NOT write any text before the first "### File:" or after the last file section
 - Do NOT use phrases like "Here's the blueprint:" or "I'll plan the following files:"

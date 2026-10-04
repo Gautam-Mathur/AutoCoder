@@ -9,7 +9,8 @@
     "lint": "eslint",
     "postinstall": "prisma generate",
     "pipeline:check": "npx tsx scripts/check_pipeline_invariants.ts",
-    "test": "npx tsx --test src/lib/agents/ruflo/contracts/__tests__/*.test.ts"
+    "test": "npx tsx --test src/lib/agents/ruflo/__tests__/*.test.ts src/lib/agents/ruflo/contracts/__tests__/*.test.ts",
+    "test:contracts": "npx tsx --test src/lib/agents/ruflo/__tests__/*.test.ts src/lib/agents/ruflo/contracts/__tests__/*.test.ts"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

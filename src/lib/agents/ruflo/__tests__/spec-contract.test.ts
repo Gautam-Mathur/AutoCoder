@@ -608,6 +608,9 @@ Frontend Entry Point: src/pages/index.tsx
 
   // Test C: Invalid unnamed dynamic catch-all route segment rejected
   const archUnnamedRoute = `
+### Tech Stack
+- **Frontend**: Next.js
+
 ### Project Folder Structure
 project-root/
 └── src/
@@ -622,12 +625,18 @@ project-root/
 - Owned Files: src/app/api/[...]/route.ts
 - Depends On: None
 - Supports Features: API
+
+### Conventions
+- **File Naming**: camelCase
 `;
   const valUnnamedRoute = validateArchitectureArtifact(archUnnamedRoute);
   assert.strictEqual(valUnnamedRoute.valid, false, 'Expected unnamed dynamic catch-all segment [...] to be rejected');
 
   // Test D: Valid named dynamic catch-all route segment accepted
   const archValidRoute = `
+### Tech Stack
+- **Frontend**: Next.js
+
 ### Project Folder Structure
 project-root/
 └── src/
@@ -642,12 +651,18 @@ project-root/
 - Owned Files: src/app/api/[...slug]/route.ts
 - Depends On: None
 - Supports Features: API
+
+### Conventions
+- **File Naming**: camelCase
 `;
   const valValidRoute = validateArchitectureArtifact(archValidRoute);
   assert.deepStrictEqual(valValidRoute.errors, [], 'Expected named dynamic catch-all segment [...slug] to be accepted');
 
   // Test E: Duplicate module ownership rejected
   const archDuplicateOwnership = `
+### Tech Stack
+- **Frontend**: Next.js
+
 ### Project Folder Structure
 project-root/
 └── src/
@@ -667,12 +682,18 @@ project-root/
 - Owned Files: src/app/components/ProductCard.tsx
 - Depends On: None
 - Supports Features: Catalog
+
+### Conventions
+- **File Naming**: camelCase
 `;
   const valDuplicateOwnership = validateArchitectureArtifact(archDuplicateOwnership);
   assert.strictEqual(valDuplicateOwnership.valid, false, 'Expected duplicate file ownership to be rejected');
 
   // Test F: Orphan module file rejected
   const archOrphanFile = `
+### Tech Stack
+- **Frontend**: Next.js
+
 ### Project Folder Structure
 project-root/
 └── src/
@@ -685,12 +706,18 @@ project-root/
 - Owned Files: src/app/page.tsx, src/app/NonExistent.tsx
 - Depends On: None
 - Supports Features: UI
+
+### Conventions
+- **File Naming**: camelCase
 `;
   const valOrphanFile = validateArchitectureArtifact(archOrphanFile);
   assert.strictEqual(valOrphanFile.valid, false, 'Expected orphan file claimed by module but missing from tree to be rejected');
 
   // Test G: Unclaimed tree file rejected
   const archUnclaimedFile = `
+### Tech Stack
+- **Frontend**: Next.js
+
 ### Project Folder Structure
 project-root/
 └── src/
@@ -704,6 +731,9 @@ project-root/
 - Owned Files: src/app/page.tsx
 - Depends On: None
 - Supports Features: UI
+
+### Conventions
+- **File Naming**: camelCase
 `;
   const valUnclaimedFile = validateArchitectureArtifact(archUnclaimedFile);
   assert.strictEqual(valUnclaimedFile.valid, false, 'Expected tree file unclaimed by any module to be rejected');
@@ -892,6 +922,12 @@ project-root/
 - Owned Files: public/next.svg
 - Depends On: None
 - Supports Features: Static Assets
+
+### Conventions
+- **File Naming**: camelCase
+- **Function Naming**: camelCase
+- **Import Style**: ES6
+- **Entry Point**: src/app/page.tsx
 `;
 
   const ecomContract = extractProjectContract({
@@ -969,6 +1005,9 @@ project-root/
 - Responsibility: App
 - Owned Files: src/app/page.tsx, src/app/api/[...]/route.ts
 - Depends On: None
+
+### Conventions
+- **File Naming**: camelCase
 `;
   const valArchUnnamed1 = validateArchitectureArtifact(archUnnamed1);
   assert.strictEqual(valArchUnnamed1.valid, false, 'Test 1: Expected [...] to be rejected by validateArchitectureArtifact');
@@ -1007,6 +1046,9 @@ project-root/
 - Responsibility: App
 - Owned Files: src/app/page.tsx, src/app/api/[...slug]/route.ts
 - Depends On: None
+
+### Conventions
+- **File Naming**: camelCase
 `;
   const valArch5 = validateArchitectureArtifact(archCatchAll5);
   assert.strictEqual(valArch5.valid, true, 'Test 5: Expected [...slug] catch-all route to pass architecture validation');
@@ -1060,6 +1102,9 @@ project-root/
 - Responsibility: App
 - Owned Files: src/app/page.tsx, src/app/api/[...]/route.ts
 - Depends On: None
+
+### Conventions
+- **File Naming**: camelCase
 `;
   const contract10 = extractProjectContract({ 'architecture.md': archInvalidBackend10 });
   const valArch10 = validateArchitectureArtifact(archInvalidBackend10, contract10);
@@ -1081,6 +1126,9 @@ project-root/
 - Responsibility: UI
 - Owned Files: src/index.tsx
 - Depends On: NonExistentService
+
+### Conventions
+- **File Naming**: camelCase
 `;
   const valArch11 = validateArchitectureArtifact(archMissingDep11);
   assert.strictEqual(valArch11.valid, false, 'Test 11: Expected dependency on missing module to fail architecture validation');
@@ -1105,6 +1153,9 @@ project-root/
 - Responsibility: UI
 - Owned Files: src/index.tsx
 - Depends On: Frontend Module
+
+### Conventions
+- **File Naming**: camelCase
 `;
   const valArch12 = validateArchitectureArtifact(archSelfDep12);
   assert.strictEqual(valArch12.valid, false, 'Test 12: Expected self-dependency to fail architecture validation');
@@ -1244,6 +1295,9 @@ project-root/
                 └── route.ts
 
 ${failingModuleFixture}
+
+### Conventions
+- **File Naming**: kebab-case
 `);
   assert.strictEqual(valFailing.valid, false);
   assert.ok(valFailing.errors.some((e) => e.includes('ProductCard') || e.includes('SearchBar') || e.includes('Prisma client')));
@@ -1275,6 +1329,9 @@ project-root/
 - Responsibility: Database
 - Owned Files: src/lib/prisma.ts
 - Depends On: None
+
+### Conventions
+- **File Naming**: kebab-case
 `;
   const valCompOwnership = validateArchitectureArtifact(validCompOwnership);
   assert.strictEqual(valCompOwnership.valid, true);
@@ -1298,6 +1355,9 @@ project-root/
 - Owned Files: src/app/page.tsx
 - Depends On: None
 - Supports Features: App
+
+### Conventions
+- **File Naming**: kebab-case
 `;
   const valLayoutUnclaimed = validateArchitectureArtifact(layoutUnclaimed);
   assert.strictEqual(valLayoutUnclaimed.valid, false);
@@ -1327,6 +1387,9 @@ project-root/
 - Responsibility: Main app
 - Owned Files: src/app/page.tsx, public/next.svg
 - Depends On: None
+
+### Conventions
+- **File Naming**: kebab-case
 `;
   const valRootPublic = validateArchitectureArtifact(rootPublicAsset);
   assert.strictEqual(valRootPublic.valid, true);
@@ -1350,6 +1413,9 @@ project-root/
 - Responsibility: Main app
 - Owned Files: src/app/page.tsx, src/public/next.svg
 - Depends On: None
+
+### Conventions
+- **File Naming**: kebab-case
 `;
   const valSrcPublic = validateArchitectureArtifact(srcPublicAsset);
   assert.strictEqual(valSrcPublic.valid, false);
@@ -1375,6 +1441,9 @@ project-root/
 - Responsibility: Main app
 - Owned Files: src/app/page.tsx, src/foo/route.ts
 - Depends On: None
+
+### Conventions
+- **File Naming**: kebab-case
 `;
   const valInvalidEscape = validateArchitectureArtifact(invalidBackendEntryEscape);
   assert.strictEqual(valInvalidEscape.valid, false);
@@ -1402,6 +1471,9 @@ project-root/
 - Responsibility: B
 - Owned Files: src/b.ts
 - Depends On: Module A
+
+### Conventions
+- **File Naming**: kebab-case
 `;
   const valCycle = validateArchitectureArtifact(cycleFixture);
   assert.strictEqual(valCycle.valid, false);
@@ -1424,6 +1496,9 @@ project-root/
 - Responsibility: UI
 - Owned Files: src/app/page.tsx
 - Depends On: @prisma/client
+
+### Conventions
+- **File Naming**: kebab-case
 `;
   const valPkgDep = validateArchitectureArtifact(pkgDepFixture);
   assert.strictEqual(valPkgDep.valid, false);
@@ -1474,6 +1549,9 @@ project-root/
 - Responsibility: Provides persistence access
 - Owned Files: src/lib/prisma.ts, src/lib/stripe.ts
 - Depends On: None
+
+### Conventions
+- **File Naming**: kebab-case
 `;
   const valEcomNegative = validateArchitectureArtifact(ecomNegativeArch);
   assert.strictEqual(valEcomNegative.valid, false, 'Expected Full Negative E-Commerce fixture to fail validation');

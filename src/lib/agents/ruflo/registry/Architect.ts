@@ -134,13 +134,25 @@ Instead:
 
 where "Data Access" must be another declared module.
 
+MODULE OWNERSHIP CONTRACT:
+Treat Project Folder Structure as the authoritative file inventory.
+
+For every file in Project Folder Structure:
+1. Classify the file as: implementation, framework, static asset, config, schema, or documentation.
+2. Every implementation (.ts, .tsx, .js, .html, .css), framework (page.tsx, layout.tsx, route.ts), and static-asset (public/favicon.ico, .svg, .png) file MUST belong to exactly ONE module.
+3. NEVER assign the same file to two modules. Usage is NOT ownership! If multiple modules/components use TaskCard.tsx, assign TaskCard.tsx to exactly ONE module (e.g. Frontend Application). Shared usage does NOT create shared ownership.
+4. NEVER omit framework implementation files such as page.tsx, layout.tsx, route.ts, loading.tsx, error.tsx, or not-found.tsx.
+5. NEVER omit static assets present in the tree (e.g., public/favicon.ico). Every public asset in the tree MUST be assigned to an owning module (or omitted from the tree if not needed).
+6. Every route handler (e.g. src/app/api/route.ts) MUST belong to an API/backend module.
+7. Owned Files must be exact file paths from Project Folder Structure, not concepts or component names.
+8. Feature != Module. Do not create duplicate ownership modules simply because a file supports multiple features.
+9. Before output, build an internal map of (file path -> owner module) and verify every required file has EXACTLY ONE owner.
+
 MODULE OWNERSHIP INVARIANT:
-- Every file in Project Folder Structure that is not an explicitly exempt root configuration file MUST appear in exactly one module's Owned Files.
+- Every implementation, framework, and static asset file in Project Folder Structure MUST appear in exactly one module's Owned Files.
 - Every Owned Files entry MUST exist in Project Folder Structure.
-- Do not omit framework special files.
-- Do not omit layout.tsx.
-- Do not omit route.ts.
-- Do not omit public assets.
+- Do not omit framework special files (layout.tsx, route.ts).
+- Do not omit public assets (public/favicon.ico).
 - Do not create module names from field lines such as "Responsibility", "Owned Files", "Depends On", or "Supports Features".
 
 ### Conventions
@@ -151,15 +163,16 @@ Write each convention on its own bullet:
 - **Entry Point**: [e.g., "index.html loads calculator.js via <script> tag"]
 
 FINAL SELF-CHECK BEFORE OUTPUT:
-1. Every tree file has exactly one module owner.
-2. Every module-owned file exists in the tree.
-3. Every Depends On value exactly matches a declared module name.
-4. No component/package/technology appears in Depends On.
-5. Every Next.js dynamic segment is named.
-6. No src/public/ asset path exists unless explicitly required.
-7. Backend Entry Point is a valid Next.js App Router route handler when Next App Router is selected.
-8. Output starts exactly at ### Tech Stack.
-9. Output ends after ### Conventions.
+1. Every implementation/framework/static-asset tree file has EXACTLY ONE module owner.
+2. No file is listed under two different modules.
+3. Every module-owned file exists in the tree.
+4. Every Depends On value exactly matches a declared module name.
+5. No component/package/technology appears in Depends On.
+6. Every Next.js dynamic segment is named.
+7. No src/public/ asset path exists unless explicitly required.
+8. Backend Entry Point is a valid Next.js App Router route handler when Next App Router is selected.
+9. Output starts exactly at ### Tech Stack.
+10. Output ends after ### Conventions.
 
 === ABSOLUTE RULES ===
 

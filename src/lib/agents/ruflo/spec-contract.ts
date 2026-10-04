@@ -8,6 +8,8 @@ import {
   ImplementationBoundary,
 } from './contracts';
 
+import { parseArchitecture } from './architecture-parser';
+import { requiresModuleOwnership } from './architecture-file-policy';
 import { isValidNextDynamicSegment } from './api-contract-validator';
 
 export type { ApiEndpointContract, ModelContract, ProjectContract, ContractValidation, ContractEvidence, ImplementationBoundary };
@@ -672,105 +674,17 @@ export function validateArchitectureArtifact(
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  if (!architectureContent.trim()) {
-    return { valid: true, errors, warnings };
+  const parsed = parseArchitecture(architectureContent);
+  if (parsed.parserErrors.length > 0) {
+    errors.push(...parsed.parserErrors);
+    return { valid: false, errors, warnings };
   }
 
-  // 1. Extract Project Folder Structure ASCII tree files
-  const treeSectionMatch = architectureContent.match(/###\s*Project\s*Folder\s*Structure[\s\S]*?(?=###|$)/i);
-  const treeSection = treeSectionMatch ? treeSectionMatch[0] : '';
-
-  const rawTreeLines = treeSection
-    .split('\n')
-    .filter((l) => {
-      const t = l.trim();
-      return t && !t.startsWith('###') && !t.startsWith('Format:') && !t.startsWith('Rules') && !t.startsWith('-');
-    });
-
-  const treeFiles: string[] = [];
-  const pathStack: { depth: number; path: string }[] = [];
-
-  for (const line of rawTreeLines) {
-    const cleanName = line
-      .replace(/^[\s│\|├└─\+\-\\]+/, '')
-      .replace(/[*`'"]/g, '')
-      .trim();
-
-    if (!cleanName || cleanName.toLowerCase() === 'project-root/' || cleanName === '.') continue;
-
-    const nameStartCol = line.indexOf(cleanName);
-    const isDir = cleanName.endsWith('/');
-    const nameWithoutSlash = cleanName.replace(/\/$/, '');
-
-    while (pathStack.length > 0 && pathStack[pathStack.length - 1].depth >= nameStartCol) {
-      pathStack.pop();
-    }
-
-    const parentPath = pathStack.length > 0 ? pathStack[pathStack.length - 1].path : '';
-    const fullPath = parentPath ? `${parentPath}/${nameWithoutSlash}` : nameWithoutSlash;
-
-    if (isDir) {
-      pathStack.push({ depth: nameStartCol, path: fullPath });
-    } else {
-      treeFiles.push(fullPath);
-    }
-  }
-
+  const { treeFiles, ownership, moduleGraph } = parsed;
   const normalizedTreeFileSet = new Set(treeFiles.map((f) => f.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()));
 
-  // 2. Extract Modules and Owned Files via Strict Module Parser
-  const parsedModules = parseArchitectureModules(architectureContent);
-
-  for (const parserError of parsedModules.errors) {
-    errors.push(parserError);
-  }
-
-  const fileToModulesMap = new Map<string, string[]>();
-  const allModuleOwnedFiles = new Set<string>();
-  const allDeclaredModulesMap = new Map<
-    string,
-    { name: string; deps: string[] }
-  >();
-
-  for (const module of parsedModules.modules) {
-    if (module.name.length > 120) {
-      errors.push(
-        `Architecture Parser Error: Module "${module.name}" exceeds the 120-character module-name limit.`
-      );
-    }
-
-    if (module.name.includes(':')) {
-      errors.push(
-        `Architecture Parser Error: Module "${module.name}" contains ":" and is not a valid module identifier.`
-      );
-    }
-
-    if (module.name.startsWith('-')) {
-      errors.push(
-        `Architecture Parser Error: Module "${module.name}" begins with a Markdown list marker and is invalid.`
-      );
-    }
-
-    for (const rawFile of module.ownedFiles) {
-      const cleanF = rawFile
-        .replace(/\\/g, '/')
-        .replace(/^\.\//, '')
-        .toLowerCase();
-
-      if (!cleanF) continue;
-
-      allModuleOwnedFiles.add(cleanF);
-
-      const existingMods = fileToModulesMap.get(cleanF) || [];
-      existingMods.push(module.name);
-      fileToModulesMap.set(cleanF, existingMods);
-    }
-
-    allDeclaredModulesMap.set(module.name.toLowerCase(), {
-      name: module.name,
-      deps: module.dependsOn,
-    });
-  }
+  const fileToModulesMap = ownership;
+  const allModuleOwnedFiles = new Set(ownership.keys());
 
   // Check A: Duplicate file ownership
   for (const [lowerFile, mods] of fileToModulesMap.entries()) {
@@ -783,46 +697,27 @@ export function validateArchitectureArtifact(
   }
 
   // Check B: Orphan module files (claimed by module but missing from tree)
-  if (normalizedTreeFileSet.size > 0) {
-    for (const lowerFile of allModuleOwnedFiles) {
-      if (!normalizedTreeFileSet.has(lowerFile)) {
-        const mods = fileToModulesMap.get(lowerFile) || [];
-        errors.push(
-          `Architecture Contract Error: Module "${mods[0]}" claims file "${lowerFile}" which is absent from Project Folder Structure tree.`
-        );
+  for (const lowerFile of allModuleOwnedFiles) {
+    if (!normalizedTreeFileSet.has(lowerFile)) {
+      const mods = fileToModulesMap.get(lowerFile) || [];
+      errors.push(
+        `Architecture Contract Error: Module "${mods[0]}" claims file "${lowerFile}" which is absent from Project Folder Structure tree.`
+      );
+    }
+  }
+
+  // Check C: Unclaimed tree files using centralized requiresModuleOwnership policy
+  for (const treeFile of treeFiles) {
+    const lowerFile = treeFile.toLowerCase();
+    if (requiresModuleOwnership(treeFile)) {
+      if (!allModuleOwnedFiles.has(lowerFile)) {
+        errors.push(`Architecture Contract Error: File "${treeFile}" from Project Folder Structure is not claimed by any module.`);
       }
     }
   }
 
-  // Check C: Unclaimed tree files (in tree but absent from all modules)
-  const IGNORED_ROOT_FILES = new Set([
-    'package.json',
-    'tsconfig.json',
-    'vite.config.ts',
-    'vite.config.js',
-    'next.config.js',
-    'next.config.mjs',
-    'next.config.ts',
-    'tailwind.config.js',
-    'postcss.config.js',
-    'readme.md',
-    '.gitignore',
-    '.env',
-    '.env.local',
-    'prisma/schema.prisma',
-    'schema.prisma',
-  ]);
-
-  for (const treeFile of treeFiles) {
-    const lowerFile = treeFile.toLowerCase();
-    if (IGNORED_ROOT_FILES.has(lowerFile)) continue;
-    if (!allModuleOwnedFiles.has(lowerFile)) {
-      errors.push(`Architecture Contract Error: File "${treeFile}" from Project Folder Structure is not claimed by any module.`);
-    }
-  }
-
   // Check D: Module Dependency Graph Validation (Rule 1, Rule 2, & Cycle Detection)
-  for (const [modLower, modInfo] of allDeclaredModulesMap.entries()) {
+  for (const [modLower, modInfo] of moduleGraph.entries()) {
     for (const depName of modInfo.deps) {
       const depLower = depName.toLowerCase();
 
@@ -837,7 +732,7 @@ export function validateArchitectureArtifact(
         errors.push(
           `Architecture Contract Error: Module "${modInfo.name}" cannot depend on itself.`
         );
-      } else if (!allDeclaredModulesMap.has(depLower)) {
+      } else if (!moduleGraph.has(depLower)) {
         errors.push(
           `Architecture Contract Error: Module "${modInfo.name}" depends on unknown module "${depName}".`
         );
@@ -845,7 +740,7 @@ export function validateArchitectureArtifact(
     }
   }
 
-  errors.push(...detectModuleDependencyCycles(allDeclaredModulesMap));
+  errors.push(...detectModuleDependencyCycles(moduleGraph));
 
   // Check E: Next.js Unnamed Dynamic Segment Rule & Backend Entry Validation
   const framework = contract?.framework || (/next\.js|nextjs|app router/i.test(architectureContent) ? 'NEXT_APP_ROUTER' : 'STATIC_HTML');
