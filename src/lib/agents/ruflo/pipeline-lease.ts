@@ -103,3 +103,46 @@ export async function releasePipelineLease(
     },
   });
 }
+
+export async function assertPipelineLease(
+  conversationId: string,
+  ownerId: string
+): Promise<void> {
+  const now = new Date();
+  const run = await prisma.pipelineRun.findUnique({
+    where: { conversationId },
+  });
+
+  if (!run) {
+    throw new Error(`Pipeline lease assertion failed: no pipeline run found for conversation ${conversationId}`);
+  }
+
+  if (run.leaseOwner !== ownerId) {
+    throw new Error(`Pipeline lease assertion failed: worker ${ownerId} is not lease owner (${run.leaseOwner})`);
+  }
+
+  if (run.leaseExpiresAt && run.leaseExpiresAt.getTime() <= now.getTime()) {
+    throw new Error(`Pipeline lease assertion failed: lease for worker ${ownerId} expired at ${run.leaseExpiresAt.toISOString()}`);
+  }
+}
+
+export function startLeaseHeartbeat(
+  conversationId: string,
+  ownerId: string,
+  onLeaseLost?: () => void,
+  intervalMs = 20_000
+): () => void {
+  const timer = setInterval(async () => {
+    try {
+      const renewed = await renewPipelineLease(conversationId, ownerId);
+      if (!renewed) {
+        clearInterval(timer);
+        if (onLeaseLost) onLeaseLost();
+      }
+    } catch (e) {
+      console.error(`Lease heartbeat renewal error for ${conversationId}:`, e);
+    }
+  }, intervalMs);
+
+  return () => clearInterval(timer);
+}

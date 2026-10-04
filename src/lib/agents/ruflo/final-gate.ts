@@ -12,7 +12,7 @@ export async function evaluateFinalPipelineGate(
   const errors: string[] = [];
 
   // 1. Require latest accepted artifacts for core spec stages
-  const requiredStages = ['Architect', 'System', 'Designer', 'Blueprinter'];
+  const requiredStages = ['Queen', 'Planner', 'Architect', 'System', 'Designer', 'Blueprinter', 'Coder', 'Tester', 'Security', 'Reviewer'];
   for (const stageName of requiredStages) {
     const accepted = await prisma.artifactVersion.findFirst({
       where: {
@@ -21,56 +21,65 @@ export async function evaluateFinalPipelineGate(
         state: 'ACCEPTED',
       },
     });
+
     if (!accepted) {
-      errors.push(`Missing accepted artifact for stage ${stageName}`);
+      // Fallback check for Coder virtual files if legacy
+      if (stageName === 'Coder') {
+        const virtualFilesCount = await prisma.virtualFile.count({
+          where: { conversationId },
+        });
+        if (virtualFilesCount === 0) {
+          errors.push(`Missing accepted artifact for stage ${stageName}`);
+        }
+      } else {
+        errors.push(`Missing accepted artifact for stage ${stageName}`);
+      }
     }
   }
 
-  // 2. Require Coder acceptance
-  const coderAccepted = await prisma.artifactVersion.findFirst({
-    where: {
-      conversationId,
-      stageName: 'Coder',
-      state: 'ACCEPTED',
-    },
-  });
-  if (!coderAccepted) {
-    // Check if virtual files exist in workspace
-    const virtualFilesCount = await prisma.virtualFile.count({
-      where: { conversationId },
-    });
-    if (virtualFilesCount === 0) {
-      errors.push('No accepted Coder artifacts or VirtualFiles found in workspace.');
-    }
-  }
-
-  // 3. Require latest Tester pass
+  // 2. Require VerificationRun to exist and pass
   const latestVerification = await prisma.verificationRun.findFirst({
     where: { conversationId },
     orderBy: { createdAt: 'desc' },
   });
 
-  if (latestVerification && !latestVerification.success) {
+  if (!latestVerification) {
+    errors.push('Missing mandatory VerificationRun.');
+  } else if (!latestVerification.success) {
     errors.push('Latest Tester verification run failed.');
   }
 
-  // 4. Require Security pass
+  // 3. Require Security pass
+  const securityArtifact = await prisma.artifactVersion.findFirst({
+    where: { conversationId, stageName: 'Security', state: 'ACCEPTED' },
+  });
   const securityOutput = await prisma.securityStageOutput.findUnique({
     where: { conversationId },
   });
-  if (securityOutput && securityOutput.status === 'FAILED') {
+  if (!securityArtifact && !securityOutput) {
+    errors.push('Missing mandatory Security stage evaluation.');
+  } else if (securityOutput && securityOutput.status === 'FAILED') {
     errors.push('Security stage evaluation failed.');
+  } else if (securityArtifact && securityArtifact.content && !/PASS/i.test(securityArtifact.content)) {
+    errors.push('Security stage report did not pass.');
   }
 
-  // 5. Require Reviewer pass
+  // 4. Require Reviewer pass
+  const reviewerArtifact = await prisma.artifactVersion.findFirst({
+    where: { conversationId, stageName: 'Reviewer', state: 'ACCEPTED' },
+  });
   const reviewerOutput = await prisma.reviewerStageOutput.findUnique({
     where: { conversationId },
   });
-  if (reviewerOutput && reviewerOutput.status === 'FAILED') {
+  if (!reviewerArtifact && !reviewerOutput) {
+    errors.push('Missing mandatory Reviewer stage evaluation.');
+  } else if (reviewerOutput && reviewerOutput.status === 'FAILED') {
     errors.push('Reviewer stage evaluation failed.');
+  } else if (reviewerArtifact && reviewerArtifact.content && !/PASS/i.test(reviewerArtifact.content)) {
+    errors.push('Reviewer stage report did not pass.');
   }
 
-  // 6. Require no active lease
+  // 5. Check lease state (no active lease)
   const run = await prisma.pipelineRun.findUnique({
     where: { conversationId },
   });

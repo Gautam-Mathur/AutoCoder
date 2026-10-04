@@ -1,4 +1,5 @@
 import { CONTRACT_VERSIONS, StageName } from './versions';
+export type { StageName };
 
 export type StageInputArtifact = {
   name: string;
@@ -35,7 +36,7 @@ export const STAGE_CONTRACTS: Record<StageName, StageContract> = {
     version: CONTRACT_VERSIONS.Planner.version,
     inputArtifacts: [
       {
-        name: 'requirements.md',
+        name: 'plan.md',
         contract: CONTRACT_VERSIONS.Queen.name,
         minVersion: '1.0.0',
       },
@@ -51,12 +52,12 @@ export const STAGE_CONTRACTS: Record<StageName, StageContract> = {
     version: CONTRACT_VERSIONS.Architect.version,
     inputArtifacts: [
       {
-        name: 'plan.md',
+        name: 'requirements.md',
         contract: CONTRACT_VERSIONS.Planner.name,
         minVersion: '1.0.0',
       },
       {
-        name: 'requirements.md',
+        name: 'plan.md',
         contract: CONTRACT_VERSIONS.Queen.name,
         minVersion: '1.0.0',
       },
@@ -77,7 +78,7 @@ export const STAGE_CONTRACTS: Record<StageName, StageContract> = {
         minVersion: '1.0.0',
       },
       {
-        name: 'plan.md',
+        name: 'requirements.md',
         contract: CONTRACT_VERSIONS.Planner.name,
         minVersion: '1.0.0',
       },
@@ -98,7 +99,7 @@ export const STAGE_CONTRACTS: Record<StageName, StageContract> = {
         minVersion: '1.0.0',
       },
       {
-        name: 'plan.md',
+        name: 'requirements.md',
         contract: CONTRACT_VERSIONS.Planner.name,
         minVersion: '1.0.0',
       },
@@ -119,7 +120,7 @@ export const STAGE_CONTRACTS: Record<StageName, StageContract> = {
         minVersion: '1.0.0',
       },
       {
-        name: 'system_spec.md',
+        name: 'backend_spec.md',
         contract: CONTRACT_VERSIONS.System.name,
         minVersion: '1.0.0',
       },
@@ -140,13 +141,23 @@ export const STAGE_CONTRACTS: Record<StageName, StageContract> = {
     version: CONTRACT_VERSIONS.Coder.version,
     inputArtifacts: [
       {
-        name: 'blueprint.json',
+        name: 'blueprint.md',
         contract: CONTRACT_VERSIONS.Blueprinter.name,
         minVersion: '1.0.0',
       },
       {
         name: 'architecture.md',
         contract: CONTRACT_VERSIONS.Architect.name,
+        minVersion: '1.0.0',
+      },
+      {
+        name: 'backend_spec.md',
+        contract: CONTRACT_VERSIONS.System.name,
+        minVersion: '1.0.0',
+      },
+      {
+        name: 'ui_spec.md',
+        contract: CONTRACT_VERSIONS.Designer.name,
         minVersion: '1.0.0',
       },
     ],
@@ -161,7 +172,7 @@ export const STAGE_CONTRACTS: Record<StageName, StageContract> = {
     version: CONTRACT_VERSIONS.Tester.version,
     inputArtifacts: [
       {
-        name: 'workspace',
+        name: 'workspace.manifest.json',
         contract: CONTRACT_VERSIONS.Coder.name,
         minVersion: '1.0.0',
       },
@@ -182,7 +193,7 @@ export const STAGE_CONTRACTS: Record<StageName, StageContract> = {
         minVersion: '1.0.0',
       },
       {
-        name: 'workspace',
+        name: 'workspace.manifest.json',
         contract: CONTRACT_VERSIONS.Coder.name,
         minVersion: '1.0.0',
       },
@@ -219,7 +230,7 @@ export const STAGE_CONTRACTS: Record<StageName, StageContract> = {
     version: CONTRACT_VERSIONS.Security.version,
     inputArtifacts: [
       {
-        name: 'workspace',
+        name: 'workspace.manifest.json',
         contract: CONTRACT_VERSIONS.Coder.name,
         minVersion: '1.0.0',
       },

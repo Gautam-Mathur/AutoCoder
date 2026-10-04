@@ -1,5 +1,6 @@
 import { prisma } from '../../db';
 import { createContentHash, computeDependencyFingerprint } from './contracts/fingerprints';
+import { getStageContract } from './contracts/registry';
 import { writeVirtualFile } from './vfs';
 
 export interface CommitArtifactParams {
@@ -71,6 +72,57 @@ export async function commitAcceptedArtifact(params: CommitArtifactParams) {
   await writeVirtualFile(params.conversationId, params.filePath, params.content);
 
   return artifact;
+}
+
+export interface ResolvedStageInputs {
+  inputs: Record<string, string>;
+  artifactIds: string[];
+  dependencyFingerprint: string;
+}
+
+export async function resolveAcceptedStageInputs(params: {
+  conversationId: string;
+  pipelineRunId?: string;
+  stageName: string;
+}): Promise<ResolvedStageInputs> {
+  const contract = getStageContract(params.stageName);
+  const inputs: Record<string, string> = {};
+  const artifactIds: string[] = [];
+  const depHashes: string[] = [];
+
+  for (const inputDef of contract.inputArtifacts) {
+    const artifact = await prisma.artifactVersion.findFirst({
+      where: {
+        conversationId: params.conversationId,
+        filePath: inputDef.name,
+        state: 'ACCEPTED',
+      },
+      orderBy: {
+        version: 'desc',
+      },
+    });
+
+    if (!artifact) {
+      throw new Error(`Required input artifact '${inputDef.name}' for stage '${params.stageName}' was not found in ACCEPTED state.`);
+    }
+
+    // Verify content hash integrity
+    const computedHash = createContentHash(artifact.content);
+    if (artifact.contentHash && artifact.contentHash !== computedHash) {
+      throw new Error(`Artifact hash mismatch for '${inputDef.name}': stored ${artifact.contentHash} vs computed ${computedHash}`);
+    }
+
+    inputs[inputDef.name] = artifact.content;
+    artifactIds.push(artifact.id);
+    depHashes.push(`${artifact.filePath}:${artifact.version}:${artifact.contentHash || computedHash}`);
+  }
+
+  const dependencyFingerprint = computeDependencyFingerprint(depHashes);
+  return {
+    inputs,
+    artifactIds,
+    dependencyFingerprint,
+  };
 }
 
 export async function getLatestAcceptedArtifact(conversationId: string, filePath: string) {

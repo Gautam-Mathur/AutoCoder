@@ -2,9 +2,9 @@ import { prisma } from '../../db';
 import { createContentHash } from './contracts/fingerprints';
 import { runLinter, runCrossFileImportCheck } from './linter';
 import { validateGeneratedProject } from './project-validator';
-import { runInference } from '../inference';
+import { runInference, cleanJsonResponse } from '../inference';
 import { AGENT_DEFS } from './agents';
-import { listVirtualFiles, readVirtualFile } from './vfs';
+import { listVirtualFiles, readVirtualFile, writeVirtualFile, applyDiff } from './vfs';
 
 const MAX_DEBUG_CYCLES = 3;
 
@@ -142,15 +142,58 @@ export async function verifyAndRepairWorkspace(
 
     // Run Debugger repair cycle
     const failuresSummary = testResult.failures.map((f) => `- [${f.file}] ${f.message}`).join('\n');
-    const prompt = `Fix the following workspace errors found in verification cycle ${cycle}:\n${failuresSummary}\n\nUser Goal:\n${userPrompt}`;
+    const prompt = `Fix the following workspace errors found in verification cycle ${cycle}:\n${failuresSummary}\n\nUser Goal:\n${userPrompt}\n\nOutput repaired files as JSON object: {"patches": [{"file": "src/App.tsx", "startLine": 1, "endLine": 10, "replacement": "..."}]} OR {"files": [{"path": "src/App.tsx", "content": "..."}]}`;
 
-    await runInference(
+    const debugResponse = await runInference(
       [
         { role: 'system', content: AGENT_DEFS.Debugger.systemPrompt || '' },
         { role: 'user', content: prompt },
       ],
       { signal: executionSignal }
     );
+
+    // Apply repairs to VFS
+    let appliedRepair = false;
+    if (debugResponse) {
+      try {
+        const cleaned = cleanJsonResponse(debugResponse);
+        const parsed = JSON.parse(cleaned);
+
+        if (parsed && Array.isArray(parsed.patches) && parsed.patches.length > 0) {
+          for (const patch of parsed.patches) {
+            if (patch.file && patch.startLine && patch.endLine && patch.replacement !== undefined) {
+              await applyDiff(conversationId, patch.file, patch.startLine, patch.endLine, patch.replacement);
+              appliedRepair = true;
+            }
+          }
+        }
+
+        if (parsed && Array.isArray(parsed.files) && parsed.files.length > 0) {
+          for (const file of parsed.files) {
+            if (file.path && file.content !== undefined) {
+              await writeVirtualFile(conversationId, file.path, file.content);
+              appliedRepair = true;
+            }
+          }
+        }
+      } catch (e) {
+        // Fallback: check if failure referenced specific file
+        const targetFail = testResult.failures.find((f) => f.file && f.file !== 'imports' && f.file !== 'project' && f.file !== 'tester');
+        if (targetFail && targetFail.file) {
+          await writeVirtualFile(conversationId, targetFail.file, debugResponse);
+          appliedRepair = true;
+        }
+      }
+    }
+
+    const postFingerprint = await computeWorkspaceFingerprint(conversationId);
+    if (testResult.workspaceFingerprint === postFingerprint && !appliedRepair) {
+      emit({
+        type: 'AGENT_LOG',
+        agent: 'Debugger',
+        message: `⚠️ Debugger repair output produced no changes to workspace fingerprint.`,
+      });
+    }
 
     // Oscillation check & patch application
     const vFiles = await prisma.virtualFile.findMany({ where: { conversationId } });
