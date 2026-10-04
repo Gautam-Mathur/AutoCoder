@@ -536,7 +536,7 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
     else if (config.provider === 'anthropic') config.anthropicModel = options.model;
   }
 
-  const effectiveTimeout = options.timeoutMs || 1440000000; // 400 hours in ms
+  const effectiveTimeout = options.timeoutMs ? Math.max(options.timeoutMs, 600_000) : 1440000000; // Minimum 10 minutes timeout for inference operations
   const timeoutSignal = typeof AbortSignal.timeout === 'function'
     ? AbortSignal.timeout(effectiveTimeout)
     : (() => { const c = new AbortController(); setTimeout(() => c.abort(), effectiveTimeout); return c.signal; })();

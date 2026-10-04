@@ -7,7 +7,7 @@ import path from 'path';
 
 const execFileAsync = promisify(execFile);
 
-async function runProjectCommand(command: string, conversationId: string, timeoutMs: number = 60000) {
+async function runProjectCommand(command: string, conversationId: string, timeoutMs: number = 180000) {
   const projectDir = path.join(process.cwd(), 'projects', conversationId);
   if (!fs.existsSync(projectDir)) {
     return { success: false, exitCode: 1, stdout: '', stderr: `Project directory does not exist for conversation ${conversationId}.` };

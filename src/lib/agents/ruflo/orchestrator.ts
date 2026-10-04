@@ -122,7 +122,7 @@ Do not output any markdown code blocks, explanation text, or extra characters. R
         temperature: 0.1,
         format: 'json',
         maxTokens: 150,
-        timeoutMs: 30000,
+        timeoutMs: 120000,
         signal
       }
     );

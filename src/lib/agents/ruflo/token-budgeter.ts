@@ -13,17 +13,17 @@ export interface TokenBudgetResult {
 }
 
 export const DEFAULT_STAGE_TIMEOUT_MS: Record<string, number> = {
-  Queen: 60_000,
-  Planner: 90_000,
-  Architect: 120_000,
-  System: 120_000,
-  Designer: 120_000,
-  Blueprinter: 180_000,
-  Coder: 180_000,
-  Tester: 120_000,
-  Debugger: 180_000,
-  Security: 120_000,
-  Reviewer: 120_000,
+  Queen: 600_000,       // 10 minutes
+  Planner: 600_000,     // 10 minutes
+  Architect: 900_000,   // 15 minutes
+  System: 900_000,      // 15 minutes
+  Designer: 900_000,    // 15 minutes
+  Blueprinter: 1200_000, // 20 minutes
+  Coder: 1800_000,      // 30 minutes
+  Tester: 900_000,      // 15 minutes
+  Debugger: 1200_000,   // 20 minutes
+  Security: 900_000,    // 15 minutes
+  Reviewer: 900_000,    // 15 minutes
 };
 
 export function countSectionItems(markdown: string, sectionName: string): number {
@@ -102,7 +102,8 @@ export function calculateTokenBudget(
   const MAX_BUDGET = agentName === 'Coder' || agentName === 'Debugger' ? 65536 : 32768;
   budget = Math.min(budget, MAX_BUDGET);
 
-  const timeoutMs = DEFAULT_STAGE_TIMEOUT_MS[agentName] || 120_000;
+  const baseTimeout = DEFAULT_STAGE_TIMEOUT_MS[agentName] || 600_000;
+  const timeoutMs = Math.max(baseTimeout, Math.round(budget * 50));
 
   return {
     budget,
