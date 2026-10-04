@@ -31,6 +31,7 @@ export function normalizeProjectPath(filePath: string): string {
   return filePath
     .replace(/\\/g, '/')
     .replace(/^\.\//, '')
+    .replace(/^\/+/, '')
     .replace(/\/+/g, '/')
     .trim();
 }

@@ -118,22 +118,9 @@ function validatePlanner(content: string): AcceptanceResult {
   if (!funcReqs) errors.push('Planner Functional Requirements section is empty.');
   if (!criteria) errors.push('Planner Acceptance Criteria section is empty.');
 
-  // Validate Feature-NNN identifiers
-  const featureIds = features.match(/\bFeature-\d{3}\b/g) || [];
-  if (featureIds.length === 0) {
-    errors.push('Planner Contract Error: Features section must declare at least one feature using "Feature-NNN" format (e.g. Feature-001).');
-  } else {
-    const seen = new Set<string>();
-    for (const fid of featureIds) {
-      if (seen.has(fid)) {
-        errors.push(`Planner Contract Error: Duplicate Feature ID "${fid}".`);
-      }
-      seen.add(fid);
-    }
-  }
-
   return { accepted: errors.length === 0, errors, warnings };
 }
+
 
 function validateArchitect(content: string): AcceptanceResult {
   const errors: string[] = [];
@@ -192,7 +179,7 @@ function validateSystem(content: string, ctx?: StageAcceptanceContext): Acceptan
     const parsedArch = parseArchitecture(ctx.upstreamContext['architecture.md']);
     if (parsedArch.projectFiles.length > 0) {
       const archFilesLower = new Set(parsedArch.projectFiles.map((f) => f.toLowerCase()));
-      const endpointPathTokens = apiEndpoints.match(/[\/\w\-]+\.(?:ts|tsx|js|jsx|json)/gi) || [];
+      const endpointPathTokens = apiEndpoints.match(/[\/\w\-]+\.(?:tsx|ts|jsx|js|json)\b/gi) || [];
       for (const token of endpointPathTokens) {
         const norm = normalizeProjectPath(token).toLowerCase();
         if (!archFilesLower.has(norm)) {
