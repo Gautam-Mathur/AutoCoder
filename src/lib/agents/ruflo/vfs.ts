@@ -3,6 +3,12 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { createContentHash } from './contracts/fingerprints';
 import { WorkspaceManifest, WorkspaceFile } from './contracts/schemas/coder';
+import {
+  isControlPlaneArtifact,
+  computeAuthorizedFileSet,
+  AuthorizedFileSet,
+  computeFileSetHash,
+} from './workspace-policy';
 
 
 // In-memory locks to serialize write/diff operations per file to prevent race conditions
@@ -289,15 +295,20 @@ export function resolveUniqueWorkspacePath(
 
 export async function generateWorkspaceManifest(
   conversationId: string,
-  stageExecutionId: string
+  stageExecutionId: string,
+  authorized?: AuthorizedFileSet
 ): Promise<WorkspaceManifest> {
   const records = await prisma.virtualFile.findMany({
     where: { conversationId },
     orderBy: { filePath: 'asc' },
   });
 
-  const files: WorkspaceFile[] = records.map((r) => {
-    const p = r.filePath.replace(/\\/g, '/');
+  const projectRecords = records.filter(
+    (r) => !isControlPlaneArtifact(normalizeWorkspacePath(r.filePath))
+  );
+
+  const files: WorkspaceFile[] = projectRecords.map((r) => {
+    const p = normalizeWorkspacePath(r.filePath);
     const ext = path.extname(p).toLowerCase();
     let language = 'text';
     if (ext === '.ts' || ext === '.tsx') language = 'typescript';
@@ -330,6 +341,7 @@ export async function generateWorkspaceManifest(
   });
 
   const entryPoints = files.filter((f) => f.role === 'entry').map((f) => f.path);
+  const projectPaths = files.map((f) => f.path);
 
   return {
     schemaVersion: '1.0.0',
@@ -339,7 +351,129 @@ export async function generateWorkspaceManifest(
     entryPoints,
     generatedAt: new Date().toISOString(),
     sourceStageExecutionId: stageExecutionId,
+    architectureFileSetHash: authorized?.architectureFileSetHash,
+    blueprintFileSetHash: authorized?.blueprintFileSetHash,
+    authorizedFileSetHash: authorized?.authorizedFileSetHash,
+    workspaceFileSetHash: computeFileSetHash(projectPaths),
   };
 }
+
+export async function loadAuthorizedFileSet(
+  conversationId: string,
+  pipelineRunId: string
+): Promise<AuthorizedFileSet> {
+  const archArtifact = await prisma.artifactVersion.findFirst({
+    where: {
+      pipelineRunId,
+      filePath: 'architecture.md',
+      state: 'ACCEPTED',
+    },
+    orderBy: { version: 'desc' },
+  });
+
+  if (!archArtifact) {
+    throw new Error(`Authorization Exception: ACCEPTED architecture.md not found for run ${pipelineRunId}.`);
+  }
+
+  const blueprintArtifact = await prisma.artifactVersion.findFirst({
+    where: {
+      pipelineRunId,
+      filePath: 'blueprint.md',
+      state: 'ACCEPTED',
+    },
+    orderBy: { version: 'desc' },
+  });
+
+
+  if (!blueprintArtifact) {
+    throw new Error(`Authorization Exception: ACCEPTED blueprint.md not found for run ${pipelineRunId}.`);
+  }
+
+  const { authorizedFileSet, errors } = computeAuthorizedFileSet(
+    archArtifact.content,
+    blueprintArtifact.content
+  );
+
+  if (!authorizedFileSet || errors.length > 0) {
+    throw new Error(`Authorization Exception: Failed to compute authorized file set: ${errors.join('; ')}`);
+  }
+
+  return authorizedFileSet;
+}
+
+export async function writeAuthorizedProjectFile(params: {
+  conversationId: string;
+  pipelineRunId: string;
+  stageExecutionId: string;
+  filePath: string;
+  content: string;
+}): Promise<void> {
+  const { conversationId, pipelineRunId, stageExecutionId, filePath, content } = params;
+  const normPath = normalizeWorkspacePath(filePath);
+
+  if (isControlPlaneArtifact(normPath)) {
+    throw new Error(
+      `Authorization Exception: Stage execution ${stageExecutionId} cannot write control plane file "${normPath}" via writeAuthorizedProjectFile.`
+    );
+  }
+
+  const stageExec = await prisma.stageExecution.findUnique({
+    where: { id: stageExecutionId },
+  });
+
+  if (!stageExec) {
+    throw new Error(`Authorization Exception: StageExecution ${stageExecutionId} not found.`);
+  }
+  if (stageExec.pipelineRunId !== pipelineRunId) {
+    throw new Error(`Authorization Exception: PipelineRun mismatch (${stageExec.pipelineRunId} vs ${pipelineRunId}).`);
+  }
+  if (stageExec.stageName !== 'Coder' && stageExec.stageName !== 'Debugger') {
+    throw new Error(`Authorization Exception: Stage "${stageExec.stageName}" is not authorized to write project files.`);
+  }
+
+  const authorized = await loadAuthorizedFileSet(conversationId, pipelineRunId);
+  const authorizedSet = new Set(authorized.authorizedFiles.map((f) => f.toLowerCase()));
+
+  if (!authorizedSet.has(normPath.toLowerCase())) {
+    throw new Error(`Authorization Exception: File "${normPath}" is not in approved blueprint authorized file set.`);
+  }
+
+  await writeVirtualFile(conversationId, normPath, content);
+}
+
+export async function applyAuthorizedDiff(params: {
+  conversationId: string;
+  pipelineRunId: string;
+  stageExecutionId: string;
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  newContent: string;
+}): Promise<void> {
+  const { conversationId, pipelineRunId, stageExecutionId, filePath, startLine, endLine, newContent } = params;
+  const normPath = normalizeWorkspacePath(filePath);
+
+  if (isControlPlaneArtifact(normPath)) {
+    throw new Error(`Authorization Exception: Cannot patch control plane file "${normPath}".`);
+  }
+
+  const stageExec = await prisma.stageExecution.findUnique({
+    where: { id: stageExecutionId },
+  });
+
+  if (!stageExec || stageExec.pipelineRunId !== pipelineRunId || stageExec.stageName !== 'Debugger') {
+    throw new Error(`Authorization Exception: StageExecution ${stageExecutionId} is not an authorized Debugger execution.`);
+  }
+
+  const authorized = await loadAuthorizedFileSet(conversationId, pipelineRunId);
+  const authorizedSet = new Set(authorized.authorizedFiles.map((f) => f.toLowerCase()));
+
+  if (!authorizedSet.has(normPath.toLowerCase())) {
+    throw new Error(`Authorization Exception: File "${normPath}" is not in authorized file set.`);
+  }
+
+  await applyDiff(conversationId, normPath, startLine, endLine, newContent);
+}
+
 
 

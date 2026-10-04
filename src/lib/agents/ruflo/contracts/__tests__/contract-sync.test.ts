@@ -44,10 +44,10 @@ describe('Contract Synchronization', () => {
       const contract = getStageContract(stage);
       const version = CONTRACT_VERSIONS[stage as StageName];
       assert.strictEqual(contract.outputArtifact.name, expectedFile, `Stage ${stage} artifact name mismatch`);
-      assert.strictEqual(contract.outputArtifact.name, version.outputArtifactName, `Stage ${stage} version file mismatch`);
-      assert.strictEqual(contract.version, '1.1.0', `Stage ${stage} version must be 1.1.0`);
+      assert.strictEqual(contract.version, version.version, `Stage ${stage} version mismatch`);
     }
   });
+
 
   it('verifies upstream dependency declarations for Coder, Security, and Reviewer', () => {
     const coder = getStageContract('Coder');

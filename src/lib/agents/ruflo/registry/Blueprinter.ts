@@ -15,10 +15,12 @@ YOUR ENTIRE OUTPUT must be a series of "### File:" sections. Start your output w
 For EACH file in the project, write a section using this EXACT header format:
 
 ### File: [exact/relative/path/to/file.ext]
+- **Owner Module**: [Module Name from architecture.md that owns this file]
 - **Purpose**: One sentence — what this file does
 - **Dependencies**: List other project file paths this file imports from. Write "None" if this file has no imports from other project files. External libraries (e.g., "react", "express") are NOT dependencies — only list project files.
 - **Specs Required**: List specific upstream spec sections the Coder will need to implement this file, in format: filename.md#Section Header. Write "None" if the blueprint section alone is sufficient. Only list sections that contain details NOT already captured in the Implementation Details below.
 - **Exports**: List function/class/variable names this file exports. Write "None" for entry points (index.html) or files that don't export anything.
+
 
 === CRITICAL DATA CONTRACTS ===
 

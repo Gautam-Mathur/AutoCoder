@@ -28,13 +28,16 @@ import { validateSecurityGate } from './security-gate';
 import { evaluateQualityGate } from './quality-gate';
 import { acquirePipelineLease, releasePipelineLease, renewPipelineLease, assertPipelineLease, startLeaseHeartbeat } from './pipeline-lease';
 import { getStageContract, StageName } from './contracts/registry';
+import { getCanonicalStageOrder } from './contracts/stage-graph';
+import { CONTRACT_VERSIONS } from './contracts/versions';
 import { executeContractStage } from './contract-executor';
 import { evaluateFinalPipelineGate } from './final-gate';
 import { verifyAndRepairWorkspace } from './verification-loop';
 import { appendPipelineEvent } from './pipeline-events';
-import { commitAcceptedArtifact } from './artifact-store';
+import { commitAcceptedArtifact, findReusableAcceptedArtifact, refreshCoderWorkspaceManifest, resolveAcceptedStageInputs } from './artifact-store';
 import { validateStageCandidate } from './stage-acceptance';
 import { createContentHash } from './contracts/fingerprints';
+
 
 // Global Event Emitter for decoupling browser SSE streams from background Node pipeline compilation
 export const pipelineEvents = new EventEmitter();
@@ -1560,23 +1563,13 @@ export async function runOrchestrator(
     // Start active background Keep-Alive daemon (pings Ollama every 10s to keep sockets & VRAM alive)
     startOllamaKeepAlive();
 
-    stopHeartbeat = startLeaseHeartbeat(conversationId, leaseOwnerId);
+    stopHeartbeat = startLeaseHeartbeat(conversationId, leaseOwnerId, () => {
+      internalController.abort();
+    });
 
-    // ─── 11 STAGES DEFINITION ────────────────────────────────────────────────
+    // ─── 11 STAGES DEFINITION (Derived from Canonical Stage Graph) ───────────
 
-    const STAGES: StageName[] = [
-      'Queen',
-      'Planner',
-      'Architect',
-      'System',
-      'Designer',
-      'Blueprinter',
-      'Coder',
-      'Tester',
-      'Debugger',
-      'Security',
-      'Reviewer',
-    ];
+    const STAGES: StageName[] = getCanonicalStageOrder() as StageName[];
 
     const startIndex = startStage ? STAGES.indexOf(startStage as StageName) : 0;
     const executionStages = startIndex >= 0 ? STAGES.slice(startIndex) : STAGES;
@@ -1584,22 +1577,45 @@ export async function runOrchestrator(
     const pipelineRun = await prisma.pipelineRun.findUnique({ where: { conversationId } });
     const runId = pipelineRun?.id || '';
 
+    let debuggerExecutedInRun = false;
+
     for (const stageName of executionStages) {
       if (executionSignal.aborted) throw new Error('Pipeline compilation aborted by user.');
 
       // Assert lease before stage execution
       await assertPipelineLease(conversationId, leaseOwnerId);
 
-      // Fast-Forward Guard: Only fast-forward when resuming mid-pipeline with an explicit startStage
-      const isAlreadyCompleted = startStage ? ((await prisma.executionHistory.findFirst({
-        where: { conversationId, stage: stageName, status: 'Completed' }
-      })) !== null) : false;
+      // Fast-Forward Guard: Check if an ACCEPTED, lineage-bound, fresh artifact exists for this run
+      const versionInfo = CONTRACT_VERSIONS[stageName];
+      let reusableArtifact = null;
 
-      if (isAlreadyCompleted && stageName !== startStage && stageName !== 'Coder') {
+      try {
+        const resolvedInputs = await resolveAcceptedStageInputs({
+          conversationId,
+          pipelineRunId: runId,
+          stageName,
+        });
+
+        reusableArtifact = await findReusableAcceptedArtifact({
+          conversationId,
+          stageName,
+          pipelineRunId: runId,
+          expectedDependencyFingerprint: resolvedInputs.dependencyFingerprint,
+          expectedContractVersion: versionInfo.version,
+          expectedPromptVersion: versionInfo.promptVersion,
+          expectedValidatorVersion: versionInfo.validatorVersion,
+        });
+
+      } catch {
+        // Inputs not ready or missing, cannot fast-forward
+      }
+
+      if (reusableArtifact && startStage && stageName !== startStage) {
         emit({
           type: 'AGENT_COMPLETE',
           agent: stageName,
-          message: `Stage ${stageName} already completed in history. Fast-forwarding to next stage...`,
+          message: `Stage ${stageName} artifact is fresh and valid. Fast-forwarding to next stage...`,
+          data: reusableArtifact.content,
         });
         continue;
       }
@@ -1611,67 +1627,54 @@ export async function runOrchestrator(
       });
 
       if (stageName === 'Tester') {
-        await verifyAndRepairWorkspace(conversationId, runId, userPrompt, emit, executionSignal);
-        const testReportContent = (await readVirtualFile(conversationId, 'test_report.md')) || '# Test Report\n## Result\n\nPASS';
-        const contractResult = await executeContractStage({
+        await verifyAndRepairWorkspace(
           conversationId,
-          pipelineRunId: runId,
-          stageName: 'Tester',
-          attempt: 1,
-          userPromptText: userPrompt,
-          onEvent: emit,
-          ledger,
-          leaseOwnerId,
-          signal: executionSignal,
-          customUserContent: testReportContent,
-        });
+          runId,
+          async (targetStage: string, customInput?: string) => {
+            if (targetStage === 'Debugger') {
+              debuggerExecutedInRun = true;
+            }
+            const res = await executeContractStage({
+              conversationId,
+              pipelineRunId: runId,
+              stageName: targetStage as StageName,
+              userPromptText: userPrompt,
+              onEvent: emit,
+              ledger,
+              leaseOwnerId,
+              signal: executionSignal,
+              customUserContent: customInput,
+            });
+            if (targetStage === 'Debugger') {
+              await refreshCoderWorkspaceManifest(conversationId, runId, res.stageExecution.id);
+            }
+            return res;
+          },
+          emit
+        );
 
-        emit({
-          type: 'AGENT_COMPLETE',
-          agent: 'Tester',
-          message: 'Stage Tester completed successfully.',
-          data: contractResult.content,
-        });
         await flushVfsToDisk(conversationId);
         continue;
       }
 
       if (stageName === 'Debugger') {
-        const debuggerExec = await prisma.stageExecution.findFirst({
-          where: { conversationId, stageName: 'Debugger' },
-        });
-
-        if (debuggerExec) {
-          const debugReportContent = (await readVirtualFile(conversationId, 'debug_report.md')) || '# Debug Report\n## Result\n\nPASS';
-          const contractResult = await executeContractStage({
-            conversationId,
-            pipelineRunId: runId,
-            stageName: 'Debugger',
-            attempt: 1,
-            userPromptText: userPrompt,
-            onEvent: emit,
-            ledger,
-            leaseOwnerId,
-            signal: executionSignal,
-            customUserContent: debugReportContent,
-          });
-
+        if (debuggerExecutedInRun) {
           emit({
             type: 'AGENT_COMPLETE',
             agent: 'Debugger',
-            message: 'Stage Debugger completed successfully.',
-            data: contractResult.content,
+            message: 'Stage Debugger completed during repair cycle.',
           });
         } else {
           emit({
             type: 'AGENT_COMPLETE',
             agent: 'Debugger',
-            message: 'Stage Debugger skipped (Tester passed on initial cycle without repair).',
+            message: 'Stage Debugger skipped (Tester passed without repair).',
           });
         }
         await flushVfsToDisk(conversationId);
         continue;
       }
+
 
       // Execute canonical contract stage via executeContractStage
       const contractResult = await executeContractStage({

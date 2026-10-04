@@ -1,5 +1,10 @@
 import { prisma } from '../../db';
 import { computeWorkspaceFingerprint } from './verification-loop';
+import { extractRequiredSection } from './contracts/markdown-sections';
+import { parseSecurityOutput } from './contracts/schemas/security';
+import { parseReviewerOutput } from './contracts/schemas/reviewer';
+import { extractEmbeddedWorkspaceHash } from './workspace-policy';
+
 
 export interface FinalGateResult {
   valid: boolean;
@@ -24,81 +29,110 @@ export async function evaluateFinalPipelineGate(
     errors.push(`Pipeline lease owner mismatch (${run.leaseOwner} vs expected ${leaseOwnerId}).`);
   }
 
-  // 2. Require latest accepted artifacts for mandatory pipeline stages (No legacy fallbacks)
-  const requiredStages = ['Queen', 'Planner', 'Architect', 'System', 'Designer', 'Blueprinter', 'Coder', 'Tester', 'Security', 'Reviewer'];
+  const currentWorkspaceFingerprint = await computeWorkspaceFingerprint(conversationId);
+
+  // 2. Require latest accepted artifacts for mandatory pipeline stages in THIS pipelineRunId
+  const requiredStages = [
+    'Queen',
+    'Planner',
+    'Architect',
+    'System',
+    'Designer',
+    'Blueprinter',
+    'Coder',
+    'Tester',
+    'Security',
+    'Reviewer',
+  ];
+
   for (const stageName of requiredStages) {
     const accepted = await prisma.artifactVersion.findFirst({
       where: {
         conversationId,
+        pipelineRunId,
         stageName,
         state: 'ACCEPTED',
       },
+      orderBy: { version: 'desc' },
     });
 
     if (!accepted) {
-      errors.push(`Missing accepted artifact for stage ${stageName}`);
+      errors.push(`Final Gate Error: Missing accepted artifact for mandatory stage "${stageName}" in run ${pipelineRunId}.`);
+    } else {
+      // Check embedded workspace hash for Tester, Security, Reviewer
+      if (['Tester', 'Security', 'Reviewer'].includes(stageName)) {
+        const embedded = extractEmbeddedWorkspaceHash(stageName, accepted.content);
+        if (!embedded || embedded !== currentWorkspaceFingerprint) {
+          errors.push(
+            `Final Gate Error: Stage "${stageName}" artifact has stale workspace hash "${embedded}" (expected "${currentWorkspaceFingerprint}").`
+          );
+        }
+      }
     }
   }
 
-  // 3. Conditional Debugger Requirement
+  // 3. Conditional Debugger Check
   const debuggerExec = await prisma.stageExecution.findFirst({
-    where: { conversationId, stageName: 'Debugger' },
+    where: { conversationId, pipelineRunId, stageName: 'Debugger', state: 'ACCEPTED' },
   });
 
   if (debuggerExec) {
-    const debuggerArtifact = await prisma.artifactVersion.findFirst({
-      where: { conversationId, stageName: 'Debugger', state: 'ACCEPTED' },
-    });
-    if (!debuggerArtifact) {
-      errors.push('Debugger was invoked during repair cycle but missing accepted debug_report.md artifact.');
-    }
+    // Debugger was invoked and succeeded in this run
   }
 
-  // 4. Require VerificationRun to exist, pass, and match current workspace state
+  // 4. Require VerificationRun to exist for this run, pass, and match current workspace state
   const latestVerification = await prisma.verificationRun.findFirst({
-    where: { conversationId },
+    where: { conversationId, pipelineRunId },
     orderBy: { createdAt: 'desc' },
   });
 
-  const currentWorkspaceFingerprint = await computeWorkspaceFingerprint(conversationId);
-
   if (!latestVerification) {
-    errors.push('Missing mandatory VerificationRun.');
+    errors.push(`Final Gate Error: Missing mandatory VerificationRun for run ${pipelineRunId}.`);
   } else if (!latestVerification.success) {
-    errors.push('Latest Tester verification run failed.');
+    errors.push('Final Gate Error: Latest Tester verification run failed.');
   } else if (latestVerification.workspaceHash !== currentWorkspaceFingerprint) {
-    errors.push('Latest VerificationRun workspace hash does not match current workspace state (stale verification).');
+    errors.push('Final Gate Error: Latest VerificationRun workspace hash does not match current project workspace state (stale verification).');
   }
 
   // 5. Require Security pass
   const securityArtifact = await prisma.artifactVersion.findFirst({
-    where: { conversationId, stageName: 'Security', state: 'ACCEPTED' },
+    where: { conversationId, pipelineRunId, stageName: 'Security', state: 'ACCEPTED' },
+    orderBy: { version: 'desc' },
   });
+
   if (!securityArtifact || !securityArtifact.content) {
-    errors.push('Missing mandatory accepted Security stage artifact.');
+    errors.push('Final Gate Error: Missing mandatory accepted Security stage artifact.');
   } else {
-    const statusText = extractRequiredSection(securityArtifact.content, '### Overall Status');
-    const isSecure = statusText.includes('SECURE') || statusText.includes('SECURE_WITH_WARNINGS');
-    const isVulnerable = statusText.includes('VULNERABLE') || statusText.includes('CRITICAL');
-    if (isVulnerable || !isSecure) {
-      errors.push(`Security stage report status is invalid or failed: "${statusText}".`);
+    const { output, errors: secErrors } = parseSecurityOutput(securityArtifact.content);
+    if (!output || secErrors.length > 0) {
+      errors.push(`Final Gate Error: Security stage report validation failed: ${secErrors.join('; ')}`);
+    } else if (output.status !== 'SECURE' && output.status !== 'SECURE_WITH_WARNINGS') {
+      errors.push(`Final Gate Error: Security status is not SECURE or SECURE_WITH_WARNINGS: "${output.status}".`);
     }
   }
 
   // 6. Require Reviewer pass
   const reviewerArtifact = await prisma.artifactVersion.findFirst({
-    where: { conversationId, stageName: 'Reviewer', state: 'ACCEPTED' },
+    where: { conversationId, pipelineRunId, stageName: 'Reviewer', state: 'ACCEPTED' },
+    orderBy: { version: 'desc' },
   });
+
   if (!reviewerArtifact || !reviewerArtifact.content) {
-    errors.push('Missing mandatory accepted Reviewer stage artifact.');
+    errors.push('Final Gate Error: Missing mandatory accepted Reviewer stage artifact.');
   } else {
-    try {
-      const parsed = JSON.parse(reviewerArtifact.content);
-      if (!parsed || parsed.status !== 'PASS') {
-        errors.push(`Reviewer stage evaluation failed with status: ${parsed?.status || 'UNKNOWN'}.`);
+    const { output, errors: revErrors } = parseReviewerOutput(reviewerArtifact.content);
+    if (!output || revErrors.length > 0) {
+      errors.push(`Final Gate Error: Reviewer report validation failed: ${revErrors.join('; ')}`);
+    } else {
+      if (output.qualityScore < 80) {
+        errors.push(`Final Gate Error: Reviewer quality score (${output.qualityScore}) is below required minimum 80.`);
       }
-    } catch (e: any) {
-      errors.push(`Reviewer stage report content is not valid JSON: ${e.message}`);
+      if (!output.architecturalConformance) {
+        errors.push('Final Gate Error: Reviewer reported architectural conformance failure.');
+      }
+      if (!output.requirementCoverage) {
+        errors.push('Final Gate Error: Reviewer reported requirement coverage failure.');
+      }
     }
   }
 
@@ -107,13 +141,3 @@ export async function evaluateFinalPipelineGate(
     errors,
   };
 }
-
-function extractRequiredSection(content: string, heading: string): string {
-  const headingIndex = content.indexOf(heading);
-  if (headingIndex === -1) return '';
-  const startIndex = headingIndex + heading.length;
-  const nextHeadingMatch = content.slice(startIndex).match(/\n#{1,3}\s+/);
-  const endIndex = nextHeadingMatch ? startIndex + nextHeadingMatch.index! : content.length;
-  return content.slice(startIndex, endIndex).trim();
-}
-

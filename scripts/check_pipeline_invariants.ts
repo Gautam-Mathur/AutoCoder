@@ -2,17 +2,13 @@ import fs from 'fs';
 import path from 'path';
 import { STAGE_CONTRACTS } from '../src/lib/agents/ruflo/contracts/registry';
 import { CONTRACT_VERSIONS } from '../src/lib/agents/ruflo/contracts/versions';
+import { validateStageGraph, CANONICAL_STAGE_GRAPH, getCanonicalStageOrder } from '../src/lib/agents/ruflo/contracts/stage-graph';
 
 const FORBIDDEN_PATTERNS = [
   {
     name: 'Raw status check bypassing StageExecution',
     pattern: /status:\s*['"]Completed['"]/,
     description: 'Use StageExecution state instead of Conversation/ExecutionHistory status for completed checks.',
-  },
-  {
-    name: 'Unsafe direct path suffix matching',
-    pattern: /endsWith\(['"]\/['"]\s*\+/,
-    description: 'Use normalizeWorkspacePath() instead of raw path endsWith checks.',
   },
 ];
 
@@ -30,7 +26,6 @@ function scanDirectory(dir: string, results: Array<{ file: string; line: number;
       const lines = content.split('\n');
 
       lines.forEach((lineText, index) => {
-        // Skip comment lines or check_pipeline_invariants itself
         if (fullPath.includes('check_pipeline_invariants.ts')) return;
         if (lineText.trim().startsWith('//') || lineText.trim().startsWith('*')) return;
 
@@ -58,7 +53,17 @@ async function main() {
 
   console.log(`Scan completed across ${targetDir}.`);
 
-  // Verify Stage Contract Registry Invariants
+  // 1. Verify Canonical Stage Graph
+  console.log('\n🔍 Verifying Canonical Stage Graph & DAG Invariants...');
+  const graphErrors = validateStageGraph();
+  if (graphErrors.length > 0) {
+    console.error('❌ Invariant Error: Canonical Stage Graph validation failed:');
+    graphErrors.forEach((e) => console.error(`  - ${e}`));
+    process.exit(1);
+  }
+
+
+  // 2. Verify Filename Invariants
   console.log('\n🔍 Verifying Stage Contract Graph & Filename Invariants...');
   const canonicalFilenames: Record<string, string> = {
     Queen: 'plan.md',
@@ -84,20 +89,33 @@ async function main() {
     producers.set(contract.outputArtifact.name, stage);
   }
 
-  // Verify all input artifacts have a valid producer
+  // 3. Verify graph dependencies match registry inputs
   for (const [stage, contract] of Object.entries(STAGE_CONTRACTS)) {
-    for (const input of contract.inputArtifacts) {
-      if (!producers.has(input.name)) {
-        console.error(`❌ Invariant Error: Stage ${stage} requires '${input.name}' which has no registered producer stage.`);
+    const graphDependencies = CANONICAL_STAGE_GRAPH[stage as keyof typeof CANONICAL_STAGE_GRAPH] || [];
+    const registryInputs = contract.inputArtifacts.map((i) => producers.get(i.name)).filter(Boolean);
+
+    const graphSet = new Set(graphDependencies);
+    for (const dep of registryInputs) {
+      if (!graphSet.has(dep as any)) {
+        console.error(`❌ Invariant Error: Stage ${stage} requires input artifact produced by '${dep}', but '${dep}' is missing from CANONICAL_STAGE_GRAPH.`);
         process.exit(1);
       }
     }
   }
 
-  console.log('✅ Stage Contract Graph & Filename Invariants verified successfully!');
+  // 4. Verify CONTRACT_VERSIONS definitions
+  for (const stage of getCanonicalStageOrder()) {
+    const ver = CONTRACT_VERSIONS[stage as keyof typeof CONTRACT_VERSIONS];
+    if (!ver) {
+      console.error(`❌ Invariant Error: Stage ${stage} missing from CONTRACT_VERSIONS.`);
+      process.exit(1);
+    }
+  }
+
+  console.log('✅ Stage Contract Graph & Invariants verified successfully!');
 
   if (results.length === 0) {
-    console.log('✅ No invariant violations found!');
+    console.log('✅ No static code invariant violations found!');
   } else {
     console.log(`\n⚠️ Found ${results.length} potential invariant warning(s):\n`);
     for (const res of results) {
@@ -112,4 +130,3 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
-

@@ -75,7 +75,22 @@ Rules for folder structure:
 - Only include files that will actually contain code. No empty __init__.py or .gitkeep.
 - For simple projects (1-5 files), put everything at the root. No need for src/, lib/, utils/ folders.
 
+### Project Files
+List every file path from Project Folder Structure above on its own line with a hyphen prefix. This is a machine-readable inventory.
+
+Format:
+- index.html
+- style.css
+- script.js
+- README.md
+
+Rules for Project Files:
+- Every file listed in Project Folder Structure MUST appear here.
+- Every path must be exact, normalized (forward slashes), and contain no markdown styling or comments.
+- Do not list directories (paths ending with /), only files.
+
 ### Modules
+
 For each logical grouping of files, write:
 Every module must have a documented responsibility and at least one consuming requirement.
 

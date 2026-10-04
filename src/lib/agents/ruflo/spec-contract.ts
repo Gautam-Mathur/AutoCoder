@@ -674,11 +674,47 @@ export function validateArchitectureArtifact(
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  const parsed = parseArchitecture(architectureContent);
+  let contentToParse = architectureContent;
+  if (contentToParse && !/###\s*Project Files/i.test(contentToParse)) {
+    const modulesIdx = contentToParse.search(/###\s*Modules/i);
+    if (modulesIdx !== -1) {
+      const treeMatch = contentToParse.match(/###\s*Project Folder Structure[\s\S]*?(?=###|$)/i);
+      if (treeMatch) {
+        const treeLines = treeMatch[0].split('\n').filter((l) => {
+          const t = l.trim();
+          return t && !t.startsWith('###') && !t.startsWith('Format:') && !t.startsWith('Rules') && !t.startsWith('-');
+        });
+        const treeFiles: string[] = [];
+        const pathStack: { depth: number; path: string }[] = [];
+        for (const line of treeLines) {
+          const cleanName = line.replace(/^[\s│\|├└─\+\-\\]+/, '').replace(/[*`'"]/g, '').trim();
+          if (!cleanName || cleanName.toLowerCase() === 'project-root/' || cleanName === '.') continue;
+          const nameStartCol = line.indexOf(cleanName);
+          const isDir = cleanName.endsWith('/');
+          const nameWithoutSlash = cleanName.replace(/\/$/, '');
+          while (pathStack.length > 0 && pathStack[pathStack.length - 1].depth >= nameStartCol) {
+            pathStack.pop();
+          }
+          const parentPath = pathStack.length > 0 ? pathStack[pathStack.length - 1].path : '';
+          const fullPath = parentPath ? `${parentPath}/${nameWithoutSlash}` : nameWithoutSlash;
+          if (isDir) {
+            pathStack.push({ depth: nameStartCol, path: fullPath });
+          } else {
+            treeFiles.push(fullPath);
+          }
+        }
+        const pfSection = `### Project Files\n${treeFiles.map((f) => `- ${f}`).join('\n')}\n\n`;
+        contentToParse = contentToParse.slice(0, modulesIdx) + pfSection + contentToParse.slice(modulesIdx);
+      }
+    }
+  }
+
+  const parsed = parseArchitecture(contentToParse);
   if (parsed.parserErrors.length > 0) {
     errors.push(...parsed.parserErrors);
     return { valid: false, errors, warnings };
   }
+
 
   const { treeFiles, ownership, moduleGraph } = parsed;
   const normalizedTreeFileSet = new Set(treeFiles.map((f) => f.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()));

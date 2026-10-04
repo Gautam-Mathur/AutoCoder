@@ -1,4 +1,24 @@
 import { validateArchitectureArtifact } from './spec-contract';
+import { parseArchitecture, parseCanonicalArchitecture } from './architecture-parser';
+import {
+  countHeading,
+  extractRequiredSection,
+} from './contracts/markdown-sections';
+import {
+  computeAuthorizedFileSet,
+  validateWorkspaceManifest as validateManifestPolicy,
+  normalizeProjectPath,
+  isControlPlaneArtifact,
+  AuthorizedFileSet,
+} from './workspace-policy';
+
+import { parseTesterOutput } from './contracts/schemas/tester';
+import { parseSecurityOutput } from './contracts/schemas/security';
+import { parseReviewerOutput } from './contracts/schemas/reviewer';
+import { parseDebuggerOutput } from './contracts/schemas/debugger';
+import { WorkspaceManifest } from './contracts/schemas/coder';
+
+export { extractRequiredSection };
 
 export interface StageCandidate {
   stage: string;
@@ -21,49 +41,49 @@ export interface StageAcceptanceContext {
   pipelineRunId: string;
   candidate: StageCandidate;
   upstreamContext?: Record<string, string>;
-}
-
-export function extractRequiredSection(content: string, heading: string): string {
-  const headingIndex = content.indexOf(heading);
-  if (headingIndex === -1) return '';
-  const startIndex = headingIndex + heading.length;
-  const nextHeadingMatch = content.slice(startIndex).match(/\n#{1,3}\s+/);
-  const endIndex = nextHeadingMatch ? startIndex + nextHeadingMatch.index! : content.length;
-  return content.slice(startIndex, endIndex).trim();
+  evidence?: {
+    workspaceFiles?: Map<string, string> | Record<string, string>;
+    verificationRun?: any;
+    currentWorkspaceHash?: string;
+    authorized?: AuthorizedFileSet;
+  };
 }
 
 function validateQueen(content: string): AcceptanceResult {
   const errors: string[] = [];
   const warnings: string[] = [];
   const requiredHeadings = [
-    '### Project Name',
-    '### Project Goal',
-    '### MVP Scope',
-    '### Technical Constraints',
-    '### Risks',
+    'Project Name',
+    'Project Goal',
+    'MVP Scope',
+    'Technical Constraints',
+    'Risks',
   ];
 
-  for (const heading of requiredHeadings) {
-    if (!content.includes(heading)) {
-      errors.push(`Queen candidate output must contain "${heading}".`);
+  for (const s of requiredHeadings) {
+    const count = countHeading(content, `### ${s}`);
+    if (count === 0) {
+      errors.push(`Queen Contract Error: Missing required section "### ${s}".`);
+    } else if (count > 1) {
+      errors.push(`Queen Contract Error: Duplicate section "### ${s}".`);
     }
   }
 
-  const projectName = extractRequiredSection(content, '### Project Name');
-  const projectGoal = extractRequiredSection(content, '### Project Goal');
-  const scope = extractRequiredSection(content, '### MVP Scope');
-  const constraints = extractRequiredSection(content, '### Technical Constraints');
-  const risks = extractRequiredSection(content, '### Risks');
+  if (errors.length > 0) {
+    return { accepted: false, errors, warnings };
+  }
+
+  const projectName = extractRequiredSection(content, 'Project Name');
+  const projectGoal = extractRequiredSection(content, 'Project Goal');
+  const scope = extractRequiredSection(content, 'MVP Scope');
+  const constraints = extractRequiredSection(content, 'Technical Constraints');
+  const risks = extractRequiredSection(content, 'Risks');
 
   if (!projectName) errors.push('Queen Project Name section is empty.');
   if (!projectGoal) errors.push('Queen Project Goal section is empty.');
   if (!scope) errors.push('Queen MVP Scope section is empty.');
   if (!constraints) errors.push('Queen Technical Constraints section is empty.');
   if (!risks) errors.push('Queen Risks section is empty.');
-
-  if (content.match(/^###\s+/gm)?.length !== 5) {
-    warnings.push('Queen output contains unexpected additional H3 sections.');
-  }
 
   return { accepted: errors.length === 0, errors, warnings };
 }
@@ -72,27 +92,44 @@ function validatePlanner(content: string): AcceptanceResult {
   const errors: string[] = [];
   const warnings: string[] = [];
   const requiredHeadings = [
-    '### Features',
-    '### Functional Requirements',
-    '### Acceptance Criteria',
+    'Features',
+    'Functional Requirements',
+    'Acceptance Criteria',
   ];
 
-  for (const heading of requiredHeadings) {
-    if (!content.includes(heading)) {
-      errors.push(`Planner candidate output must contain "${heading}".`);
+  for (const s of requiredHeadings) {
+    const count = countHeading(content, `### ${s}`);
+    if (count === 0) {
+      errors.push(`Planner Contract Error: Missing required section "### ${s}".`);
+    } else if (count > 1) {
+      errors.push(`Planner Contract Error: Duplicate section "### ${s}".`);
     }
   }
 
-  const features = extractRequiredSection(content, '### Features');
-  const funcReqs = extractRequiredSection(content, '### Functional Requirements');
-  const criteria = extractRequiredSection(content, '### Acceptance Criteria');
+  if (errors.length > 0) {
+    return { accepted: false, errors, warnings };
+  }
+
+  const features = extractRequiredSection(content, 'Features');
+  const funcReqs = extractRequiredSection(content, 'Functional Requirements');
+  const criteria = extractRequiredSection(content, 'Acceptance Criteria');
 
   if (!features) errors.push('Planner Features section is empty.');
   if (!funcReqs) errors.push('Planner Functional Requirements section is empty.');
   if (!criteria) errors.push('Planner Acceptance Criteria section is empty.');
 
-  if (features && !/(Description|Priority|Depends On)/i.test(features)) {
-    warnings.push('Planner Features section should contain Description, Priority, and Depends On fields.');
+  // Validate Feature-NNN identifiers
+  const featureIds = features.match(/\bFeature-\d{3}\b/g) || [];
+  if (featureIds.length === 0) {
+    errors.push('Planner Contract Error: Features section must declare at least one feature using "Feature-NNN" format (e.g. Feature-001).');
+  } else {
+    const seen = new Set<string>();
+    for (const fid of featureIds) {
+      if (seen.has(fid)) {
+        errors.push(`Planner Contract Error: Duplicate Feature ID "${fid}".`);
+      }
+      seen.add(fid);
+    }
   }
 
   return { accepted: errors.length === 0, errors, warnings };
@@ -101,25 +138,16 @@ function validatePlanner(content: string): AcceptanceResult {
 function validateArchitect(content: string): AcceptanceResult {
   const errors: string[] = [];
   const warnings: string[] = [];
-  const requiredHeadings = [
-    '### Tech Stack',
-    '### Project Folder Structure',
-    '### Modules',
-    '### Conventions',
-  ];
-
-  for (const heading of requiredHeadings) {
-    if (!content.includes(heading)) {
-      errors.push(`Architect candidate output must contain "${heading}".`);
-    }
-  }
 
   const archResult = validateArchitectureArtifact(content);
   if (!archResult.valid) {
     errors.push(...archResult.errors);
   }
+  if (archResult.warnings.length > 0) {
+    warnings.push(...archResult.warnings);
+  }
 
-  const techStack = extractRequiredSection(content, '### Tech Stack');
+  const techStack = extractRequiredSection(content, 'Tech Stack');
   if (techStack && !/(Frontend|Backend|Database|ORM)/i.test(techStack)) {
     errors.push('Architect Tech Stack section must define Frontend, Backend, Database, and ORM.');
   }
@@ -127,7 +155,7 @@ function validateArchitect(content: string): AcceptanceResult {
   return { accepted: errors.length === 0, errors, warnings };
 }
 
-function validateSystem(content: string): AcceptanceResult {
+function validateSystem(content: string, ctx?: StageAcceptanceContext): AcceptanceResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 
@@ -138,225 +166,229 @@ function validateSystem(content: string): AcceptanceResult {
     return { accepted: true, errors: [], warnings };
   }
 
-  const requiredHeadings = [
-    '### Database Design',
-    '### Seed Data',
-    '### API Endpoints',
-  ];
+  const requiredHeadings = ['Database Design', 'Seed Data', 'API Endpoints'];
 
-  for (const heading of requiredHeadings) {
-    if (!content.includes(heading)) {
-      errors.push(`System candidate output must contain "${heading}".`);
+  for (const s of requiredHeadings) {
+    const count = countHeading(content, `### ${s}`);
+    if (count === 0) {
+      errors.push(`System Contract Error: Missing required section "### ${s}".`);
+    } else if (count > 1) {
+      errors.push(`System Contract Error: Duplicate section "### ${s}".`);
     }
   }
 
-  const dbDesign = extractRequiredSection(content, '### Database Design');
-  const apiEndpoints = extractRequiredSection(content, '### API Endpoints');
+  if (errors.length > 0) {
+    return { accepted: false, errors, warnings };
+  }
+
+  const dbDesign = extractRequiredSection(content, 'Database Design');
+  const apiEndpoints = extractRequiredSection(content, 'API Endpoints');
 
   if (!dbDesign) errors.push('System Database Design section is empty.');
   if (!apiEndpoints) errors.push('System API Endpoints section is empty.');
 
-  return { accepted: errors.length === 0, errors, warnings };
-}
-
-function validateDesigner(content: string): AcceptanceResult {
-  const errors: string[] = [];
-  const warnings: string[] = [];
-  const requiredHeadings = [
-    '### Design System',
-    '### Pages',
-    '### Components',
-    '### Global Feedback',
-  ];
-
-  for (const heading of requiredHeadings) {
-    if (!content.includes(heading)) {
-      errors.push(`Designer candidate output must contain "${heading}".`);
+  // Validate API Endpoint file paths against Architecture project files
+  if (ctx?.upstreamContext?.['architecture.md']) {
+    const parsedArch = parseArchitecture(ctx.upstreamContext['architecture.md']);
+    if (parsedArch.projectFiles.length > 0) {
+      const archFilesLower = new Set(parsedArch.projectFiles.map((f) => f.toLowerCase()));
+      const endpointPathTokens = apiEndpoints.match(/[\/\w\-]+\.(?:ts|tsx|js|jsx|json)/gi) || [];
+      for (const token of endpointPathTokens) {
+        const norm = normalizeProjectPath(token).toLowerCase();
+        if (!archFilesLower.has(norm)) {
+          errors.push(`System Contract Error: API endpoint path "${token}" is absent from architecture project files.`);
+        }
+      }
     }
   }
 
-  const designSystem = extractRequiredSection(content, '### Design System');
-  const pages = extractRequiredSection(content, '### Pages');
-  const components = extractRequiredSection(content, '### Components');
-  const globalFeedback = extractRequiredSection(content, '### Global Feedback');
+  return { accepted: errors.length === 0, errors, warnings };
+}
+
+function validateDesigner(content: string, ctx?: StageAcceptanceContext): AcceptanceResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const requiredHeadings = [
+    'Design System',
+    'Pages',
+    'Components',
+    'Global Feedback',
+  ];
+
+  for (const s of requiredHeadings) {
+    const count = countHeading(content, `### ${s}`);
+    if (count === 0) {
+      errors.push(`Designer Contract Error: Missing required section "### ${s}".`);
+    } else if (count > 1) {
+      errors.push(`Designer Contract Error: Duplicate section "### ${s}".`);
+    }
+  }
+
+  if (errors.length > 0) {
+    return { accepted: false, errors, warnings };
+  }
+
+  const designSystem = extractRequiredSection(content, 'Design System');
+  const pages = extractRequiredSection(content, 'Pages');
+  const components = extractRequiredSection(content, 'Components');
+  const globalFeedback = extractRequiredSection(content, 'Global Feedback');
 
   if (!designSystem) errors.push('Designer Design System section is empty.');
   if (!pages) errors.push('Designer Pages section is empty.');
   if (!components) errors.push('Designer Components section is empty.');
   if (!globalFeedback) errors.push('Designer Global Feedback section is empty.');
 
+  // Check Feature-NNN traceability from Planner
+  if (ctx?.upstreamContext?.['requirements.md']) {
+    const reqContent = ctx.upstreamContext['requirements.md'];
+    const declaredFeatures = Array.from(new Set(reqContent.match(/\bFeature-\d{3}\b/g) || []));
+
+    const designerText = `${pages}\n${components}`;
+    for (const fid of declaredFeatures) {
+      if (!designerText.includes(fid)) {
+        errors.push(`Designer Contract Error: Feature ID "${fid}" declared in requirements.md is missing from Designer pages/components.`);
+      }
+    }
+  }
+
   return { accepted: errors.length === 0, errors, warnings };
 }
 
-function validateBlueprinter(content: string): AcceptanceResult {
+function validateBlueprinter(content: string, ctx?: StageAcceptanceContext): AcceptanceResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  if (!content.includes('### File:')) {
-    errors.push('Blueprinter candidate output must contain at least one "### File:" section.');
+  const archContent = ctx?.upstreamContext?.['architecture.md'];
+  if (!archContent) {
+    errors.push('Blueprinter Contract Error: Missing upstream "architecture.md" artifact context for validation.');
     return { accepted: false, errors, warnings };
   }
 
-  const fileSections = content.split(/### File:\s+/).filter(Boolean);
-  if (fileSections.length === 0) {
-    errors.push('Blueprinter output does not specify any files.');
+  const { authorizedFileSet, errors: authErrors } = computeAuthorizedFileSet(archContent, content);
+  if (!authorizedFileSet || authErrors.length > 0) {
+    errors.push(...authErrors);
+    return { accepted: false, errors, warnings };
   }
 
-  for (const section of fileSections) {
-    const lines = section.trim().split('\n');
-    const filePath = lines[0].trim();
-    if (!filePath) {
-      errors.push('Blueprinter section missing file path.');
-    }
-  }
-
-  return { accepted: errors.length === 0, errors, warnings };
+  return { accepted: true, errors: [], warnings: [] };
 }
 
-function validateCoder(content: string): AcceptanceResult {
+function validateCoder(content: string, ctx?: StageAcceptanceContext): AcceptanceResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 
+  let manifest: WorkspaceManifest;
   try {
-    const parsed = JSON.parse(content);
-    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.files)) {
+    manifest = JSON.parse(content);
+    if (!manifest || typeof manifest !== 'object' || !Array.isArray(manifest.files)) {
       errors.push('Coder candidate output is not a valid WorkspaceManifest JSON object.');
       return { accepted: false, errors, warnings };
     }
-    if (parsed.files.length === 0) {
-      errors.push('Coder workspace manifest contains zero generated files.');
-    }
-    if (!parsed.schemaVersion || !parsed.projectRoot || !parsed.directories) {
-      errors.push('Coder workspace manifest is missing mandatory schema fields.');
-    }
   } catch (e: any) {
     errors.push(`Coder candidate output is not a valid WorkspaceManifest JSON: ${e.message}`);
+    return { accepted: false, errors, warnings };
+  }
+
+  if (ctx?.evidence?.authorized && ctx.evidence.workspaceFiles) {
+    const valRes = validateManifestPolicy({
+      manifest,
+      workspaceFiles: ctx.evidence.workspaceFiles,
+      authorized: ctx.evidence.authorized,
+    });
+    if (!valRes.valid) {
+      errors.push(...valRes.errors);
+    }
   }
 
   return { accepted: errors.length === 0, errors, warnings };
 }
 
-function validateTester(content: string): AcceptanceResult {
-  const errors: string[] = [];
-  const warnings: string[] = [];
-
-  const hasReportHeading = /#\s+(Test Report|Verification Report)/i.test(content) || /##\s+(Result|Summary)/i.test(content);
-  const hasResultStatus = /(PASS|FAIL)/i.test(content);
-
-  if (!hasReportHeading) {
-    errors.push('Tester candidate output must contain a "# Test Report" heading.');
-  }
-  if (!hasResultStatus) {
-    errors.push('Tester candidate report must state an explicit result status (PASS or FAIL).');
+function validateTester(content: string, ctx?: StageAcceptanceContext): AcceptanceResult {
+  const { output, errors } = parseTesterOutput(content);
+  if (!output || errors.length > 0) {
+    return { accepted: false, errors, warnings: [] };
   }
 
-  return { accepted: errors.length === 0, errors, warnings };
+  const extraErrors: string[] = [];
+  if (output.result !== 'PASS') {
+    extraErrors.push('Tester Contract Error: Verification result is FAIL.');
+  }
+
+  if (ctx?.evidence?.currentWorkspaceHash && output.workspaceHash !== ctx.evidence.currentWorkspaceHash) {
+    extraErrors.push(
+      `Tester Contract Error: Stale workspace hash in test report. Expected "${ctx.evidence.currentWorkspaceHash}", got "${output.workspaceHash}".`
+    );
+  }
+
+  return { accepted: extraErrors.length === 0, errors: extraErrors, warnings: [] };
 }
 
-function validateDebugger(content: string): AcceptanceResult {
-  const errors: string[] = [];
-  const warnings: string[] = [];
-
-  try {
-    const parsed = JSON.parse(content);
-    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.patches)) {
-      errors.push('Debugger candidate output must be a valid JSON object with a "patches" array.');
-      return { accepted: false, errors, warnings };
-    }
-
-    for (let i = 0; i < parsed.patches.length; i++) {
-      const p = parsed.patches[i];
-      if (!p.file || typeof p.file !== 'string') {
-        errors.push(`Patch #${i + 1} is missing a valid 'file' string.`);
-      } else if (p.file.startsWith('/') || p.file.includes('..')) {
-        errors.push(`Patch #${i + 1} contains unsafe or absolute file path '${p.file}'.`);
-      }
-      if (typeof p.startLine !== 'number' || p.startLine < 1) {
-        errors.push(`Patch #${i + 1} has invalid startLine (${p.startLine}).`);
-      }
-      if (typeof p.endLine !== 'number' || p.endLine < p.startLine) {
-        errors.push(`Patch #${i + 1} has invalid endLine (${p.endLine}).`);
-      }
-      if (typeof p.replacement !== 'string') {
-        errors.push(`Patch #${i + 1} is missing a string replacement.`);
-      }
-      if (!p.reason || typeof p.reason !== 'string') {
-        errors.push(`Patch #${i + 1} is missing a non-empty reason string.`);
-      }
-    }
-  } catch (e: any) {
-    errors.push(`Debugger candidate output is not valid JSON: ${e.message}`);
+function validateDebugger(content: string, ctx?: StageAcceptanceContext): AcceptanceResult {
+  const { output, errors } = parseDebuggerOutput(content);
+  if (!output || errors.length > 0) {
+    return { accepted: false, errors, warnings: [] };
   }
 
-  return { accepted: errors.length === 0, errors, warnings };
-}
+  const extraErrors: string[] = [];
 
-function validateSecurity(content: string): AcceptanceResult {
-  const errors: string[] = [];
-  const warnings: string[] = [];
-  const requiredHeadings = [
-    '### Overall Status',
-    '### Security Score',
-    '### Vulnerabilities Found',
-    '### Security Checks Performed',
-    '### Recommendations',
-  ];
-
-  for (const heading of requiredHeadings) {
-    if (!content.includes(heading)) {
-      errors.push(`Security candidate output must contain "${heading}".`);
-    }
-  }
-
-  const overallStatus = extractRequiredSection(content, '### Overall Status');
-  const validStatuses = ['SECURE', 'SECURE_WITH_WARNINGS', 'VULNERABLE', 'CRITICAL'];
-  if (!overallStatus || !validStatuses.some((s) => overallStatus.includes(s))) {
-    errors.push(`Security Overall Status must be one of: ${validStatuses.join(', ')}.`);
-  }
-
-  const scoreText = extractRequiredSection(content, '### Security Score');
-  const scoreMatch = scoreText.match(/\b\d{1,3}\b/);
-  if (!scoreMatch || parseInt(scoreMatch[0], 10) < 0 || parseInt(scoreMatch[0], 10) > 100) {
-    errors.push('Security Score must be a valid number between 0 and 100.');
-  }
-
-  return { accepted: errors.length === 0, errors, warnings };
-}
-
-function validateReviewer(content: string): AcceptanceResult {
-  const errors: string[] = [];
-  const warnings: string[] = [];
-
-  try {
-    const parsed = JSON.parse(content);
-    if (!parsed || typeof parsed !== 'object') {
-      errors.push('Reviewer candidate output must be a valid JSON object.');
-      return { accepted: false, errors, warnings };
-    }
-
-    if (!parsed.status || (parsed.status !== 'PASS' && parsed.status !== 'REPAIR_REQUIRED')) {
-      errors.push('Reviewer status must be either "PASS" or "REPAIR_REQUIRED".');
-    }
-
-    if (!Array.isArray(parsed.findings)) {
-      errors.push('Reviewer output must contain a "findings" array.');
-    } else {
-      for (let i = 0; i < parsed.findings.length; i++) {
-        const f = parsed.findings[i];
-        if (!f.id || !f.severity || !f.category || !f.description) {
-          errors.push(`Reviewer finding #${i + 1} is missing mandatory fields (id, severity, category, description).`);
+  // Check if patches mention any control plane artifacts
+  if (output.patchesApplied) {
+    for (const line of output.patchesApplied.split('\n')) {
+      const fileMatch = line.match(/`([^`]+)`/);
+      if (fileMatch) {
+        const norm = normalizeProjectPath(fileMatch[1]);
+        if (isControlPlaneArtifact(norm)) {
+          extraErrors.push(`Debugger Contract Error: Debugger patch targets control plane artifact "${norm}".`);
         }
       }
     }
-
-    if (!parsed.summary || typeof parsed.summary !== 'string') {
-      errors.push('Reviewer output must contain a non-empty "summary" string.');
-    }
-  } catch (e: any) {
-    errors.push(`Reviewer candidate output is not valid JSON: ${e.message}`);
   }
 
-  return { accepted: errors.length === 0, errors, warnings };
+  return { accepted: extraErrors.length === 0, errors: extraErrors, warnings: [] };
+}
+
+function validateSecurity(content: string, ctx?: StageAcceptanceContext): AcceptanceResult {
+  const { output, errors } = parseSecurityOutput(content);
+  if (!output || errors.length > 0) {
+    return { accepted: false, errors, warnings: [] };
+  }
+
+  const extraErrors: string[] = [];
+
+  if (ctx?.evidence?.currentWorkspaceHash && output.workspaceHash !== ctx.evidence.currentWorkspaceHash) {
+    extraErrors.push(
+      `Security Contract Error: Stale workspace hash in security report. Expected "${ctx.evidence.currentWorkspaceHash}", got "${output.workspaceHash}".`
+    );
+  }
+
+  return { accepted: extraErrors.length === 0, errors: extraErrors, warnings: [] };
+}
+
+function validateReviewer(content: string, ctx?: StageAcceptanceContext): AcceptanceResult {
+  const { output, errors } = parseReviewerOutput(content);
+  if (!output || errors.length > 0) {
+    return { accepted: false, errors, warnings: [] };
+  }
+
+  const extraErrors: string[] = [];
+
+  if (output.qualityScore < 80) {
+    extraErrors.push(`Reviewer Contract Error: Quality score (${output.qualityScore}) is below required minimum of 80.`);
+  }
+  if (!output.architecturalConformance) {
+    extraErrors.push('Reviewer Contract Error: Architectural conformance is false.');
+  }
+  if (!output.requirementCoverage) {
+    extraErrors.push('Reviewer Contract Error: Requirement coverage is false.');
+  }
+
+  if (ctx?.evidence?.currentWorkspaceHash && output.workspaceHash !== ctx.evidence.currentWorkspaceHash) {
+    extraErrors.push(
+      `Reviewer Contract Error: Stale workspace hash in reviewer report. Expected "${ctx.evidence.currentWorkspaceHash}", got "${output.workspaceHash}".`
+    );
+  }
+
+  return { accepted: extraErrors.length === 0, errors: extraErrors, warnings: [] };
 }
 
 export async function validateStageCandidate(
@@ -380,23 +412,22 @@ export async function validateStageCandidate(
     case 'Architect':
       return validateArchitect(content);
     case 'System':
-      return validateSystem(content);
+      return validateSystem(content, ctx);
     case 'Designer':
-      return validateDesigner(content);
+      return validateDesigner(content, ctx);
     case 'Blueprinter':
-      return validateBlueprinter(content);
+      return validateBlueprinter(content, ctx);
     case 'Coder':
-      return validateCoder(content);
+      return validateCoder(content, ctx);
     case 'Tester':
-      return validateTester(content);
+      return validateTester(content, ctx);
     case 'Debugger':
-      return validateDebugger(content);
+      return validateDebugger(content, ctx);
     case 'Security':
-      return validateSecurity(content);
+      return validateSecurity(content, ctx);
     case 'Reviewer':
-      return validateReviewer(content);
+      return validateReviewer(content, ctx);
     default:
       return { accepted: true, errors: [], warnings: [] };
   }
 }
-

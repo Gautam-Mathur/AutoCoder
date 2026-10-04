@@ -115,3 +115,25 @@ export function verifyArtifactConsumable(artifact: ProducedArtifactInfo): { cons
   return { consumable: true };
 }
 
+export function assertArtifactFreshForStage(params: {
+  artifact: {
+    filePath: string;
+    status: string;
+    dependencyFingerprint: string;
+  };
+  expectedDependencyFingerprint: string;
+  stageName: string;
+}): void {
+  if (params.artifact.status !== 'ACCEPTED') {
+    throw new Error(
+      `CONTRACT STALE ERROR: Artifact ${params.artifact.filePath} for stage ${params.stageName} has status "${params.artifact.status}" (expected ACCEPTED).`
+    );
+  }
+  if (params.artifact.dependencyFingerprint !== params.expectedDependencyFingerprint) {
+    throw new Error(
+      `CONTRACT STALE ERROR: Artifact ${params.artifact.filePath} for stage ${params.stageName} has stale dependency fingerprint "${params.artifact.dependencyFingerprint}" (expected "${params.expectedDependencyFingerprint}").`
+    );
+  }
+}
+
+

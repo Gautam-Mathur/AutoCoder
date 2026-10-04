@@ -2,22 +2,22 @@ import { prisma } from '../../db';
 import { createContentHash } from './contracts/fingerprints';
 import { runLinter, runCrossFileImportCheck } from './linter';
 import { validateGeneratedProject } from './project-validator';
-import { runInference, cleanJsonResponse } from '../inference';
-import { AGENT_DEFS } from './agents';
-import { listVirtualFiles, readVirtualFile, writeVirtualFile, applyDiff } from './vfs';
+import { isControlPlaneArtifact, normalizeProjectPath } from './workspace-policy';
 
 const MAX_DEBUG_CYCLES = 3;
+
+export interface VerificationFailure {
+  file: string;
+  message: string;
+  code?: string;
+}
 
 export interface VerificationResult {
   runId: string;
   cycle: number;
   workspaceFingerprint: string;
   success: boolean;
-  failures: Array<{
-    file: string;
-    message: string;
-    code?: string;
-  }>;
+  failures: VerificationFailure[];
 }
 
 export async function computeWorkspaceFingerprint(conversationId: string): Promise<string> {
@@ -25,7 +25,17 @@ export async function computeWorkspaceFingerprint(conversationId: string): Promi
     where: { conversationId },
     orderBy: { filePath: 'asc' },
   });
-  return createContentHash(JSON.stringify(records.map((f) => ({ path: f.filePath, content: f.content }))));
+  const projectRecords = records.filter(
+    (f) => !isControlPlaneArtifact(normalizeProjectPath(f.filePath))
+  );
+  return createContentHash(
+    JSON.stringify(
+      projectRecords.map((f) => ({
+        path: normalizeProjectPath(f.filePath),
+        content: f.content,
+      }))
+    )
+  );
 }
 
 export async function runFullWorkspaceTester(
@@ -33,24 +43,29 @@ export async function runFullWorkspaceTester(
   cycle: number
 ): Promise<VerificationResult> {
   const fingerprint = await computeWorkspaceFingerprint(conversationId);
-  const failures: Array<{ file: string; message: string; code?: string }> = [];
+  const failures: VerificationFailure[] = [];
 
   try {
     const virtualFiles = await prisma.virtualFile.findMany({
       where: { conversationId },
     });
 
+    const projectFiles = virtualFiles.filter(
+      (vf) => !isControlPlaneArtifact(normalizeProjectPath(vf.filePath))
+    );
+
     const fileMap = new Map<string, string>();
-    for (const vf of virtualFiles) {
-      fileMap.set(vf.filePath.replace(/\\/g, '/'), vf.content);
+    for (const vf of projectFiles) {
+      fileMap.set(normalizeProjectPath(vf.filePath), vf.content);
     }
 
-    // 1. Run Linter on all files
-    for (const vf of virtualFiles) {
-      const linterResult = await runLinter(conversationId, vf.filePath);
+    // 1. Run Linter on project files
+    for (const vf of projectFiles) {
+      const norm = normalizeProjectPath(vf.filePath);
+      const linterResult = await runLinter(conversationId, norm);
       if (!linterResult.success) {
         for (const err of linterResult.errors) {
-          failures.push({ file: vf.filePath, message: err.message });
+          failures.push({ file: norm, message: err.message });
         }
       }
     }
@@ -85,53 +100,96 @@ export async function runFullWorkspaceTester(
   };
 }
 
+export async function runDeterministicTesterReport(params: {
+  conversationId: string;
+  pipelineRunId: string;
+  stageExecutionId: string;
+  cycle?: number;
+}): Promise<{ content: string; success: boolean; verificationRunId: string; workspaceHash: string }> {
+  const { conversationId, pipelineRunId, stageExecutionId, cycle = 1 } = params;
+  const testResult = await runFullWorkspaceTester(conversationId, cycle);
+
+  const runRecord = await prisma.verificationRun.create({
+    data: {
+      conversationId,
+      pipelineRunId,
+      stageExecutionId,
+      cycle: testResult.cycle,
+      workspaceHash: testResult.workspaceFingerprint,
+      success: testResult.success,
+      failuresJson: JSON.stringify(testResult.failures),
+      warningsJson: JSON.stringify([]),
+    },
+  });
+
+  const failuresList = testResult.success
+    ? 'None'
+    : testResult.failures.map((f) => `- [${f.file}] ${f.message}`).join('\n');
+
+  const content = `# Test Report
+
+### Result
+${testResult.success ? 'PASS' : 'FAIL'}
+
+### Summary
+Verification run ${runRecord.id} completed on cycle ${testResult.cycle}. Workspace fingerprint ${testResult.workspaceFingerprint}. ${
+    testResult.success ? 'All automated verification checks passed cleanly.' : `Found ${testResult.failures.length} error(s).`
+  }
+
+### Tests
+- Project File Linter: ${testResult.failures.some((f) => f.file !== 'imports' && f.file !== 'project' && f.file !== 'tester') ? 'FAIL' : 'PASS'}
+- Cross-File Import Analysis: ${testResult.failures.some((f) => f.file === 'imports') ? 'FAIL' : 'PASS'}
+- Full Project Structural Validation: ${testResult.failures.some((f) => f.file === 'project') ? 'FAIL' : 'PASS'}
+
+### Failures
+${failuresList}
+
+### Workspace Hash
+${testResult.workspaceFingerprint}
+
+### Verification Run ID
+${runRecord.id}
+`;
+
+  return {
+    content,
+    success: testResult.success,
+    verificationRunId: runRecord.id,
+    workspaceHash: testResult.workspaceFingerprint,
+  };
+}
+
 export async function verifyAndRepairWorkspace(
   conversationId: string,
   pipelineRunId: string,
-  userPrompt: string,
-  emit: (evt: any) => void,
-  executionSignal?: AbortSignal
+  executeStageFn: (stageName: string, customInput?: string) => Promise<any>,
+  emit: (evt: any) => void
 ): Promise<void> {
-  const seenHashes = new Map<string, Set<string>>();
-
   for (let cycle = 1; cycle <= MAX_DEBUG_CYCLES; cycle++) {
     emit({
       type: 'AGENT_START',
       agent: 'Tester',
-      message: `Running workspace verification cycle ${cycle}/${MAX_DEBUG_CYCLES}...`,
+      message: `Running deterministic workspace verification cycle ${cycle}/${MAX_DEBUG_CYCLES}...`,
     });
 
-    const testResult = await runFullWorkspaceTester(conversationId, cycle);
+    const testerResult = await executeStageFn('Tester');
+    if (!testerResult || testerResult.status !== 'ACCEPTED') {
+      throw new Error(`Tester execution failed on cycle ${cycle}.`);
+    }
 
-    await prisma.verificationRun.create({
-      data: {
-        conversationId,
-        pipelineRunId,
-        cycle,
-        workspaceHash: testResult.workspaceFingerprint,
-        success: testResult.success,
-        failuresJson: JSON.stringify(testResult.failures),
-        warningsJson: JSON.stringify([]),
-      },
-    });
+    const isPass = testerResult.content.includes('### Result\nPASS') || testerResult.content.includes('### Result\n\nPASS');
 
-    if (testResult.success) {
+    if (isPass) {
       emit({
         type: 'AGENT_COMPLETE',
         agent: 'Tester',
-        message: `Workspace verification passed on cycle ${cycle}.`,
+        message: `Workspace verification passed cleanly on cycle ${cycle}.`,
       });
       return;
     }
 
-    emit({
-      type: 'AGENT_LOG',
-      agent: 'Tester',
-      message: `Cycle ${cycle} found ${testResult.failures.length} verification error(s).`,
-    });
-
     if (cycle === MAX_DEBUG_CYCLES) {
-      throw new Error(`Workspace verification failed after ${MAX_DEBUG_CYCLES} cycles. Failures: ${testResult.failures.map((f) => f.message).join('; ')}`);
+      throw new Error(`Workspace verification failed after ${MAX_DEBUG_CYCLES} debug repair cycles.`);
     }
 
     emit({
@@ -140,71 +198,9 @@ export async function verifyAndRepairWorkspace(
       message: `Launching Debugger repair cycle ${cycle}...`,
     });
 
-    // Run Debugger repair cycle
-    const failuresSummary = testResult.failures.map((f) => `- [${f.file}] ${f.message}`).join('\n');
-    const prompt = `Fix the following workspace errors found in verification cycle ${cycle}:\n${failuresSummary}\n\nUser Goal:\n${userPrompt}\n\nOutput repaired files as JSON object: {"patches": [{"file": "src/App.tsx", "startLine": 1, "endLine": 10, "replacement": "..."}]} OR {"files": [{"path": "src/App.tsx", "content": "..."}]}`;
-
-    const debugResponse = await runInference(
-      [
-        { role: 'system', content: AGENT_DEFS.Debugger.systemPrompt || '' },
-        { role: 'user', content: prompt },
-      ],
-      { signal: executionSignal }
-    );
-
-    // Apply repairs to VFS
-    let appliedRepair = false;
-    if (debugResponse) {
-      try {
-        const cleaned = cleanJsonResponse(debugResponse);
-        const parsed = JSON.parse(cleaned);
-
-        if (parsed && Array.isArray(parsed.patches) && parsed.patches.length > 0) {
-          for (const patch of parsed.patches) {
-            if (patch.file && patch.startLine && patch.endLine && patch.replacement !== undefined) {
-              await applyDiff(conversationId, patch.file, patch.startLine, patch.endLine, patch.replacement);
-              appliedRepair = true;
-            }
-          }
-        }
-
-        if (parsed && Array.isArray(parsed.files) && parsed.files.length > 0) {
-          for (const file of parsed.files) {
-            if (file.path && file.content !== undefined) {
-              await writeVirtualFile(conversationId, file.path, file.content);
-              appliedRepair = true;
-            }
-          }
-        }
-      } catch (e) {
-        // Fallback: check if failure referenced specific file
-        const targetFail = testResult.failures.find((f) => f.file && f.file !== 'imports' && f.file !== 'project' && f.file !== 'tester');
-        if (targetFail && targetFail.file) {
-          await writeVirtualFile(conversationId, targetFail.file, debugResponse);
-          appliedRepair = true;
-        }
-      }
-    }
-
-    const postFingerprint = await computeWorkspaceFingerprint(conversationId);
-    if (testResult.workspaceFingerprint === postFingerprint && !appliedRepair) {
-      emit({
-        type: 'AGENT_LOG',
-        agent: 'Debugger',
-        message: `⚠️ Debugger repair output produced no changes to workspace fingerprint.`,
-      });
-    }
-
-    // Oscillation check & patch application
-    const vFiles = await prisma.virtualFile.findMany({ where: { conversationId } });
-    for (const vf of vFiles) {
-      const contentHash = createContentHash(vf.content);
-      const hashes = seenHashes.get(vf.filePath) || new Set<string>();
-      if (hashes.has(contentHash) && hashes.size >= 2) {
-        throw new Error(`Repair oscillation detected for file ${vf.filePath}. Stopping verification loop.`);
-      }
-      hashes.add(contentHash);
-      seenHashes.set(vf.filePath, hashes);
+    const debugResult = await executeStageFn('Debugger', testerResult.content);
+    if (!debugResult || debugResult.status !== 'ACCEPTED') {
+      throw new Error(`Debugger repair execution failed on cycle ${cycle}.`);
     }
 
     emit({

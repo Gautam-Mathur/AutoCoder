@@ -3,13 +3,27 @@ import { getStageContract, StageName } from './contracts/registry';
 import { CONTRACT_VERSIONS } from './contracts/versions';
 import { createContentHash } from './contracts/fingerprints';
 import { assertInputCompatibility, assertOutputCompatibility } from './contracts/compatibility';
-import { resolveAcceptedStageInputs, commitAcceptedArtifact } from './artifact-store';
+import { resolveAcceptedStageInputs, commitAcceptedArtifact, invalidateDescendants } from './artifact-store';
 import { validateStageCandidate } from './stage-acceptance';
 import { assertPipelineLease } from './pipeline-lease';
 import { appendPipelineEvent } from './pipeline-events';
 import { runAgent } from './orchestrator';
 import { StageLedger } from './memory';
-import { generateWorkspaceManifest } from './vfs';
+import {
+  generateWorkspaceManifest,
+  loadAuthorizedFileSet,
+  writeAuthorizedProjectFile,
+  applyAuthorizedDiff,
+} from './vfs';
+import {
+  computeWorkspaceFingerprint,
+  runDeterministicTesterReport,
+} from './verification-loop';
+import {
+  isControlPlaneArtifact,
+  normalizeProjectPath,
+  extractEmbeddedWorkspaceHash,
+} from './workspace-policy';
 
 export interface ExecuteContractStageParams {
   conversationId: string;
@@ -30,7 +44,6 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
     conversationId,
     pipelineRunId,
     stageName,
-    attempt = 1,
     userPromptText,
     onEvent,
     ledger,
@@ -47,7 +60,13 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
   // Step 8.2 — Assert pipeline lease
   await assertPipelineLease(conversationId, leaseOwnerId);
 
-  // Step 8.3 — Resolve accepted inputs
+  // Auto-increment attempt number based on previous executions for this stage and run
+  const previousExecs = await prisma.stageExecution.count({
+    where: { pipelineRunId, stageName },
+  });
+  const attempt = previousExecs + 1;
+
+  // Step 8.3 — Resolve accepted inputs (strictly scoped to this pipelineRunId)
   const resolvedInputs = await resolveAcceptedStageInputs({
     conversationId,
     pipelineRunId,
@@ -82,25 +101,156 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
   });
 
   try {
-    // Step 8.5 — Generate candidate
-    const agentResult = await runAgent(
-      conversationId,
-      stageName,
-      userPromptText,
-      onEvent,
-      ledger,
-      attempt,
-      customUserContent,
-      signal,
-      undefined,
-      targetFile,
-      true
-    );
+    let candidateContent = '';
+    const currentWorkspaceHash = await computeWorkspaceFingerprint(conversationId);
 
-    let candidateContent = agentResult?.content || '';
+    // Stage-specific candidate generation logic
     if (stageName === 'Coder') {
-      const manifest = await generateWorkspaceManifest(conversationId, stageExecution.id);
+      const authorized = await loadAuthorizedFileSet(conversationId, pipelineRunId);
+      const targetFilesToBuild = targetFile
+        ? [normalizeProjectPath(targetFile)]
+        : authorized.authorizedFiles;
+
+      for (const tf of targetFilesToBuild) {
+        if (isControlPlaneArtifact(tf)) {
+          throw new Error(`Authorization Exception: Coder stage cannot target control plane artifact "${tf}".`);
+        }
+        if (!authorized.authorizedFiles.includes(tf)) {
+          throw new Error(`Authorization Exception: Target file "${tf}" is not in authorized file set.`);
+        }
+
+        const agentResult = await runAgent(
+          conversationId,
+          'Coder',
+          userPromptText,
+          onEvent,
+          ledger,
+          attempt,
+          customUserContent,
+          signal,
+          undefined,
+          tf,
+          false // persistOutput = false (we persist via writeAuthorizedProjectFile below)
+        );
+
+        const codeContent = agentResult?.content || '';
+        await writeAuthorizedProjectFile({
+          conversationId,
+          pipelineRunId,
+          stageExecutionId: stageExecution.id,
+          filePath: tf,
+          content: codeContent,
+        });
+      }
+
+      const manifest = await generateWorkspaceManifest(conversationId, stageExecution.id, authorized);
       candidateContent = JSON.stringify(manifest, null, 2);
+    } else if (stageName === 'Tester') {
+      const reportRes = await runDeterministicTesterReport({
+        conversationId,
+        pipelineRunId,
+        stageExecutionId: stageExecution.id,
+        cycle: attempt,
+      });
+      candidateContent = reportRes.content;
+    } else if (stageName === 'Debugger') {
+      const agentResult = await runAgent(
+        conversationId,
+        'Debugger',
+        userPromptText,
+        onEvent,
+        ledger,
+        attempt,
+        customUserContent,
+        signal,
+        undefined,
+        targetFile,
+        true
+      );
+      candidateContent = agentResult?.content || '';
+
+      // Apply debugger patches if valid JSON
+      try {
+        const parsed = JSON.parse(candidateContent);
+        if (parsed && Array.isArray(parsed.patches)) {
+          for (const p of parsed.patches) {
+            if (p.file && p.startLine && p.endLine && p.replacement !== undefined) {
+              await applyAuthorizedDiff({
+                conversationId,
+                pipelineRunId,
+                stageExecutionId: stageExecution.id,
+                filePath: p.file,
+                startLine: p.startLine,
+                endLine: p.endLine,
+                newContent: p.replacement,
+              });
+            }
+          }
+        }
+      } catch {
+        // Debugger output may be markdown report
+      }
+    } else if (stageName === 'Security') {
+      const agentResult = await runAgent(
+        conversationId,
+        'Security',
+        userPromptText,
+        onEvent,
+        ledger,
+        attempt,
+        customUserContent,
+        signal,
+        undefined,
+        targetFile,
+        true
+      );
+      candidateContent = agentResult?.content || '';
+
+      // Ensure Workspace Hash section is present and bound to current workspace state
+      if (!candidateContent.includes('### Workspace Hash')) {
+        candidateContent = `${candidateContent.trim()}\n\n### Workspace Hash\n${currentWorkspaceHash}\n`;
+      }
+    } else if (stageName === 'Reviewer') {
+      const agentResult = await runAgent(
+        conversationId,
+        'Reviewer',
+        userPromptText,
+        onEvent,
+        ledger,
+        attempt,
+        customUserContent,
+        signal,
+        undefined,
+        targetFile,
+        true
+      );
+      candidateContent = agentResult?.content || '';
+
+      // Inject workspaceHash into JSON output
+      try {
+        const parsed = JSON.parse(candidateContent);
+        if (parsed && typeof parsed === 'object') {
+          parsed.workspaceHash = currentWorkspaceHash;
+          candidateContent = JSON.stringify(parsed, null, 2);
+        }
+      } catch {
+        // Leave unchanged if not raw JSON
+      }
+    } else {
+      const agentResult = await runAgent(
+        conversationId,
+        stageName,
+        userPromptText,
+        onEvent,
+        ledger,
+        attempt,
+        customUserContent,
+        signal,
+        undefined,
+        targetFile,
+        true
+      );
+      candidateContent = agentResult?.content || '';
     }
 
     const contentHash = createContentHash(candidateContent);
@@ -122,6 +272,14 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
       payload: { contentHash, stageExecutionId: stageExecution.id },
     });
 
+    // Load authorized set for evidence if available
+    let authorizedForEvidence;
+    try {
+      authorizedForEvidence = await loadAuthorizedFileSet(conversationId, pipelineRunId);
+    } catch {
+      // Upstream architecture/blueprint may not be accepted yet (e.g. Queen/Planner stages)
+    }
+
     // Step 8.7 — Run stage-specific validators
     const validationResult = await validateStageCandidate({
       conversationId,
@@ -135,6 +293,10 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
         generatedAt: new Date(),
       },
       upstreamContext: resolvedInputs.inputs,
+      evidence: {
+        currentWorkspaceHash,
+        authorized: authorizedForEvidence,
+      },
     });
 
     if (!validationResult.accepted) {
@@ -171,6 +333,12 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
       throw new Error(`Stage validation failed for ${stageName}: ${errMessage}`);
     }
 
+    // Check cancellation signal and assert pipeline lease before committing
+    if (signal?.aborted) {
+      throw new Error(`Stage execution for ${stageName} was aborted by signal.`);
+    }
+    await assertPipelineLease(conversationId, leaseOwnerId);
+
     // Step 8.8 — Assert output contract compatibility
     assertOutputCompatibility({
       stageName,
@@ -181,7 +349,6 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
         version: contract.outputArtifact.version,
       },
     });
-
 
     // Record PASS gate decision
     await prisma.gateDecision.create({
@@ -220,6 +387,9 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
       parentArtifactIds: resolvedInputs.artifactIds,
       dependencyFingerprint: resolvedInputs.dependencyFingerprint,
     });
+
+    // Invalidate descendant artifacts since a new version was accepted
+    await invalidateDescendants(conversationId, stageName, pipelineRunId);
 
     // Step 8.10 — Update StageExecution state to ACCEPTED
     await prisma.stageExecution.update({

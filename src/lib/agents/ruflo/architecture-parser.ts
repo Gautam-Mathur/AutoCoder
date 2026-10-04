@@ -1,6 +1,7 @@
 import {
   classifyArchitectureFile,
   requiresModuleOwnership,
+  ArchitectureFileClass,
   ArchitectureFilePolicy,
 } from './architecture-file-policy';
 
@@ -18,19 +19,38 @@ export interface ParsedArchitecture {
   sections: {
     techStack: string;
     projectFolderStructure: string;
+    projectFiles: string;
     modules: ParsedArchitectureModule[];
     conventions: string;
   };
   treeFiles: string[];
+  projectFiles: string[];
   filePolicies: ArchitectureFilePolicy[];
   ownership: Map<string, string[]>;
   moduleGraph: Map<string, { name: string; deps: string[] }>;
   parserErrors: string[];
 }
 
+export interface CanonicalArchitectureFile {
+  path: string;
+  class: ArchitectureFileClass;
+  ownerModule: string | null;
+}
+
+export interface CanonicalArchitecture {
+  files: CanonicalArchitectureFile[];
+  modules: ParsedArchitectureModule[];
+  moduleGraph: Map<string, { name: string; deps: string[] }>;
+  entryPoints: {
+    frontend: string | null;
+    backend: string | null;
+  };
+}
+
 const REQUIRED_SECTIONS = [
   'Tech Stack',
   'Project Folder Structure',
+  'Project Files',
   'Modules',
   'Conventions',
 ];
@@ -45,8 +65,9 @@ export function parseArchitecture(architectureContent: string): ParsedArchitectu
   const parserErrors: string[] = [];
 
   const emptyResult = (): ParsedArchitecture => ({
-    sections: { techStack: '', projectFolderStructure: '', modules: [], conventions: '' },
+    sections: { techStack: '', projectFolderStructure: '', projectFiles: '', modules: [], conventions: '' },
     treeFiles: [],
+    projectFiles: [],
     filePolicies: [],
     ownership: new Map(),
     moduleGraph: new Map(),
@@ -118,6 +139,7 @@ export function parseArchitecture(architectureContent: string): ParsedArchitectu
 
   const techStackText = extractSectionText('Tech Stack');
   const treeText = extractSectionText('Project Folder Structure');
+  const projectFilesText = extractSectionText('Project Files');
   const modulesText = extractSectionText('Modules');
   const conventionsText = extractSectionText('Conventions');
 
@@ -160,6 +182,47 @@ export function parseArchitecture(architectureContent: string): ParsedArchitectu
 
   if (treeFiles.length === 0) {
     parserErrors.push('Architecture Contract Error: Project Folder Structure contains no files.');
+  }
+
+  // 2b. Parse canonical Project Files inventory (machine-readable) and compare with the tree
+  const projectFiles: string[] = [];
+  for (const rawLine of projectFilesText.split('\n')) {
+    const trimmed = rawLine.trim();
+    if (!trimmed) continue;
+    const entry = trimmed
+      .replace(/^[-*]\s+/, '')
+      .replace(/[*`'"]/g, '')
+      .replace(/\\/g, '/')
+      .replace(/^\.\//, '')
+      .trim();
+    if (!entry || /\s/.test(entry)) {
+      parserErrors.push(`Architecture Contract Error: Invalid Project Files entry "${trimmed}". Each line must be exactly one file path.`);
+      continue;
+    }
+    projectFiles.push(entry);
+  }
+
+  if (projectFiles.length === 0) {
+    parserErrors.push('Architecture Contract Error: Project Files inventory contains no files.');
+  } else {
+    const seenProjectFiles = new Set<string>();
+    for (const f of projectFiles) {
+      if (seenProjectFiles.has(f)) {
+        parserErrors.push(`Architecture Contract Error: Project Files inventory lists duplicate file "${f}".`);
+      }
+      seenProjectFiles.add(f);
+    }
+    const treeFileSet = new Set(treeFiles);
+    for (const f of treeFiles) {
+      if (!seenProjectFiles.has(f)) {
+        parserErrors.push(`Architecture Contract Error: Project Files inventory is missing tree file "${f}".`);
+      }
+    }
+    for (const f of seenProjectFiles) {
+      if (!treeFileSet.has(f)) {
+        parserErrors.push(`Architecture Contract Error: Project Files inventory lists file "${f}" which is absent from Project Folder Structure.`);
+      }
+    }
   }
 
   // 3. Parse Modules
@@ -308,13 +371,59 @@ export function parseArchitecture(architectureContent: string): ParsedArchitectu
     sections: {
       techStack: techStackText,
       projectFolderStructure: treeText,
+      projectFiles: projectFilesText,
       modules: parsedModules,
       conventions: conventionsText,
     },
     treeFiles,
+    projectFiles,
     filePolicies,
     ownership,
     moduleGraph,
     parserErrors,
   };
+}
+
+function extractEntryPoint(techStack: string, label: 'Frontend' | 'Backend'): string | null {
+  const match = techStack.match(new RegExp(`${label} Entry Point(?:\\*\\*)?\\s*:\\s*(?:\\*\\*)?\\s*([^\\n]+)`, 'i'));
+  if (!match) return null;
+  const cleaned = match[1].replace(/[*`'"]/g, '').replace(/\\/g, '/').replace(/^\.\//, '').trim();
+  if (!cleaned || /^(none|n\/a|na|-)$/i.test(cleaned)) return null;
+  return cleaned;
+}
+
+/**
+ * Builds the single normalized architecture object that every downstream
+ * consumer (Blueprinter, Coder authorization, System/Designer topology checks,
+ * Final Gate, workspace-manifest validation) must use instead of re-parsing architecture.md.
+ */
+export function buildCanonicalArchitecture(parsed: ParsedArchitecture): CanonicalArchitecture {
+  const files: CanonicalArchitectureFile[] = parsed.treeFiles.map((path) => {
+    const owners = parsed.ownership.get(path.toLowerCase()) || [];
+    return {
+      path,
+      class: classifyArchitectureFile(path),
+      ownerModule: owners.length > 0 ? owners[0] : null,
+    };
+  });
+
+  return {
+    files,
+    modules: parsed.sections.modules,
+    moduleGraph: parsed.moduleGraph,
+    entryPoints: {
+      frontend: extractEntryPoint(parsed.sections.techStack, 'Frontend'),
+      backend: extractEntryPoint(parsed.sections.techStack, 'Backend'),
+    },
+  };
+}
+
+export function parseCanonicalArchitecture(
+  architectureContent: string
+): { architecture: CanonicalArchitecture | null; errors: string[] } {
+  const parsed = parseArchitecture(architectureContent);
+  if (parsed.parserErrors.length > 0) {
+    return { architecture: null, errors: parsed.parserErrors };
+  }
+  return { architecture: buildCanonicalArchitecture(parsed), errors: [] };
 }
