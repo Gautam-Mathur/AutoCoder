@@ -2,7 +2,7 @@ import { prisma } from '../../db';
 import { getStageContract, StageName } from './contracts/registry';
 import { CONTRACT_VERSIONS } from './contracts/versions';
 import { createContentHash } from './contracts/fingerprints';
-import { assertArtifactCompatibility, assertInputCompatibility, assertOutputCompatibility } from './contracts/compatibility';
+import { assertInputCompatibility, assertOutputCompatibility } from './contracts/compatibility';
 import { resolveAcceptedStageInputs, commitAcceptedArtifact } from './artifact-store';
 import { validateStageCandidate } from './stage-acceptance';
 import { assertPipelineLease } from './pipeline-lease';
@@ -180,16 +180,6 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
         contract: contract.outputArtifact.contract,
         version: contract.outputArtifact.version,
       },
-    });
-
-    assertArtifactCompatibility({
-      produced: {
-        name: contract.outputArtifact.name,
-        contract: contract.outputArtifact.contract,
-        version: contract.outputArtifact.version,
-      },
-      required: contract.inputArtifacts,
-      stageName,
     });
 
 

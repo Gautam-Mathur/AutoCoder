@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "pipeline:check": "npx tsx scripts/check_pipeline_invariants.ts",
+    "test": "npx tsx --test src/lib/agents/ruflo/contracts/__tests__/*.test.ts"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

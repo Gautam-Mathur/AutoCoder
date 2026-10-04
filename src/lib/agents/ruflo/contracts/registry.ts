@@ -218,6 +218,11 @@ export const STAGE_CONTRACTS: Record<StageName, StageContract> = {
         contract: CONTRACT_VERSIONS.Architect.name,
         minVersion: '1.0.0',
       },
+      {
+        name: 'workspace.manifest.json',
+        contract: CONTRACT_VERSIONS.Coder.name,
+        minVersion: '1.0.0',
+      },
     ],
     outputArtifact: {
       name: CONTRACT_VERSIONS.Reviewer.outputArtifactName,

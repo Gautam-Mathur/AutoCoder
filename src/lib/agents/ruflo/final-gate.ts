@@ -74,35 +74,46 @@ export async function evaluateFinalPipelineGate(
   const securityArtifact = await prisma.artifactVersion.findFirst({
     where: { conversationId, stageName: 'Security', state: 'ACCEPTED' },
   });
-  const securityOutput = await prisma.securityStageOutput.findUnique({
-    where: { conversationId },
-  });
-  if (!securityArtifact && !securityOutput) {
-    errors.push('Missing mandatory Security stage evaluation.');
-  } else if (securityOutput && securityOutput.status === 'FAILED') {
-    errors.push('Security stage evaluation failed.');
-  } else if (securityArtifact && securityArtifact.content && !/PASS/i.test(securityArtifact.content)) {
-    errors.push('Security stage report did not pass.');
+  if (!securityArtifact || !securityArtifact.content) {
+    errors.push('Missing mandatory accepted Security stage artifact.');
+  } else {
+    const statusText = extractRequiredSection(securityArtifact.content, '### Overall Status');
+    const isSecure = statusText.includes('SECURE') || statusText.includes('SECURE_WITH_WARNINGS');
+    const isVulnerable = statusText.includes('VULNERABLE') || statusText.includes('CRITICAL');
+    if (isVulnerable || !isSecure) {
+      errors.push(`Security stage report status is invalid or failed: "${statusText}".`);
+    }
   }
 
   // 6. Require Reviewer pass
   const reviewerArtifact = await prisma.artifactVersion.findFirst({
     where: { conversationId, stageName: 'Reviewer', state: 'ACCEPTED' },
   });
-  const reviewerOutput = await prisma.reviewerStageOutput.findUnique({
-    where: { conversationId },
-  });
-  if (!reviewerArtifact && !reviewerOutput) {
-    errors.push('Missing mandatory Reviewer stage evaluation.');
-  } else if (reviewerOutput && reviewerOutput.status === 'FAILED') {
-    errors.push('Reviewer stage evaluation failed.');
-  } else if (reviewerArtifact && reviewerArtifact.content && !/PASS/i.test(reviewerArtifact.content)) {
-    errors.push('Reviewer stage report did not pass.');
+  if (!reviewerArtifact || !reviewerArtifact.content) {
+    errors.push('Missing mandatory accepted Reviewer stage artifact.');
+  } else {
+    try {
+      const parsed = JSON.parse(reviewerArtifact.content);
+      if (!parsed || parsed.status !== 'PASS') {
+        errors.push(`Reviewer stage evaluation failed with status: ${parsed?.status || 'UNKNOWN'}.`);
+      }
+    } catch (e: any) {
+      errors.push(`Reviewer stage report content is not valid JSON: ${e.message}`);
+    }
   }
 
   return {
     valid: errors.length === 0,
     errors,
   };
+}
+
+function extractRequiredSection(content: string, heading: string): string {
+  const headingIndex = content.indexOf(heading);
+  if (headingIndex === -1) return '';
+  const startIndex = headingIndex + heading.length;
+  const nextHeadingMatch = content.slice(startIndex).match(/\n#{1,3}\s+/);
+  const endIndex = nextHeadingMatch ? startIndex + nextHeadingMatch.index! : content.length;
+  return content.slice(startIndex, endIndex).trim();
 }
 
