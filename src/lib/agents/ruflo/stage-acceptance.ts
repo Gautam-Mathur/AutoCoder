@@ -42,43 +42,54 @@ export async function validateStageCandidate(
   switch (ctx.candidate.stage) {
     case 'Queen': {
       const hasPlanHeading = /#\s+(Project Plan|Plan|Executive Summary|Architectural Goal|Implementation Plan)/i.test(content);
-      const hasScope = /(scope|overview|objective|architecture|requirements)/i.test(content);
-      if (!hasPlanHeading && !hasScope) {
-        errors.push("Queen candidate output must contain a valid project plan heading and scope specification.");
+      const hasScope = /(scope|overview|goals|objective|architecture|features|requirements)/i.test(content);
+      if (!hasPlanHeading) {
+        errors.push("Queen candidate output must contain '# Project Plan' heading.");
+      }
+      if (!hasScope) {
+        errors.push("Queen candidate output must specify project scope, goals, and feature requirements.");
       }
       return { accepted: errors.length === 0, errors, warnings };
     }
 
     case 'Planner': {
-      const hasReqHeading = /#\s+(Requirements|Project Requirements|Functional Requirements|Specification)/i.test(content) || /##\s+(Requirements|Functional Requirements|Non-Functional Requirements)/i.test(content);
-      const hasContent = content.length >= 100;
-      if (!hasReqHeading || !hasContent) {
-        errors.push("Planner candidate output must contain structured functional/non-functional requirements.");
+      const hasReqHeading = /#\s+(Requirements|Project Requirements|Functional Requirements|Specification)/i.test(content) || /##\s+(Functional Requirements|Non-Functional Requirements|Requirements)/i.test(content);
+      const hasAcceptance = /(acceptance criteria|user stories|non-functional)/i.test(content);
+      if (!hasReqHeading) {
+        errors.push("Planner candidate output must contain '# Requirements' heading.");
+      }
+      if (!hasAcceptance) {
+        errors.push("Planner candidate output must include functional requirements and acceptance criteria.");
       }
       return { accepted: errors.length === 0, errors, warnings };
     }
 
     case 'Architect': {
       const result = validateArchitectureArtifact(content);
-      return {
-        accepted: result.valid,
-        errors: result.errors,
-        warnings: result.warnings,
-      };
+      if (!result.valid) {
+        errors.push(...result.errors);
+      }
+      const hasTechStack = /(tech stack|frontend|backend|database|orm)/i.test(content);
+      if (!hasTechStack) {
+        errors.push("Architect candidate output must explicitly define technology stack (Frontend, Backend, Database/ORM).");
+      }
+      return { accepted: errors.length === 0, errors, warnings };
     }
 
     case 'System': {
-      const hasBackendSpec = /#\s+(Backend Specification|System Spec|Backend Architecture|Server Specification)/i.test(content) || /##\s+(API|Endpoints|Server|Database|Services)/i.test(content);
-      if (!hasBackendSpec) {
-        errors.push("System candidate output must contain a valid backend architecture and API specification.");
+      const hasBackendSpec = /#\s+(Backend Specification|System Spec|Backend Architecture|Server Specification)/i.test(content) || /##\s+(API|Endpoints|Server|Database|Services|Models)/i.test(content);
+      const hasEndpointsOrModels = /(endpoints?|models?|routes?|controllers?|schemas?)/i.test(content);
+      if (!hasBackendSpec || !hasEndpointsOrModels) {
+        errors.push("System candidate output must contain a valid backend architecture, endpoints, and data contracts.");
       }
       return { accepted: errors.length === 0, errors, warnings };
     }
 
     case 'Designer': {
-      const hasUiSpec = /#\s+(UI Specification|Designer Spec|Frontend Specification|UI Architecture)/i.test(content) || /##\s+(Components|Pages|Views|User Interface|Design)/i.test(content);
-      if (!hasUiSpec) {
-        errors.push("Designer candidate output must contain a valid UI and frontend architecture specification.");
+      const hasUiSpec = /#\s+(UI Specification|Designer Spec|Frontend Specification|UI Architecture)/i.test(content) || /##\s+(Components|Pages|Views|User Interface|Design System)/i.test(content);
+      const hasPagesOrComponents = /(pages?|components?|views?|layouts?|styling)/i.test(content);
+      if (!hasUiSpec || !hasPagesOrComponents) {
+        errors.push("Designer candidate output must specify UI structure, pages/views, components, and styling rules.");
       }
       return { accepted: errors.length === 0, errors, warnings };
     }
@@ -88,12 +99,12 @@ export async function validateStageCandidate(
       let isJsonBlueprint = false;
       try {
         const parsed = JSON.parse(content);
-        isJsonBlueprint = Array.isArray(parsed) || (typeof parsed === 'object' && parsed !== null);
+        isJsonBlueprint = (Array.isArray(parsed) || (typeof parsed === 'object' && parsed !== null)) && Boolean(parsed.files || Array.isArray(parsed));
       } catch (e) {
         // Not JSON
       }
       if (!isMdBlueprint && !isJsonBlueprint) {
-        errors.push("Blueprinter candidate output must be a valid blueprint markdown document or blueprint JSON manifest.");
+        errors.push("Blueprinter candidate output must be a valid blueprint markdown specification or file structure manifest JSON.");
       }
       return { accepted: errors.length === 0, errors, warnings };
     }
@@ -101,13 +112,19 @@ export async function validateStageCandidate(
     case 'Coder': {
       try {
         const parsed = JSON.parse(content);
-        if (parsed && Array.isArray(parsed.files)) {
-          return { accepted: true, errors: [], warnings: [] };
+        if (parsed && typeof parsed === 'object' && Array.isArray(parsed.files)) {
+          if (parsed.files.length === 0) {
+            errors.push("Coder workspace manifest contains zero generated files.");
+          }
+          if (!parsed.schemaVersion || !parsed.projectRoot || !parsed.directories) {
+            errors.push("Coder workspace manifest is missing mandatory schema fields.");
+          }
+          return { accepted: errors.length === 0, errors, warnings };
         }
-      } catch (e) {
-        // Not manifest JSON, check file content
+      } catch (e: any) {
+        errors.push(`Coder candidate output is not a valid WorkspaceManifest JSON: ${e.message}`);
       }
-      if (content.length < 10) {
+      if (errors.length === 0 && content.length < 10) {
         errors.push("Coder candidate content is invalid or empty.");
       }
       return { accepted: errors.length === 0, errors, warnings };
@@ -115,16 +132,24 @@ export async function validateStageCandidate(
 
     case 'Tester': {
       const hasReportHeading = /#\s+(Test Report|Verification Report|Tester Report)/i.test(content) || /##\s+(Result|Results|Validation|Summary)/i.test(content);
+      const hasResultStatus = /(PASS|FAIL)/i.test(content);
       if (!hasReportHeading) {
-        errors.push("Tester candidate output must be a structured test report.");
+        errors.push("Tester candidate output must be a structured '# Test Report'.");
+      }
+      if (!hasResultStatus) {
+        errors.push("Tester candidate report must state an explicit result status (PASS or FAIL).");
       }
       return { accepted: errors.length === 0, errors, warnings };
     }
 
     case 'Debugger': {
       const hasDebugHeading = /#\s+(Debug Report|Debugger Report|Repair Report)/i.test(content) || /##\s+(Result|Patches|Repairs|Fixes)/i.test(content) || content.includes('patches');
+      const hasResultStatus = /(PASS|FAIL)/i.test(content);
       if (!hasDebugHeading) {
-        errors.push("Debugger candidate output must be a valid debug report or patch specification.");
+        errors.push("Debugger candidate output must be a structured '# Debug Report'.");
+      }
+      if (!hasResultStatus) {
+        errors.push("Debugger candidate report must state an explicit repair status (PASS or FAIL).");
       }
       return { accepted: errors.length === 0, errors, warnings };
     }
@@ -133,7 +158,7 @@ export async function validateStageCandidate(
       const hasSecurityHeading = /#\s+(Security Report|Security Evaluation|Security Audit)/i.test(content) || /##\s+(Result|Security Audit|Vulnerabilities|Status)/i.test(content);
       const isPass = /PASS/i.test(content);
       if (!hasSecurityHeading) {
-        errors.push("Security candidate output must be a structured security report.");
+        errors.push("Security candidate output must be a structured '# Security Report'.");
       }
       if (!isPass) {
         errors.push("Security candidate report did not indicate PASS.");
@@ -145,7 +170,7 @@ export async function validateStageCandidate(
       const hasReviewHeading = /#\s+(Review Report|Code Review|Reviewer Report)/i.test(content) || /##\s+(Result|Assessment|Code Review|Status)/i.test(content);
       const isPass = /PASS/i.test(content);
       if (!hasReviewHeading) {
-        errors.push("Reviewer candidate output must be a structured review report.");
+        errors.push("Reviewer candidate output must be a structured '# Review Report'.");
       }
       if (!isPass) {
         errors.push("Reviewer candidate report did not indicate PASS.");
@@ -157,3 +182,4 @@ export async function validateStageCandidate(
       return { accepted: true, errors: [], warnings: [] };
   }
 }
+

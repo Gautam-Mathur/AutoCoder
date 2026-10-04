@@ -74,8 +74,16 @@ export async function commitAcceptedArtifact(params: CommitArtifactParams) {
   return artifact;
 }
 
+export interface InputDetail {
+  contractName: string;
+  contractVersion: string;
+  content: string;
+  status: string;
+}
+
 export interface ResolvedStageInputs {
   inputs: Record<string, string>;
+  inputDetails: Record<string, InputDetail>;
   artifactIds: string[];
   dependencyFingerprint: string;
 }
@@ -87,6 +95,7 @@ export async function resolveAcceptedStageInputs(params: {
 }): Promise<ResolvedStageInputs> {
   const contract = getStageContract(params.stageName);
   const inputs: Record<string, string> = {};
+  const inputDetails: Record<string, InputDetail> = {};
   const artifactIds: string[] = [];
   const depHashes: string[] = [];
 
@@ -113,6 +122,12 @@ export async function resolveAcceptedStageInputs(params: {
     }
 
     inputs[inputDef.name] = artifact.content;
+    inputDetails[inputDef.name] = {
+      contractName: artifact.contractName || inputDef.contract,
+      contractVersion: artifact.contractVersion || '1.0.0',
+      content: artifact.content,
+      status: artifact.state,
+    };
     artifactIds.push(artifact.id);
     depHashes.push(`${artifact.filePath}:${artifact.version}:${artifact.contentHash || computedHash}`);
   }
@@ -120,10 +135,12 @@ export async function resolveAcceptedStageInputs(params: {
   const dependencyFingerprint = computeDependencyFingerprint(depHashes);
   return {
     inputs,
+    inputDetails,
     artifactIds,
     dependencyFingerprint,
   };
 }
+
 
 export async function getLatestAcceptedArtifact(conversationId: string, filePath: string) {
   return prisma.artifactVersion.findFirst({

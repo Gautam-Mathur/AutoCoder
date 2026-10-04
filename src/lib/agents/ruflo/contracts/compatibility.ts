@@ -63,6 +63,42 @@ export function assertArtifactCompatibility(params: {
   }
 }
 
+export function assertInputCompatibility(params: {
+  stageName: string;
+  requiredInputs: StageInputArtifact[];
+  resolvedInputs: Record<string, { contractName: string; contractVersion: string; status?: string; dependencyFingerprint?: string }>;
+}): void {
+  for (const req of params.requiredInputs) {
+    const resolved = params.resolvedInputs[req.name];
+    if (!resolved) {
+      throw new Error(`CONTRACT INPUT ERROR: Required input artifact ${req.name} (${req.contract}) is missing for stage ${params.stageName}`);
+    }
+    if (resolved.contractName !== req.contract) {
+      throw new Error(`CONTRACT INPUT ERROR: Contract mismatch for ${req.name} in stage ${params.stageName}. Expected ${req.contract}, got ${resolved.contractName}`);
+    }
+    if (compareVersions(resolved.contractVersion, req.minVersion) < 0) {
+      throw new Error(`CONTRACT INPUT ERROR: Version mismatch for ${req.name} in stage ${params.stageName}. Required >= ${req.minVersion}, got ${resolved.contractVersion}`);
+    }
+  }
+}
+
+export function assertOutputCompatibility(params: {
+  stageName: string;
+  expectedOutput: { name: string; contract: string; version: string };
+  producedOutput: { name: string; contract: string; version: string };
+}): void {
+  if (params.producedOutput.contract !== params.expectedOutput.contract) {
+    throw new Error(
+      `CONTRACT OUTPUT ERROR: Stage ${params.stageName} produced contract ${params.producedOutput.contract}, expected ${params.expectedOutput.contract}`
+    );
+  }
+  if (compareVersions(params.producedOutput.version, params.expectedOutput.version) < 0) {
+    throw new Error(
+      `CONTRACT OUTPUT ERROR: Stage ${params.stageName} produced output version ${params.producedOutput.version}, expected >= ${params.expectedOutput.version}`
+    );
+  }
+}
+
 export function verifyArtifactConsumable(artifact: ProducedArtifactInfo): { consumable: boolean; reason?: string } {
   if (artifact.status !== 'ACCEPTED') {
     return { consumable: false, reason: `Artifact status is ${artifact.status}, expected ACCEPTED` };
@@ -78,3 +114,4 @@ export function verifyArtifactConsumable(artifact: ProducedArtifactInfo): { cons
   }
   return { consumable: true };
 }
+

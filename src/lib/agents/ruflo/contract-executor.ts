@@ -2,13 +2,14 @@ import { prisma } from '../../db';
 import { getStageContract, StageName } from './contracts/registry';
 import { CONTRACT_VERSIONS } from './contracts/versions';
 import { createContentHash } from './contracts/fingerprints';
-import { assertArtifactCompatibility } from './contracts/compatibility';
+import { assertArtifactCompatibility, assertInputCompatibility, assertOutputCompatibility } from './contracts/compatibility';
 import { resolveAcceptedStageInputs, commitAcceptedArtifact } from './artifact-store';
 import { validateStageCandidate } from './stage-acceptance';
 import { assertPipelineLease } from './pipeline-lease';
 import { appendPipelineEvent } from './pipeline-events';
 import { runAgent } from './orchestrator';
 import { StageLedger } from './memory';
+import { generateWorkspaceManifest } from './vfs';
 
 export interface ExecuteContractStageParams {
   conversationId: string;
@@ -53,6 +54,13 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
     stageName,
   });
 
+  // Step 8.3b — Assert input contract compatibility
+  assertInputCompatibility({
+    stageName,
+    requiredInputs: contract.inputArtifacts,
+    resolvedInputs: resolvedInputs.inputDetails,
+  });
+
   // Step 8.4 — Create StageExecution database record
   const stageExecution = await prisma.stageExecution.create({
     data: {
@@ -89,7 +97,12 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
       true
     );
 
-    const candidateContent = agentResult?.content || '';
+    let candidateContent = agentResult?.content || '';
+    if (stageName === 'Coder') {
+      const manifest = await generateWorkspaceManifest(conversationId, stageExecution.id);
+      candidateContent = JSON.stringify(manifest, null, 2);
+    }
+
     const contentHash = createContentHash(candidateContent);
 
     // Step 8.6 — Persist candidate metadata
@@ -158,7 +171,17 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
       throw new Error(`Stage validation failed for ${stageName}: ${errMessage}`);
     }
 
-    // Step 8.8 — Assert contract compatibility
+    // Step 8.8 — Assert output contract compatibility
+    assertOutputCompatibility({
+      stageName,
+      expectedOutput: contract.outputArtifact,
+      producedOutput: {
+        name: contract.outputArtifact.name,
+        contract: contract.outputArtifact.contract,
+        version: contract.outputArtifact.version,
+      },
+    });
+
     assertArtifactCompatibility({
       produced: {
         name: contract.outputArtifact.name,
@@ -168,6 +191,7 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
       required: contract.inputArtifacts,
       stageName,
     });
+
 
     // Record PASS gate decision
     await prisma.gateDecision.create({

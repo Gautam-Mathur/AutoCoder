@@ -1,6 +1,9 @@
 import { prisma } from '../../db';
 import * as path from 'path';
 import * as fs from 'fs';
+import { createContentHash } from './contracts/fingerprints';
+import { WorkspaceManifest, WorkspaceFile } from './contracts/schemas/coder';
+
 
 // In-memory locks to serialize write/diff operations per file to prevent race conditions
 const fileLocks = new Map<string, Promise<void>>();
@@ -283,4 +286,60 @@ export function resolveUniqueWorkspacePath(
 
   throw new Error(`Workspace file not found: ${requested}`);
 }
+
+export async function generateWorkspaceManifest(
+  conversationId: string,
+  stageExecutionId: string
+): Promise<WorkspaceManifest> {
+  const records = await prisma.virtualFile.findMany({
+    where: { conversationId },
+    orderBy: { filePath: 'asc' },
+  });
+
+  const files: WorkspaceFile[] = records.map((r) => {
+    const p = r.filePath.replace(/\\/g, '/');
+    const ext = path.extname(p).toLowerCase();
+    let language = 'text';
+    if (ext === '.ts' || ext === '.tsx') language = 'typescript';
+    else if (ext === '.js' || ext === '.jsx') language = 'javascript';
+    else if (ext === '.json') language = 'json';
+    else if (ext === '.prisma') language = 'prisma';
+    else if (ext === '.css') language = 'css';
+    else if (ext === '.html') language = 'html';
+    else if (ext === '.md') language = 'markdown';
+
+    let role = 'source';
+    if (p.includes('index') || p.includes('App') || p === 'server/app.js') role = 'entry';
+    if (p.endsWith('schema.prisma')) role = 'schema';
+    if (p === 'package.json' || p === 'vite.config.ts' || p === 'vite.config.js' || p === 'tsconfig.json') role = 'config';
+
+    return {
+      path: p,
+      hash: createContentHash(r.content),
+      language,
+      role,
+    };
+  });
+
+  const dirsSet = new Set<string>();
+  files.forEach((f) => {
+    const dir = path.dirname(f.path).replace(/\\/g, '/');
+    if (dir && dir !== '.') {
+      dirsSet.add(dir);
+    }
+  });
+
+  const entryPoints = files.filter((f) => f.role === 'entry').map((f) => f.path);
+
+  return {
+    schemaVersion: '1.0.0',
+    projectRoot: '.',
+    files,
+    directories: Array.from(dirsSet).sort(),
+    entryPoints,
+    generatedAt: new Date().toISOString(),
+    sourceStageExecutionId: stageExecutionId,
+  };
+}
+
 

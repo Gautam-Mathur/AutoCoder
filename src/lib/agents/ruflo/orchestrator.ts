@@ -1612,24 +1612,64 @@ export async function runOrchestrator(
 
       if (stageName === 'Tester') {
         await verifyAndRepairWorkspace(conversationId, runId, userPrompt, emit, executionSignal);
-        await commitAcceptedArtifact({
+        const testReportContent = (await readVirtualFile(conversationId, 'test_report.md')) || '# Test Report\n## Result\n\nPASS';
+        const contractResult = await executeContractStage({
           conversationId,
           pipelineRunId: runId,
-          stage: 'Tester',
-          filePath: 'test_report.md',
-          content: (await readVirtualFile(conversationId, 'test_report.md')) || '# Test Report\n## Result\n\nPASS',
+          stageName: 'Tester',
+          attempt: 1,
+          userPromptText: userPrompt,
+          onEvent: emit,
+          ledger,
+          leaseOwnerId,
+          signal: executionSignal,
+          customUserContent: testReportContent,
         });
+
+        emit({
+          type: 'AGENT_COMPLETE',
+          agent: 'Tester',
+          message: 'Stage Tester completed successfully.',
+          data: contractResult.content,
+        });
+        await flushVfsToDisk(conversationId);
         continue;
       }
 
       if (stageName === 'Debugger') {
-        await commitAcceptedArtifact({
-          conversationId,
-          pipelineRunId: runId,
-          stage: 'Debugger',
-          filePath: 'debug_report.md',
-          content: (await readVirtualFile(conversationId, 'debug_report.md')) || '# Debug Report\n## Result\n\nPASS',
+        const debuggerExec = await prisma.stageExecution.findFirst({
+          where: { conversationId, stageName: 'Debugger' },
         });
+
+        if (debuggerExec) {
+          const debugReportContent = (await readVirtualFile(conversationId, 'debug_report.md')) || '# Debug Report\n## Result\n\nPASS';
+          const contractResult = await executeContractStage({
+            conversationId,
+            pipelineRunId: runId,
+            stageName: 'Debugger',
+            attempt: 1,
+            userPromptText: userPrompt,
+            onEvent: emit,
+            ledger,
+            leaseOwnerId,
+            signal: executionSignal,
+            customUserContent: debugReportContent,
+          });
+
+          emit({
+            type: 'AGENT_COMPLETE',
+            agent: 'Debugger',
+            message: 'Stage Debugger completed successfully.',
+            data: contractResult.content,
+          });
+        } else {
+          emit({
+            type: 'AGENT_COMPLETE',
+            agent: 'Debugger',
+            message: 'Stage Debugger skipped (Tester passed on initial cycle without repair).',
+          });
+        }
+        await flushVfsToDisk(conversationId);
         continue;
       }
 
@@ -1655,6 +1695,31 @@ export async function runOrchestrator(
 
       // Auto-flush VFS to physical disk after each stage completes
       await flushVfsToDisk(conversationId);
+
+      // Specification Contradiction Gate after System stage
+      if (stageName === 'System') {
+        const planMd = (await readVirtualFile(conversationId, 'plan.md')) || '';
+        const reqsMd = (await readVirtualFile(conversationId, 'requirements.md')) || '';
+        const archMd = (await readVirtualFile(conversationId, 'architecture.md')) || '';
+        const backendMd = (await readVirtualFile(conversationId, 'backend_spec.md')) || '';
+
+        const extractedContract = extractProjectContract({
+          'plan.md': planMd,
+          'requirements.md': reqsMd,
+          'architecture.md': archMd,
+          'backend_spec.md': backendMd,
+        });
+
+        const contractValidation = validateProjectContract(extractedContract);
+        if (!contractValidation.valid) {
+          const specErr = `Specification Contradiction Gate Failed: ${contractValidation.errors.join('; ')}`;
+          emit({
+            type: 'PIPELINE_ERROR',
+            message: specErr,
+          });
+          throw new Error(specErr);
+        }
+      }
 
       // Architect Quality Gate Pause
       if (stageName === 'Architect' && !conversation.qualityGateOverride) {
@@ -1683,7 +1748,7 @@ export async function runOrchestrator(
     await assertPipelineLease(conversationId, leaseOwnerId);
 
     // Evaluate final gate before marking Completed
-    const finalGate = await evaluateFinalPipelineGate(conversationId, runId);
+    const finalGate = await evaluateFinalPipelineGate(conversationId, runId, leaseOwnerId);
     if (!finalGate.valid) {
       const gateErr = `Final Pipeline Gate Validation Failed: ${finalGate.errors.join('; ')}`;
       emit({
@@ -1693,15 +1758,22 @@ export async function runOrchestrator(
       throw new Error(gateErr);
     }
 
-    await prisma.conversation.update({
-      where: { id: conversationId },
-      data: { status: 'Completed' },
-    });
+    await prisma.$transaction([
+      prisma.conversation.update({
+        where: { id: conversationId },
+        data: { status: 'Completed' },
+      }),
+      prisma.pipelineRun.update({
+        where: { conversationId },
+        data: { state: 'COMPLETED' },
+      }),
+    ]);
 
     emit({
       type: 'PIPELINE_COMPLETE',
       message: '🎉 AutoCoder Hybrid v2 Pipeline executed successfully!',
     });
+
   } catch (err: any) {
     console.error(`Pipeline error in conversation ${conversationId}:`, err);
     await flushVfsToDisk(conversationId).catch(() => {});

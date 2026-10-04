@@ -1,5 +1,7 @@
 import fs from 'fs';
 import path from 'path';
+import { STAGE_CONTRACTS } from '../src/lib/agents/ruflo/contracts/registry';
+import { CONTRACT_VERSIONS } from '../src/lib/agents/ruflo/contracts/versions';
 
 const FORBIDDEN_PATTERNS = [
   {
@@ -55,6 +57,45 @@ async function main() {
   scanDirectory(targetDir, results);
 
   console.log(`Scan completed across ${targetDir}.`);
+
+  // Verify Stage Contract Registry Invariants
+  console.log('\n🔍 Verifying Stage Contract Graph & Filename Invariants...');
+  const canonicalFilenames: Record<string, string> = {
+    Queen: 'plan.md',
+    Planner: 'requirements.md',
+    Architect: 'architecture.md',
+    System: 'backend_spec.md',
+    Designer: 'ui_spec.md',
+    Blueprinter: 'blueprint.md',
+    Coder: 'workspace.manifest.json',
+    Tester: 'test_report.md',
+    Debugger: 'debug_report.md',
+    Security: 'security_report.md',
+    Reviewer: 'review_report.md',
+  };
+
+  const producers = new Map<string, string>();
+  for (const [stage, contract] of Object.entries(STAGE_CONTRACTS)) {
+    const expectedFile = canonicalFilenames[stage];
+    if (contract.outputArtifact.name !== expectedFile) {
+      console.error(`❌ Invariant Error: Stage ${stage} output artifact name '${contract.outputArtifact.name}' != canonical '${expectedFile}'`);
+      process.exit(1);
+    }
+    producers.set(contract.outputArtifact.name, stage);
+  }
+
+  // Verify all input artifacts have a valid producer
+  for (const [stage, contract] of Object.entries(STAGE_CONTRACTS)) {
+    for (const input of contract.inputArtifacts) {
+      if (!producers.has(input.name)) {
+        console.error(`❌ Invariant Error: Stage ${stage} requires '${input.name}' which has no registered producer stage.`);
+        process.exit(1);
+      }
+    }
+  }
+
+  console.log('✅ Stage Contract Graph & Filename Invariants verified successfully!');
+
   if (results.length === 0) {
     console.log('✅ No invariant violations found!');
   } else {
@@ -67,4 +108,8 @@ async function main() {
   }
 }
 
-main().catch(console.error);
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+

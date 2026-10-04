@@ -22,7 +22,7 @@ describe('Contract Synchronization', () => {
     assert.strictEqual(arch.outputArtifact.contract, 'ArchitectureOutput');
 
     const coder = getStageContract('Coder');
-    assert.ok(coder.inputArtifacts.some((art) => art.name === 'blueprint.json' && art.contract === 'BlueprintOutput'));
+    assert.ok(coder.inputArtifacts.some((art) => art.name === 'blueprint.md' && art.contract === 'BlueprintOutput'));
     assert.ok(coder.inputArtifacts.some((art) => art.name === 'architecture.md' && art.contract === 'ArchitectureOutput'));
   });
 });
