@@ -13,7 +13,6 @@ import {
   generateWorkspaceManifest,
   loadAuthorizedFileSet,
   writeAuthorizedProjectFile,
-  applyAuthorizedDiff,
 } from './vfs';
 import {
   computeWorkspaceFingerprint,
@@ -168,29 +167,12 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
         true
       );
       candidateContent = agentResult?.content || '';
-
-      // Apply debugger patches if valid JSON
-      try {
-        const parsed = JSON.parse(candidateContent);
-        if (parsed && Array.isArray(parsed.patches)) {
-          for (const p of parsed.patches) {
-            if (p.file && p.startLine && p.endLine && p.replacement !== undefined) {
-              await applyAuthorizedDiff({
-                conversationId,
-                pipelineRunId,
-                stageExecutionId: stageExecution.id,
-                filePath: p.file,
-                startLine: p.startLine,
-                endLine: p.endLine,
-                newContent: p.replacement,
-              });
-            }
-          }
-        }
-      } catch {
-        // Debugger output may be markdown report
-      }
     } else if (stageName === 'Security') {
+      const securityContext = [
+        customUserContent,
+        `Current Workspace Fingerprint Hash:\n${currentWorkspaceHash}`,
+      ].filter(Boolean).join('\n\n');
+
       const agentResult = await runAgent(
         conversationId,
         'Security',
@@ -198,19 +180,19 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
         onEvent,
         ledger,
         attempt,
-        customUserContent,
+        securityContext,
         signal,
         undefined,
         targetFile,
         true
       );
       candidateContent = agentResult?.content || '';
-
-      // Ensure Workspace Hash section is present and bound to current workspace state
-      if (!candidateContent.includes('### Workspace Hash')) {
-        candidateContent = `${candidateContent.trim()}\n\n### Workspace Hash\n${currentWorkspaceHash}\n`;
-      }
     } else if (stageName === 'Reviewer') {
+      const reviewerContext = [
+        customUserContent,
+        `Current Workspace Fingerprint Hash:\n${currentWorkspaceHash}`,
+      ].filter(Boolean).join('\n\n');
+
       const agentResult = await runAgent(
         conversationId,
         'Reviewer',
@@ -218,24 +200,13 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
         onEvent,
         ledger,
         attempt,
-        customUserContent,
+        reviewerContext,
         signal,
         undefined,
         targetFile,
         true
       );
       candidateContent = agentResult?.content || '';
-
-      // Inject workspaceHash into JSON output
-      try {
-        const parsed = JSON.parse(candidateContent);
-        if (parsed && typeof parsed === 'object') {
-          parsed.workspaceHash = currentWorkspaceHash;
-          candidateContent = JSON.stringify(parsed, null, 2);
-        }
-      } catch {
-        // Leave unchanged if not raw JSON
-      }
     } else {
       const agentResult = await runAgent(
         conversationId,

@@ -1,10 +1,5 @@
 import { countHeading, extractRequiredSection } from '../markdown-sections';
 
-export interface DebuggerFix {
-  filePath: string;
-  description: string;
-}
-
 export interface DebuggerOutput {
   issuesAddressed: string;
   patchesApplied: string;
@@ -13,7 +8,7 @@ export interface DebuggerOutput {
 
 export const DEBUGGER_SCHEMA = {
   contractName: 'DebuggerOutput',
-  version: '1.0.0',
+  version: '1.2.0',
   requiredFields: ['issuesAddressed', 'patchesApplied', 'verification'],
   mandatoryInvariants: [
     'Debugger fixes must directly target failing test diagnostics',
@@ -33,7 +28,6 @@ export function parseDebuggerOutput(content: string): { output: DebuggerOutput |
   for (const s of requiredSections) {
     const count = countHeading(content, `### ${s}`);
     if (count === 0) {
-
       errors.push(`Debugger Contract Error: Missing required section "### ${s}".`);
     } else if (count > 1) {
       errors.push(`Debugger Contract Error: Duplicate section "### ${s}".`);
@@ -44,11 +38,31 @@ export function parseDebuggerOutput(content: string): { output: DebuggerOutput |
     return { output: null, errors };
   }
 
+  const issuesAddressed = extractRequiredSection(content, 'Issues Addressed')?.trim() || '';
+  const patchesApplied = extractRequiredSection(content, 'Patches Applied')?.trim() || '';
+  const verification = extractRequiredSection(content, 'Verification')?.trim() || '';
+
+  if (!issuesAddressed) {
+    errors.push('Debugger Contract Error: Section "### Issues Addressed" cannot be empty.');
+  }
+
+  if (!patchesApplied) {
+    errors.push('Debugger Contract Error: Section "### Patches Applied" cannot be empty.');
+  }
+
+  if (!verification) {
+    errors.push('Debugger Contract Error: Section "### Verification" cannot be empty.');
+  }
+
+  if (errors.length > 0) {
+    return { output: null, errors };
+  }
+
   return {
     output: {
-      issuesAddressed: extractRequiredSection(content, 'Issues Addressed') || '',
-      patchesApplied: extractRequiredSection(content, 'Patches Applied') || '',
-      verification: extractRequiredSection(content, 'Verification') || '',
+      issuesAddressed,
+      patchesApplied,
+      verification,
     },
     errors: [],
   };

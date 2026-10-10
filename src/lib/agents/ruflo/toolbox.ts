@@ -4,8 +4,43 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
+import { prisma } from '../../db';
+import {
+  isControlPlaneArtifact,
+  normalizeProjectPath,
+  parseBlueprintContract,
+} from './workspace-policy';
 
 const execFileAsync = promisify(execFile);
+
+export async function assertAuthorizedToolMutation(conversationId: string, rawFilePath: string): Promise<void> {
+  const normPath = normalizeProjectPath(rawFilePath);
+  if (isControlPlaneArtifact(normPath)) {
+    throw new Error(`Authorization Exception: Cannot modify control plane artifact "${normPath}".`);
+  }
+
+  // Check if an accepted blueprint exists for this conversation
+  const blueprintArtifact = await prisma.artifactVersion.findFirst({
+    where: {
+      conversationId,
+      filePath: 'blueprint.md',
+      state: 'ACCEPTED',
+    },
+    orderBy: { version: 'desc' },
+  });
+
+  if (blueprintArtifact) {
+    const parsedBlueprint = parseBlueprintContract(blueprintArtifact.content);
+    if (parsedBlueprint.files.length > 0) {
+      const authorizedFiles = new Set(parsedBlueprint.files.map((f) => f.path.toLowerCase()));
+      const lowerPath = normPath.toLowerCase();
+      const standardAllowed = new Set(['package.json', 'tsconfig.json', '.gitignore', 'readme.md']);
+      if (!authorizedFiles.has(lowerPath) && !standardAllowed.has(lowerPath)) {
+        throw new Error(`Authorization Exception: File "${normPath}" is not in approved blueprint authorized file set.`);
+      }
+    }
+  }
+}
 
 async function runProjectCommand(command: string, conversationId: string, timeoutMs: number = 180000) {
   const projectDir = path.join(process.cwd(), 'projects', conversationId);
@@ -88,6 +123,7 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
       },
     },
     execute: async (args, conversationId) => {
+      await assertAuthorizedToolMutation(conversationId, args.file_path);
       await writeVirtualFile(conversationId, args.file_path, args.content);
       return { success: true, message: `File "${args.file_path}" written successfully (${args.content.length} bytes).` };
     },
@@ -123,6 +159,7 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
       },
     },
     execute: async (args, conversationId) => {
+      await assertAuthorizedToolMutation(conversationId, args.file_path);
       await applyDiff(conversationId, args.file_path, args.start_line, args.end_line, args.new_content);
       return { success: true, message: `Lines ${args.start_line}-${args.end_line} of "${args.file_path}" replaced successfully.` };
     },

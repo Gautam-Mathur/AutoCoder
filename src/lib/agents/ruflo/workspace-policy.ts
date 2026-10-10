@@ -400,20 +400,20 @@ export function validateWorkspaceManifest(params: {
 export function extractEmbeddedWorkspaceHash(stageName: string, content: string): string | null {
   if (!content) return null;
 
+  const mdMatch = content.match(/###\s*Workspace Hash[\s\S]*?([a-f0-9]{64})/i);
+  if (mdMatch) return mdMatch[1].toLowerCase();
+
   if (stageName === 'Reviewer') {
     try {
       const parsed = JSON.parse(content);
       if (parsed && typeof parsed.workspaceHash === 'string') {
-        return parsed.workspaceHash;
+        return parsed.workspaceHash.toLowerCase();
       }
     } catch {
       const jsonMatch = content.match(/"workspaceHash"\s*:\s*"([a-f0-9]{64})"/i);
-      if (jsonMatch) return jsonMatch[1];
+      if (jsonMatch) return jsonMatch[1].toLowerCase();
     }
   }
-
-  const match = content.match(/###\s*Workspace Hash\s*[:\n]\s*([a-f0-9]{64})/i);
-  if (match) return match[1];
 
   return null;
 }
