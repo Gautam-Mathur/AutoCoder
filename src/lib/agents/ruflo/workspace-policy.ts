@@ -117,8 +117,12 @@ export function parseBlueprintContract(blueprintContent: string): ParsedBlueprin
       const depMatch = line.match(/^-\s*(?:\*\*)?Dependencies(?:\*\*)?:\s*(.*)$/i);
       if (depMatch) {
         const rawDeps = depMatch[1].trim();
-        if (rawDeps && rawDeps.toLowerCase() !== 'none') {
-          const parts = rawDeps.split(/[,;]/).map((d) => d.trim().replace(/[*`'"]/g, '')).filter(Boolean);
+        const cleanedDeps = rawDeps.replace(/\s*\(.*?\)\s*/g, '').trim();
+        if (cleanedDeps && !/^none\b/i.test(cleanedDeps)) {
+          const parts = cleanedDeps
+            .split(/[,;]/)
+            .map((d) => d.replace(/\s*\(.*?\)\s*/g, '').trim().replace(/[*`'"]/g, ''))
+            .filter(Boolean);
           dependencies.push(...parts);
         }
       }
@@ -181,8 +185,12 @@ export function validateBlueprintAgainstArchitecture(
 
     // Validate dependencies
     for (const dep of bf.dependencies) {
-      const normDep = normalizeProjectPath(dep).toLowerCase();
-      if ((dep.includes('/') || /\.[a-z0-9]+$/i.test(dep)) && !archFilesSet.has(normDep)) {
+      const cleanedDep = dep.replace(/\s*\(.*?\)\s*/g, '').trim();
+      const normDep = normalizeProjectPath(cleanedDep).toLowerCase();
+      if (
+        (cleanedDep.includes('/') || /\.(?:tsx?|jsx?|css|scss|html|json|prisma|sql|mjs|cjs)$/i.test(cleanedDep)) &&
+        !archFilesSet.has(normDep)
+      ) {
         errors.push(`Blueprint Contract Error: File "${bf.path}" references unknown file dependency "${dep}".`);
       }
     }
@@ -245,12 +253,20 @@ export function computeAuthorizedFileSet(
     .filter((f) => requiresModuleOwnership(f.path))
     .map((f) => normalizeProjectPath(f.path));
   const blueprintFiles = blueprint.files.map((f) => normalizeProjectPath(f.path));
-  const authorizedFiles = [...blueprintFiles].sort();
+  const unownedArchFiles = architecture.files
+    .filter((f) => !requiresModuleOwnership(f.path))
+    .map((f) => normalizeProjectPath(f.path));
+  const authorizedFiles = Array.from(new Set([...blueprintFiles, ...unownedArchFiles])).sort();
 
   const ownerByFile: Record<string, string> = {};
   for (const bf of blueprint.files) {
     const norm = normalizeProjectPath(bf.path);
     ownerByFile[norm] = bf.ownerModule;
+  }
+  for (const uf of unownedArchFiles) {
+    if (!ownerByFile[uf]) {
+      ownerByFile[uf] = 'Config/Schema';
+    }
   }
 
   const architectureFileSetHash = computeFileSetHash(architectureAllFiles);

@@ -38,7 +38,12 @@ export function detectExplicitNoAuth(text: string): boolean {
 }
 
 export function detectExplicitAuthRequired(text: string): boolean {
-  return [
+  // Strip negated auth clauses before scanning for positive auth keywords
+  const stripped = text.replace(
+    /\b(?:no|not|without|never|don't|do\s+not|doesn't|does\s+not)\s+(?:need\s+to\s+|require\s+)?(?:log\s*in|sign\s*in|auth(?:entication)?|jwt|oauth|session)[^\n.;]*/gi,
+    ''
+  );
+  const patterns = [
     /authentication\s*:\s*(yes|required|enabled)\b/i,
     /auth\s*required\s*:\s*yes\b/i,
     /authentication\s+required\b/i,
@@ -54,8 +59,12 @@ export function detectExplicitAuthRequired(text: string): boolean {
     /\buser\s+authentication\b|\bauthenticated\s+users?\b/i,
     /\baccess[_\s]+token\b|\brefresh[_\s]+token\b/i,
     /\boauth2?\b/i,
+    /\brole-based\s+access\b/i,
+    /\brbac\b/i,
+    /\bauth(?:entication)?\s*:\s*(?:required|jwt|session|yes|true)\b/i,
     /\blog\s*in\b|\blogged\s+in\b|\bsign\s*in\b|\bsigned\s+in\b/i,
-  ].some((pattern) => pattern.test(text));
+  ];
+  return patterns.some((pattern) => pattern.test(stripped));
 }
 
 export function inferFrameworkDependencies(
@@ -172,8 +181,8 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
     const nextMatch = backend.slice(startIndex + match[0].length).search(/(GET|POST|PUT|DELETE|PATCH)\s+[\/\w\-:\.\{\}]+|###/i);
     const blockText = nextMatch !== -1 ? backend.slice(startIndex, startIndex + match[0].length + nextMatch) : backend.slice(startIndex);
 
-    const hasExplicitAuthYes = /auth\s*required\s*:\s*yes|auth:\s*true|protected|private|requires\s+auth/i.test(blockText);
-    const hasExplicitAuthNo = /auth\s*required\s*:\s*no|auth:\s*false|public/i.test(blockText);
+    const hasExplicitAuthYes = /auth\s*required\s*:\s*(?:yes|true)|auth\s*:\s*true|\brequires\s+auth(?:entication)?\b/i.test(blockText);
+    const hasExplicitAuthNo = /auth\s*required\s*:\s*(?:no|false)|auth\s*:\s*(?:false|none)|\bno\s+auth\s+required\b/i.test(blockText);
 
     const isAuth = (hasExplicitAuthYes || (authRequired && !hasExplicitAuthNo));
 
@@ -779,7 +788,8 @@ export function validateArchitectureArtifact(
   errors.push(...detectModuleDependencyCycles(moduleGraph));
 
   // Check E: Next.js Unnamed Dynamic Segment Rule & Backend Entry Validation
-  const framework = contract?.framework || (/next\.js|nextjs|app router/i.test(architectureContent) ? 'NEXT_APP_ROUTER' : 'STATIC_HTML');
+  const techStackSection = parsed.sections?.techStack || architectureContent;
+  const framework = contract?.framework || (/next\.js|nextjs|app router/i.test(techStackSection) ? 'NEXT_APP_ROUTER' : 'STATIC_HTML');
 
   errors.push(...validateNextPublicAssetPath(treeFiles, framework));
 
@@ -797,9 +807,10 @@ export function validateArchitectureArtifact(
   }
 
   const backendEntryMatch = architectureContent.match(/Backend Entry Point[s]?(?:\*\*)?:\s*([^\n]+)/i)?.[1]?.trim().replace(/[*`'"]/g, '');
-  if (backendEntryMatch && backendEntryMatch.toLowerCase() !== 'none') {
+  if (backendEntryMatch && !/^none\b/i.test(backendEntryMatch)) {
     const rawEntries = backendEntryMatch.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
     for (const entry of rawEntries) {
+      if (/^none\b/i.test(entry)) continue;
       if (/\/\[\s*\.\.\.\s*\]\//.test(entry) || /\/\[\s*\.\.\.\s*\]$/.test(entry) || entry.includes('[...]')) {
         errors.push(
           `Next.js Architecture Error: Invalid unnamed dynamic segment in Backend Entry Point "${entry}". Dynamic segments must be named (e.g., "[id]", "[...slug]", "[[...slug]]").`
@@ -807,7 +818,8 @@ export function validateArchitectureArtifact(
       } else if (framework === 'NEXT_APP_ROUTER') {
         const cleanEntry = entry.replace(/\\/g, '/').replace(/^\.\//, '');
         const isNextAppRouteHandler = /^(?:src\/)?app\/.+\/route\.(ts|tsx|js|jsx)$/i.test(cleanEntry);
-        if (!isNextAppRouteHandler) {
+        const isServerEntryFile = /^(?:src\/)?(?:server|api)\/(?:index|server|app)\.(ts|js)$/i.test(cleanEntry);
+        if (!isNextAppRouteHandler && !isServerEntryFile) {
           errors.push(
             `Next.js Architecture Error: Backend Entry Point "${entry}" must be a valid Next.js App Router route handler (e.g., "src/app/api/[...slug]/route.ts").`
           );

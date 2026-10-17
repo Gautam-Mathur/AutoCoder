@@ -107,9 +107,9 @@ project-root/
     assert.ok(res.errors.some((e) => e.includes('TaskCard.tsx') && e.includes('claimed by modules')));
     assert.ok(res.errors.some((e) => e.includes('Column.tsx') && e.includes('claimed by modules')));
 
-    // Unclaimed tree files errors
+    // Unclaimed tree files errors (src/app/api/route.ts requires ownership, public/favicon.ico is exempt static-asset)
     assert.ok(res.errors.some((e) => e.includes('src/app/api/route.ts') && e.includes('is not claimed by any module')));
-    assert.ok(res.errors.some((e) => e.includes('public/favicon.ico') && e.includes('is not claimed by any module')));
+    assert.strictEqual(res.errors.some((e) => e.includes('public/favicon.ico')), false);
   });
 
   it('accepts corrected architecture with exact single ownership (Regression Scenario 39)', () => {

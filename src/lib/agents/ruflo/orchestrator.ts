@@ -201,10 +201,12 @@ const EXPECTED_FIRST_HEADERS: Record<string, string> = {
   'Queen':       'Project Name',
   'Planner':     'Features',
   'Architect':   'Tech Stack',
+  'System':      'Database Design',
   'Designer':    'Design System',
   'Blueprinter': 'File:',
   'Security':    'Overall Status',
   'Reviewer':    'Overall Assessment',
+  'Debugger':    'Issues Addressed',
 };
 
 function extractMdSection(content: string, sectionName: string): string {
@@ -267,25 +269,30 @@ export async function buildArtifactContext(
 export function sanitizeStageOutput(rawOutput: string, expectedFirstHeader?: string): string {
   let cleaned = rawOutput.trim();
 
-  // 1. Strip outer code fences ONLY at start and end of output
-  if (cleaned.startsWith('```')) {
-    cleaned = cleaned.replace(/^```[a-zA-Z0-9_-]*\n?/, '');
+  // 1. Strip outer code fences at start and end of output
+  while (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```[a-zA-Z0-9_-]*\r?\n?/, '').trim();
   }
-  if (cleaned.endsWith('```')) {
-    cleaned = cleaned.replace(/\n?```$/, '');
+  while (cleaned.endsWith('```')) {
+    cleaned = cleaned.replace(/\r?\n?```$/, '').trim();
   }
 
   if (!expectedFirstHeader) return cleaned.trim();
 
   // 2. Find expected first header anchor and strip preamble
   const headerRegex = new RegExp(
-    `(#{2,3})\\s*${expectedFirstHeader.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
+    `(#{1,4})\\s*${expectedFirstHeader.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
     'i'
   );
   const headerMatch = cleaned.match(headerRegex);
 
   if (headerMatch && headerMatch.index !== undefined && headerMatch.index > 0) {
     cleaned = cleaned.substring(headerMatch.index);
+  }
+
+  // Strip trailing code fence if any remained after substring
+  while (cleaned.endsWith('```')) {
+    cleaned = cleaned.replace(/\r?\n?```$/, '').trim();
   }
 
   return cleaned.trim();

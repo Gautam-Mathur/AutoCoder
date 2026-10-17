@@ -179,7 +179,7 @@ function validateSystem(content: string, ctx?: StageAcceptanceContext): Acceptan
     const parsedArch = parseArchitecture(ctx.upstreamContext['architecture.md']);
     if (parsedArch.projectFiles.length > 0) {
       const archFilesLower = new Set(parsedArch.projectFiles.map((f) => f.toLowerCase()));
-      const endpointPathTokens = apiEndpoints.match(/[\/\w\-]+\.(?:tsx|ts|jsx|js|json)\b/gi) || [];
+      const endpointPathTokens = apiEndpoints.match(/\b(?:src|app|pages|server|api)\/[\/\w\-\[\].]+\.(?:tsx|ts|jsx|js)\b/gi) || [];
       for (const token of endpointPathTokens) {
         const norm = normalizeProjectPath(token).toLowerCase();
         if (!archFilesLower.has(norm)) {
@@ -228,11 +228,14 @@ function validateDesigner(content: string, ctx?: StageAcceptanceContext): Accept
   // Check Feature-NNN traceability from Planner
   if (ctx?.upstreamContext?.['requirements.md']) {
     const reqContent = ctx.upstreamContext['requirements.md'];
-    const declaredFeatures = Array.from(new Set(reqContent.match(/\bFeature-\d{3}\b/g) || []));
+    const declaredFeatures = Array.from(new Set(reqContent.match(/\b(?:Feature|FR)-\d{1,4}\b/g) || []));
 
     const designerText = `${pages}\n${components}`;
     for (const fid of declaredFeatures) {
-      if (!designerText.includes(fid)) {
+      const numMatch = fid.match(/\d+/);
+      const num = numMatch ? numMatch[0] : '';
+      const altFid = fid.startsWith('Feature-') ? `FR-${num}` : `Feature-${num}`;
+      if (!designerText.includes(fid) && !designerText.includes(altFid)) {
         errors.push(`Designer Contract Error: Feature ID "${fid}" declared in requirements.md is missing from Designer pages/components.`);
       }
     }
@@ -321,9 +324,10 @@ function validateDebugger(content: string, ctx?: StageAcceptanceContext): Accept
   // Check if patches mention any control plane artifacts
   if (output.patchesApplied) {
     for (const line of output.patchesApplied.split('\n')) {
-      const fileMatch = line.match(/`([^`]+)`/);
-      if (fileMatch) {
-        const norm = normalizeProjectPath(fileMatch[1]);
+      const targetMatch = line.match(/(?:^[-*]\s*`([^`]+)`|(?:File|Target|Patched|Modified)\s*:\s*`?([^\s`]+)`?)/i);
+      const filePath = targetMatch ? (targetMatch[1] || targetMatch[2]) : null;
+      if (filePath) {
+        const norm = normalizeProjectPath(filePath);
         if (isControlPlaneArtifact(norm)) {
           extraErrors.push(`Debugger Contract Error: Debugger patch targets control plane artifact "${norm}".`);
         }

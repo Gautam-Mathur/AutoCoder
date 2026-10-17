@@ -320,9 +320,25 @@ export async function generateWorkspaceManifest(
     else if (ext === '.md') language = 'markdown';
 
     let role = 'source';
-    if (p.includes('index') || p.includes('App') || p === 'server/app.js') role = 'entry';
-    if (p.endsWith('schema.prisma')) role = 'schema';
-    if (p === 'package.json' || p === 'vite.config.ts' || p === 'vite.config.js' || p === 'tsconfig.json') role = 'config';
+    if (
+      /(?:^|\/)(index|app|main)\.(tsx?|jsx?|mjs|cjs)$/i.test(p) ||
+      /(?:^|\/)src\/main\.(tsx?|jsx?)$/i.test(p) ||
+      /(?:^|\/)app\/(?:page|layout)\.(tsx?|jsx?)$/i.test(p) ||
+      /(?:^|\/)app\/api\/.+\/route\.(tsx?|jsx?)$/i.test(p) ||
+      /(?:^|\/)server\/(?:app|server|index)\.(tsx?|jsx?)$/i.test(p)
+    ) {
+      role = 'entry';
+    }
+    if (p.endsWith('schema.prisma') || /\.sql$/i.test(p)) role = 'schema';
+    if (
+      p === 'package.json' ||
+      /vite\.config\.(ts|js|mjs)/i.test(p) ||
+      /next\.config\.(ts|js|mjs)/i.test(p) ||
+      /tsconfig.*\.json/i.test(p) ||
+      /tailwind\.config\.(ts|js|mjs|cjs)/i.test(p)
+    ) {
+      role = 'config';
+    }
 
     return {
       path: p,
@@ -334,9 +350,13 @@ export async function generateWorkspaceManifest(
 
   const dirsSet = new Set<string>();
   files.forEach((f) => {
-    const dir = path.dirname(f.path).replace(/\\/g, '/');
-    if (dir && dir !== '.') {
-      dirsSet.add(dir);
+    const parts = f.path.split('/');
+    let cur = '';
+    for (let i = 0; i < parts.length - 1; i++) {
+      cur = cur ? `${cur}/${parts[i]}` : parts[i];
+      if (cur && cur !== '.') {
+        dirsSet.add(cur);
+      }
     }
   });
 

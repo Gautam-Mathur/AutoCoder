@@ -55,7 +55,7 @@ const REQUIRED_SECTIONS = [
   'Conventions',
 ];
 
-const MODULE_HEADER_RE = /^\*\*\s*([^*\r\n]+?)\s*\*\*\s*$/;
+const MODULE_HEADER_RE = /^(?:#{2,4}\s+|[-*]\s+|\d+\.\s+)?\*\*\s*([^*\r\n:]+?)\s*:?\*\*\s*:?\s*$/;
 const RESPONSIBILITY_RE = /^-\s*Responsibility:\s*(.*)$/i;
 const OWNED_FILES_RE = /^-\s*Owned Files:\s*(.*)$/i;
 const DEPENDS_ON_RE = /^-\s*Depends On:\s*(.*)$/i;
@@ -190,7 +190,9 @@ export function parseArchitecture(architectureContent: string): ParsedArchitectu
     const trimmed = rawLine.trim();
     if (!trimmed) continue;
     const entry = trimmed
-      .replace(/^[-*]\s+/, '')
+      .replace(/^[-*]\s*/, '')
+      .replace(/\s+#.*$/, '')
+      .replace(/\s+\(.*\)$/, '')
       .replace(/[*`'"]/g, '')
       .replace(/\\/g, '/')
       .replace(/^\.\//, '')
@@ -207,19 +209,19 @@ export function parseArchitecture(architectureContent: string): ParsedArchitectu
   } else {
     const seenProjectFiles = new Set<string>();
     for (const f of projectFiles) {
-      if (seenProjectFiles.has(f)) {
+      if (seenProjectFiles.has(f.toLowerCase())) {
         parserErrors.push(`Architecture Contract Error: Project Files inventory lists duplicate file "${f}".`);
       }
-      seenProjectFiles.add(f);
+      seenProjectFiles.add(f.toLowerCase());
     }
-    const treeFileSet = new Set(treeFiles);
+    const treeFileSet = new Set(treeFiles.map((f) => f.toLowerCase()));
     for (const f of treeFiles) {
-      if (!seenProjectFiles.has(f)) {
+      if (!seenProjectFiles.has(f.toLowerCase())) {
         parserErrors.push(`Architecture Contract Error: Project Files inventory is missing tree file "${f}".`);
       }
     }
-    for (const f of seenProjectFiles) {
-      if (!treeFileSet.has(f)) {
+    for (const f of projectFiles) {
+      if (!treeFileSet.has(f.toLowerCase())) {
         parserErrors.push(`Architecture Contract Error: Project Files inventory lists file "${f}" which is absent from Project Folder Structure.`);
       }
     }
@@ -304,11 +306,13 @@ export function parseArchitecture(architectureContent: string): ParsedArchitectu
     const depMatch = line.match(DEPENDS_ON_RE);
     if (depMatch) {
       const rawDeps = depMatch[1].trim();
-      if (rawDeps && rawDeps.toLowerCase() !== 'none') {
-        current.dependsOn = rawDeps
+      const cleanedVal = rawDeps.replace(/\s*\(.*?\)\s*/g, '').trim();
+      if (cleanedVal && !/^none\b/i.test(cleanedVal)) {
+        const deps = cleanedVal
           .split(/[,;]/)
-          .map((d) => d.trim().replace(/[*`'"]/g, ''))
+          .map((d) => d.replace(/\s*\(.*?\)\s*/g, '').trim().replace(/[*`'"]/g, ''))
           .filter(Boolean);
+        current.dependsOn.push(...deps);
       }
       continue;
     }
@@ -316,11 +320,13 @@ export function parseArchitecture(architectureContent: string): ParsedArchitectu
     const featMatch = line.match(SUPPORTS_FEATURES_RE);
     if (featMatch) {
       const rawFeats = featMatch[1].trim();
-      if (rawFeats && rawFeats.toLowerCase() !== 'none') {
-        current.supportsFeatures = rawFeats
+      const cleanedVal = rawFeats.replace(/\s*\(.*?\)\s*/g, '').trim();
+      if (cleanedVal && !/^none\b/i.test(cleanedVal)) {
+        const feats = cleanedVal
           .split(/[,;]/)
-          .map((f) => f.trim().replace(/[*`'"]/g, ''))
+          .map((f) => f.replace(/\s*\(.*?\)\s*/g, '').trim().replace(/[*`'"]/g, ''))
           .filter(Boolean);
+        current.supportsFeatures.push(...feats);
       }
       continue;
     }

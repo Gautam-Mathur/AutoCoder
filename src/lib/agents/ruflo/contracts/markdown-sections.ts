@@ -33,7 +33,20 @@ function splitLines(content: string): string[] {
 
 export function countHeading(content: string, heading: string): number {
   const regex = buildHeadingRegex(heading);
-  return splitLines(content).filter((line) => regex.test(line.trim())).length;
+  const lines = splitLines(content);
+  let inFence = false;
+  let count = 0;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
+      inFence = !inFence;
+      continue;
+    }
+    if (!inFence && regex.test(trimmed)) {
+      count++;
+    }
+  }
+  return count;
 }
 
 export function hasHeading(content: string, heading: string): boolean {
@@ -46,12 +59,30 @@ export function hasHeading(content: string, heading: string): boolean {
 export function extractRequiredSection(content: string, heading: string): string {
   const regex = buildHeadingRegex(heading);
   const lines = splitLines(content);
-  const startIdx = lines.findIndex((line) => regex.test(line.trim()));
+  let startIdx = -1;
+  let inFence = false;
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
+      inFence = !inFence;
+      continue;
+    }
+    if (!inFence && regex.test(trimmed)) {
+      startIdx = i;
+      break;
+    }
+  }
   if (startIdx === -1) return '';
 
   let endIdx = lines.length;
+  inFence = false;
   for (let i = startIdx + 1; i < lines.length; i++) {
-    if (/^#{1,3}\s+/.test(lines[i])) {
+    const trimmed = lines[i].trim();
+    if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
+      inFence = !inFence;
+      continue;
+    }
+    if (!inFence && /^#{1,3}\s+/.test(trimmed)) {
       endIdx = i;
       break;
     }

@@ -1,6 +1,6 @@
-import { StageLedger } from '../memory';
+import { StageLedger } from "../memory";
 
-export const name = 'Blueprinter';
+export const name = "Blueprinter";
 export const temperature = 0.1;
 export const maxTokens = 4096;
 
@@ -40,6 +40,17 @@ Do NOT use vague instructions like "fetch data" or "render components". The Code
 - **Specs Required**: None
 - **Exports**: None
 
+### File: src/pages/index.tsx
+- **Owner Module**: Frontend Application
+- **Dependencies**: src/components/TaskCard.tsx, src/components/Column.tsx
+- **Exports**: default function HomePage()
+- **Imports**: TaskCard, Column
+
+### File: src/components/TaskCard.tsx
+- **Owner Module**: Drag and Drop Module
+- **Dependencies**: None
+- **Exports**: export function TaskCard()
+
 ### File: style.css
 - **Purpose**: All visual styling for the calculator
 - **Dependencies**: None
@@ -75,9 +86,9 @@ FORBIDDEN — you must NEVER do any of these:
 Your output is ONLY the file sections.`;
 
 export const schema = {
-  type: 'object',
-  properties: { content: { type: 'string' } },
-  required: ['content']
+  type: "object",
+  properties: { content: { type: "string" } },
+  required: ["content"],
 };
 
 export async function getContext(): Promise<string> {

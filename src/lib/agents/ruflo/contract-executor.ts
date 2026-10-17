@@ -102,173 +102,213 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
   try {
     let candidateContent = '';
     const currentWorkspaceHash = await computeWorkspaceFingerprint(conversationId);
+    const MAX_STAGE_ATTEMPTS = 3;
+    let validationResult: any = null;
+    let contentHash = '';
+    let retryFeedback = '';
 
-    // Stage-specific candidate generation logic
-    if (stageName === 'Coder') {
-      const authorized = await loadAuthorizedFileSet(conversationId, pipelineRunId);
-      const targetFilesToBuild = targetFile
-        ? [normalizeProjectPath(targetFile)]
-        : authorized.authorizedFiles;
+    for (let genAttempt = 1; genAttempt <= MAX_STAGE_ATTEMPTS; genAttempt++) {
+      if (signal?.aborted) {
+        throw new Error(`Stage execution for ${stageName} was aborted by signal.`);
+      }
 
-      for (const tf of targetFilesToBuild) {
-        if (isControlPlaneArtifact(tf)) {
-          throw new Error(`Authorization Exception: Coder stage cannot target control plane artifact "${tf}".`);
+      const effectiveCustomUserContent = [
+        customUserContent,
+        retryFeedback,
+      ].filter(Boolean).join('\n\n');
+
+      // Stage-specific candidate generation logic
+      if (stageName === 'Coder') {
+        const authorized = await loadAuthorizedFileSet(conversationId, pipelineRunId);
+        const targetFilesToBuild = targetFile
+          ? [normalizeProjectPath(targetFile)]
+          : authorized.authorizedFiles;
+
+        for (const tf of targetFilesToBuild) {
+          if (isControlPlaneArtifact(tf)) {
+            throw new Error(`Authorization Exception: Coder stage cannot target control plane artifact "${tf}".`);
+          }
+          if (!authorized.authorizedFiles.includes(tf)) {
+            throw new Error(`Authorization Exception: Target file "${tf}" is not in authorized file set.`);
+          }
+
+          const agentResult = await runAgent(
+            conversationId,
+            'Coder',
+            userPromptText,
+            onEvent,
+            ledger,
+            attempt,
+            customUserContent,
+            signal,
+            undefined,
+            tf,
+            false // persistOutput = false (we persist via writeAuthorizedProjectFile below)
+          );
+
+          const codeContent = agentResult?.content || '';
+          await writeAuthorizedProjectFile({
+            conversationId,
+            pipelineRunId,
+            stageExecutionId: stageExecution.id,
+            filePath: tf,
+            content: codeContent,
+          });
         }
-        if (!authorized.authorizedFiles.includes(tf)) {
-          throw new Error(`Authorization Exception: Target file "${tf}" is not in authorized file set.`);
-        }
 
+        const manifest = await generateWorkspaceManifest(conversationId, stageExecution.id, authorized);
+        candidateContent = JSON.stringify(manifest, null, 2);
+      } else if (stageName === 'Tester') {
+        const reportRes = await runDeterministicTesterReport({
+          conversationId,
+          pipelineRunId,
+          stageExecutionId: stageExecution.id,
+          cycle: attempt,
+        });
+        candidateContent = reportRes.content;
+      } else if (stageName === 'Debugger') {
         const agentResult = await runAgent(
           conversationId,
-          'Coder',
+          'Debugger',
           userPromptText,
           onEvent,
           ledger,
           attempt,
-          customUserContent,
+          effectiveCustomUserContent,
           signal,
           undefined,
-          tf,
-          false // persistOutput = false (we persist via writeAuthorizedProjectFile below)
+          targetFile,
+          true
         );
+        candidateContent = agentResult?.content || '';
+      } else if (stageName === 'Security') {
+        const securityContext = [
+          effectiveCustomUserContent,
+          `Current Workspace Fingerprint Hash:\n${currentWorkspaceHash}`,
+        ].filter(Boolean).join('\n\n');
 
-        const codeContent = agentResult?.content || '';
-        await writeAuthorizedProjectFile({
+        const agentResult = await runAgent(
           conversationId,
-          pipelineRunId,
-          stageExecutionId: stageExecution.id,
-          filePath: tf,
-          content: codeContent,
-        });
+          'Security',
+          userPromptText,
+          onEvent,
+          ledger,
+          attempt,
+          securityContext,
+          signal,
+          undefined,
+          targetFile,
+          true
+        );
+        candidateContent = agentResult?.content || '';
+        if (!/###\s*Workspace Hash/i.test(candidateContent)) {
+          candidateContent = `${candidateContent.trim()}\n\n### Workspace Hash\n${currentWorkspaceHash}\n`;
+        }
+      } else if (stageName === 'Reviewer') {
+        const reviewerContext = [
+          effectiveCustomUserContent,
+          `Current Workspace Fingerprint Hash:\n${currentWorkspaceHash}`,
+        ].filter(Boolean).join('\n\n');
+
+        const agentResult = await runAgent(
+          conversationId,
+          'Reviewer',
+          userPromptText,
+          onEvent,
+          ledger,
+          attempt,
+          reviewerContext,
+          signal,
+          undefined,
+          targetFile,
+          true
+        );
+        candidateContent = agentResult?.content || '';
+        if (!/###\s*Workspace Hash/i.test(candidateContent)) {
+          candidateContent = `${candidateContent.trim()}\n\n### Workspace Hash\n${currentWorkspaceHash}\n`;
+        }
+      } else {
+        const agentResult = await runAgent(
+          conversationId,
+          stageName,
+          userPromptText,
+          onEvent,
+          ledger,
+          attempt,
+          effectiveCustomUserContent,
+          signal,
+          undefined,
+          targetFile,
+          true
+        );
+        candidateContent = agentResult?.content || '';
       }
 
-      const manifest = await generateWorkspaceManifest(conversationId, stageExecution.id, authorized);
-      candidateContent = JSON.stringify(manifest, null, 2);
-    } else if (stageName === 'Tester') {
-      const reportRes = await runDeterministicTesterReport({
+      contentHash = createContentHash(candidateContent);
+
+      // Step 8.6 — Persist candidate metadata
+      await prisma.stageExecution.update({
+        where: { id: stageExecution.id },
+        data: {
+          state: 'VALIDATING',
+          candidateHash: contentHash,
+        },
+      });
+
+      await appendPipelineEvent({
         conversationId,
         pipelineRunId,
-        stageExecutionId: stageExecution.id,
-        cycle: attempt,
-      });
-      candidateContent = reportRes.content;
-    } else if (stageName === 'Debugger') {
-      const agentResult = await runAgent(
-        conversationId,
-        'Debugger',
-        userPromptText,
-        onEvent,
-        ledger,
-        attempt,
-        customUserContent,
-        signal,
-        undefined,
-        targetFile,
-        true
-      );
-      candidateContent = agentResult?.content || '';
-    } else if (stageName === 'Security') {
-      const securityContext = [
-        customUserContent,
-        `Current Workspace Fingerprint Hash:\n${currentWorkspaceHash}`,
-      ].filter(Boolean).join('\n\n');
-
-      const agentResult = await runAgent(
-        conversationId,
-        'Security',
-        userPromptText,
-        onEvent,
-        ledger,
-        attempt,
-        securityContext,
-        signal,
-        undefined,
-        targetFile,
-        true
-      );
-      candidateContent = agentResult?.content || '';
-    } else if (stageName === 'Reviewer') {
-      const reviewerContext = [
-        customUserContent,
-        `Current Workspace Fingerprint Hash:\n${currentWorkspaceHash}`,
-      ].filter(Boolean).join('\n\n');
-
-      const agentResult = await runAgent(
-        conversationId,
-        'Reviewer',
-        userPromptText,
-        onEvent,
-        ledger,
-        attempt,
-        reviewerContext,
-        signal,
-        undefined,
-        targetFile,
-        true
-      );
-      candidateContent = agentResult?.content || '';
-    } else {
-      const agentResult = await runAgent(
-        conversationId,
+        eventType: 'CANDIDATE_GENERATED',
         stageName,
-        userPromptText,
-        onEvent,
-        ledger,
-        attempt,
-        customUserContent,
-        signal,
-        undefined,
-        targetFile,
-        true
-      );
-      candidateContent = agentResult?.content || '';
+        payload: { contentHash, stageExecutionId: stageExecution.id, attempt: genAttempt },
+      });
+
+      // Load authorized set for evidence if available
+      let authorizedForEvidence;
+      try {
+        authorizedForEvidence = await loadAuthorizedFileSet(conversationId, pipelineRunId);
+      } catch {
+        // Upstream architecture/blueprint may not be accepted yet (e.g. Queen/Planner stages)
+      }
+
+      // Step 8.7 — Run stage-specific validators
+      validationResult = await validateStageCandidate({
+        conversationId,
+        pipelineRunId,
+        candidate: {
+          stage: stageName,
+          executionId: stageExecution.id,
+          attempt,
+          content: candidateContent,
+          contentHash,
+          generatedAt: new Date(),
+        },
+        upstreamContext: resolvedInputs.inputs,
+        evidence: {
+          currentWorkspaceHash,
+          authorized: authorizedForEvidence,
+        },
+      });
+
+      if (validationResult.accepted) {
+        break;
+      }
+
+      if (stageName === 'Coder' || stageName === 'Tester') {
+        break;
+      }
+
+      retryFeedback = `[CRITICAL CORRECTION REQUIRED FROM PREVIOUS FAILED VALIDATION ATTEMPT]:\nYour previous response failed contract validation with the following errors:\n${validationResult.errors.map((e: string) => `- ${e}`).join('\n')}\nYou MUST fix all of the above errors while strictly preserving all required sections and formatting.`;
+
+      if (genAttempt < MAX_STAGE_ATTEMPTS) {
+        onEvent({
+          type: 'VALIDATION_RETRY',
+          agent: stageName,
+          message: `Candidate validation failed on attempt ${genAttempt}/${MAX_STAGE_ATTEMPTS}. Retrying with error feedback...`,
+          data: { errors: validationResult.errors },
+        });
+      }
     }
-
-    const contentHash = createContentHash(candidateContent);
-
-    // Step 8.6 — Persist candidate metadata
-    await prisma.stageExecution.update({
-      where: { id: stageExecution.id },
-      data: {
-        state: 'VALIDATING',
-        candidateHash: contentHash,
-      },
-    });
-
-    await appendPipelineEvent({
-      conversationId,
-      pipelineRunId,
-      eventType: 'CANDIDATE_GENERATED',
-      stageName,
-      payload: { contentHash, stageExecutionId: stageExecution.id },
-    });
-
-    // Load authorized set for evidence if available
-    let authorizedForEvidence;
-    try {
-      authorizedForEvidence = await loadAuthorizedFileSet(conversationId, pipelineRunId);
-    } catch {
-      // Upstream architecture/blueprint may not be accepted yet (e.g. Queen/Planner stages)
-    }
-
-    // Step 8.7 — Run stage-specific validators
-    const validationResult = await validateStageCandidate({
-      conversationId,
-      pipelineRunId,
-      candidate: {
-        stage: stageName,
-        executionId: stageExecution.id,
-        attempt,
-        content: candidateContent,
-        contentHash,
-        generatedAt: new Date(),
-      },
-      upstreamContext: resolvedInputs.inputs,
-      evidence: {
-        currentWorkspaceHash,
-        authorized: authorizedForEvidence,
-      },
-    });
 
     if (!validationResult.accepted) {
       const errMessage = validationResult.errors.join('; ');

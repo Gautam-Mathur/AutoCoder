@@ -65,16 +65,16 @@ export function parseSecurityOutput(content: string): { output: SecurityOutput |
 
   // 1. Overall Status
   const statusText = (extractRequiredSection(content, 'Overall Status') || '').trim();
-  const upperStatus = statusText.toUpperCase();
+  const cleanedStatus = statusText.replace(/^[\s\-*:—`]+/, '').trim().toUpperCase();
   let statusToken: SecurityStatusToken | null = null;
 
-  if (upperStatus.startsWith('SECURE_WITH_WARNINGS') || upperStatus === 'SECURE_WITH_WARNINGS') {
+  if (cleanedStatus.startsWith('SECURE_WITH_WARNINGS') || cleanedStatus === 'SECURE_WITH_WARNINGS') {
     statusToken = 'SECURE_WITH_WARNINGS';
-  } else if (upperStatus.startsWith('SECURE') || upperStatus === 'SECURE') {
+  } else if (cleanedStatus.startsWith('SECURE') || cleanedStatus === 'SECURE') {
     statusToken = 'SECURE';
-  } else if (upperStatus.startsWith('VULNERABLE') || upperStatus === 'VULNERABLE') {
+  } else if (cleanedStatus.startsWith('VULNERABLE') || cleanedStatus === 'VULNERABLE') {
     statusToken = 'VULNERABLE';
-  } else if (upperStatus.startsWith('CRITICAL') || upperStatus === 'CRITICAL') {
+  } else if (cleanedStatus.startsWith('CRITICAL') || cleanedStatus === 'CRITICAL') {
     statusToken = 'CRITICAL';
   } else {
     errors.push(`Security Contract Error: Invalid Security Status token "${statusText}". Must be SECURE, SECURE_WITH_WARNINGS, VULNERABLE, or CRITICAL.`);

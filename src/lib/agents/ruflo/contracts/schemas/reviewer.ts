@@ -79,7 +79,8 @@ export function parseReviewerOutput(content: string): { output: ReviewerOutput |
 
   // 3. Architectural Conformance
   const archText = extractRequiredSection(content, 'Architectural Conformance')?.trim() || '';
-  const archFirstWord = archText.split(/\s+/)[0]?.toUpperCase() || '';
+  const cleanedArch = archText.replace(/^[\s\-*:—`]+/, '').trim();
+  const archFirstWord = cleanedArch.split(/\s+/)[0]?.toUpperCase() || '';
   if (archFirstWord !== 'PASS' && archFirstWord !== 'FAIL') {
     errors.push(`Reviewer Contract Error: Section "### Architectural Conformance" must explicitly start with PASS or FAIL, got: "${archText}".`);
   }
@@ -87,7 +88,8 @@ export function parseReviewerOutput(content: string): { output: ReviewerOutput |
 
   // 4. Requirement Coverage
   const reqText = extractRequiredSection(content, 'Requirement Coverage')?.trim() || '';
-  const reqFirstWord = reqText.split(/\s+/)[0]?.toUpperCase() || '';
+  const cleanedReq = reqText.replace(/^[\s\-*:—`]+/, '').trim();
+  const reqFirstWord = cleanedReq.split(/\s+/)[0]?.toUpperCase() || '';
   if (reqFirstWord !== 'PASS' && reqFirstWord !== 'FAIL') {
     errors.push(`Reviewer Contract Error: Section "### Requirement Coverage" must explicitly start with PASS or FAIL, got: "${reqText}".`);
   }
