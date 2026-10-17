@@ -362,51 +362,58 @@ export async function generateWorkspaceManifest(
 
   const entryPoints = files.filter((f) => f.role === 'entry').map((f) => f.path);
   const projectPaths = files.map((f) => f.path);
+  const workspaceFileSetHash = computeFileSetHash(projectPaths);
 
   return {
-    schemaVersion: '1.0.0',
+    schemaVersion: '1.2.0',
     projectRoot: '.',
     files,
     directories: Array.from(dirsSet).sort(),
     entryPoints,
     generatedAt: new Date().toISOString(),
     sourceStageExecutionId: stageExecutionId,
-    architectureFileSetHash: authorized?.architectureFileSetHash,
-    blueprintFileSetHash: authorized?.blueprintFileSetHash,
-    authorizedFileSetHash: authorized?.authorizedFileSetHash,
-    workspaceFileSetHash: computeFileSetHash(projectPaths),
+    architectureFileSetHash: authorized?.architectureFileSetHash || workspaceFileSetHash,
+    blueprintFileSetHash: authorized?.blueprintFileSetHash || workspaceFileSetHash,
+    authorizedFileSetHash: authorized?.authorizedFileSetHash || workspaceFileSetHash,
+    workspaceFileSetHash,
   };
 }
 
 export async function loadAuthorizedFileSet(
   conversationId: string,
-  pipelineRunId: string
+  pipelineRunId?: string
 ): Promise<AuthorizedFileSet> {
+  const whereBase: any = {
+    conversationId,
+    state: 'ACCEPTED',
+  };
+  if (pipelineRunId) {
+    whereBase.pipelineRunId = pipelineRunId;
+  }
+
   const archArtifact = await prisma.artifactVersion.findFirst({
     where: {
-      pipelineRunId,
+      ...whereBase,
       filePath: 'architecture.md',
-      state: 'ACCEPTED',
     },
     orderBy: { version: 'desc' },
   });
 
   if (!archArtifact) {
-    throw new Error(`Authorization Exception: ACCEPTED architecture.md not found for run ${pipelineRunId}.`);
+    throw new Error(`Authorization Exception: ACCEPTED architecture.md not found for run ${pipelineRunId || conversationId}.`);
   }
 
   const blueprintArtifact = await prisma.artifactVersion.findFirst({
     where: {
-      pipelineRunId,
+      ...whereBase,
       filePath: 'blueprint.md',
-      state: 'ACCEPTED',
     },
     orderBy: { version: 'desc' },
   });
 
 
   if (!blueprintArtifact) {
-    throw new Error(`Authorization Exception: ACCEPTED blueprint.md not found for run ${pipelineRunId}.`);
+    throw new Error(`Authorization Exception: ACCEPTED blueprint.md not found for run ${pipelineRunId || conversationId}.`);
   }
 
   const { authorizedFileSet, errors } = computeAuthorizedFileSet(

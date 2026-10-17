@@ -1,7 +1,11 @@
 import { prisma } from '../../db';
 import { getStageContract, StageName } from './contracts/registry';
 import { CONTRACT_VERSIONS } from './contracts/versions';
-import { createContentHash } from './contracts/fingerprints';
+import { createContentHash, computeStageContractFingerprint } from './contracts/fingerprints';
+import {
+  buildWorkspaceEvidenceBundle,
+  formatEvidenceBundleForPrompt,
+} from './contracts/evidence';
 import { assertInputCompatibility, assertOutputCompatibility } from './contracts/compatibility';
 import { resolveAcceptedStageInputs, commitAcceptedArtifact, invalidateDescendants } from './artifact-store';
 import { validateStageCandidate } from './stage-acceptance';
@@ -21,7 +25,6 @@ import {
 import {
   isControlPlaneArtifact,
   normalizeProjectPath,
-  extractEmbeddedWorkspaceHash,
 } from './workspace-policy';
 
 export interface ExecuteContractStageParams {
@@ -101,7 +104,7 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
 
   try {
     let candidateContent = '';
-    const currentWorkspaceHash = await computeWorkspaceFingerprint(conversationId);
+    let currentWorkspaceHash = await computeWorkspaceFingerprint(conversationId);
     const MAX_STAGE_ATTEMPTS = 3;
     let validationResult: any = null;
     let contentHash = '';
@@ -138,10 +141,10 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
             userPromptText,
             onEvent,
             ledger,
-            attempt,
-            customUserContent,
+            genAttempt,
+            effectiveCustomUserContent,
             signal,
-            undefined,
+            retryFeedback || undefined,
             tf,
             false // persistOutput = false (we persist via writeAuthorizedProjectFile below)
           );
@@ -158,6 +161,7 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
 
         const manifest = await generateWorkspaceManifest(conversationId, stageExecution.id, authorized);
         candidateContent = JSON.stringify(manifest, null, 2);
+        currentWorkspaceHash = await computeWorkspaceFingerprint(conversationId);
       } else if (stageName === 'Tester') {
         const reportRes = await runDeterministicTesterReport({
           conversationId,
@@ -166,6 +170,7 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
           cycle: attempt,
         });
         candidateContent = reportRes.content;
+        currentWorkspaceHash = reportRes.workspaceHash;
       } else if (stageName === 'Debugger') {
         const agentResult = await runAgent(
           conversationId,
@@ -173,17 +178,29 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
           userPromptText,
           onEvent,
           ledger,
-          attempt,
+          genAttempt,
           effectiveCustomUserContent,
           signal,
-          undefined,
+          retryFeedback || undefined,
           targetFile,
           true
         );
         candidateContent = agentResult?.content || '';
+        currentWorkspaceHash = await computeWorkspaceFingerprint(conversationId);
       } else if (stageName === 'Security') {
+        let authorizedFilesForEvidence: string[] | undefined;
+        try {
+          const authSet = await loadAuthorizedFileSet(conversationId, pipelineRunId);
+          authorizedFilesForEvidence = authSet.authorizedFiles;
+        } catch {
+          // Optional if upstream not loaded
+        }
+        const evidenceBundle = await buildWorkspaceEvidenceBundle(conversationId, authorizedFilesForEvidence);
+        currentWorkspaceHash = evidenceBundle.workspaceHash;
+
         const securityContext = [
           effectiveCustomUserContent,
+          formatEvidenceBundleForPrompt(evidenceBundle),
           `Current Workspace Fingerprint Hash:\n${currentWorkspaceHash}`,
         ].filter(Boolean).join('\n\n');
 
@@ -193,20 +210,28 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
           userPromptText,
           onEvent,
           ledger,
-          attempt,
+          genAttempt,
           securityContext,
           signal,
-          undefined,
+          retryFeedback || undefined,
           targetFile,
           true
         );
         candidateContent = agentResult?.content || '';
-        if (!/###\s*Workspace Hash/i.test(candidateContent)) {
-          candidateContent = `${candidateContent.trim()}\n\n### Workspace Hash\n${currentWorkspaceHash}\n`;
-        }
       } else if (stageName === 'Reviewer') {
+        let authorizedFilesForEvidence: string[] | undefined;
+        try {
+          const authSet = await loadAuthorizedFileSet(conversationId, pipelineRunId);
+          authorizedFilesForEvidence = authSet.authorizedFiles;
+        } catch {
+          // Optional if upstream not loaded
+        }
+        const evidenceBundle = await buildWorkspaceEvidenceBundle(conversationId, authorizedFilesForEvidence);
+        currentWorkspaceHash = evidenceBundle.workspaceHash;
+
         const reviewerContext = [
           effectiveCustomUserContent,
+          formatEvidenceBundleForPrompt(evidenceBundle),
           `Current Workspace Fingerprint Hash:\n${currentWorkspaceHash}`,
         ].filter(Boolean).join('\n\n');
 
@@ -216,17 +241,14 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
           userPromptText,
           onEvent,
           ledger,
-          attempt,
+          genAttempt,
           reviewerContext,
           signal,
-          undefined,
+          retryFeedback || undefined,
           targetFile,
           true
         );
         candidateContent = agentResult?.content || '';
-        if (!/###\s*Workspace Hash/i.test(candidateContent)) {
-          candidateContent = `${candidateContent.trim()}\n\n### Workspace Hash\n${currentWorkspaceHash}\n`;
-        }
       } else {
         const agentResult = await runAgent(
           conversationId,
@@ -234,10 +256,10 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
           userPromptText,
           onEvent,
           ledger,
-          attempt,
+          genAttempt,
           effectiveCustomUserContent,
           signal,
-          undefined,
+          retryFeedback || undefined,
           targetFile,
           true
         );
@@ -294,7 +316,8 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
         break;
       }
 
-      if (stageName === 'Coder' || stageName === 'Tester') {
+      // Tester is deterministic (non-LLM), so do not retry Tester in the LLM generation loop
+      if (stageName === 'Tester') {
         break;
       }
 
@@ -382,6 +405,8 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
       payload: { stageExecutionId: stageExecution.id },
     });
 
+    const stageContractHash = computeStageContractFingerprint(stageName);
+
     // Step 8.9 — Commit accepted artifact with provenance
     const acceptedArtifact = await commitAcceptedArtifact({
       conversationId,
@@ -392,7 +417,7 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
       content: candidateContent,
       contractName: contract.outputArtifact.contract,
       contractVersion: contract.outputArtifact.version,
-      contractHash: contentHash,
+      contractHash: stageContractHash,
       validatorVersion: versionInfo.validatorVersion,
       promptVersion: versionInfo.promptVersion,
       parentArtifactIds: resolvedInputs.artifactIds,
@@ -403,7 +428,7 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
     await invalidateDescendants(conversationId, stageName, pipelineRunId);
 
     // Step 8.10 — Update StageExecution state to ACCEPTED
-    await prisma.stageExecution.update({
+    const updatedStageExecution = await prisma.stageExecution.update({
       where: { id: stageExecution.id },
       data: {
         state: 'ACCEPTED',
@@ -422,9 +447,12 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
     });
 
     return {
-      stageExecution,
+      status: 'ACCEPTED' as const,
+      stageExecution: updatedStageExecution,
       artifact: acceptedArtifact,
       content: candidateContent,
+      workspaceHash: currentWorkspaceHash,
+      validationErrors: [] as string[],
     };
   } catch (error: any) {
     await prisma.stageExecution.update({

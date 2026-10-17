@@ -300,8 +300,10 @@ function validateTester(content: string, ctx?: StageAcceptanceContext): Acceptan
   }
 
   const extraErrors: string[] = [];
-  if (output.result !== 'PASS') {
-    extraErrors.push('Tester Contract Error: Verification result is FAIL.');
+  const warnings: string[] = [];
+
+  if (output.result === 'FAIL') {
+    warnings.push('Tester reported FAIL; workspace verification loop will route to Debugger for repair.');
   }
 
   if (ctx?.evidence?.currentWorkspaceHash && output.workspaceHash !== ctx.evidence.currentWorkspaceHash) {
@@ -310,7 +312,7 @@ function validateTester(content: string, ctx?: StageAcceptanceContext): Acceptan
     );
   }
 
-  return { accepted: extraErrors.length === 0, errors: extraErrors, warnings: [] };
+  return { accepted: extraErrors.length === 0, errors: extraErrors, warnings };
 }
 
 function validateDebugger(content: string, ctx?: StageAcceptanceContext): AcceptanceResult {

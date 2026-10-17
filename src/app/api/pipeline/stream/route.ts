@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { runOrchestrator, activePipelines, pipelineEvents, startPipelineIfUnowned } from '@/lib/agents/ruflo/orchestrator';
+import { verifyConversationOwnership } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,6 +12,14 @@ export async function GET(request: NextRequest) {
 
   if (!conversationId) {
     return new Response('conversationId is required', { status: 400 });
+  }
+
+  const auth = await verifyConversationOwnership(request, conversationId);
+  if (!auth.authorized) {
+    return new Response(JSON.stringify({ error: auth.error }), {
+      status: auth.status,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 
   const lastEventIdHeader = request.headers.get('Last-Event-ID') || searchParams.get('lastEventId');

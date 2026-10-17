@@ -173,11 +173,17 @@ export async function verifyAndRepairWorkspace(
     });
 
     const testerResult = await executeStageFn('Tester');
-    if (!testerResult || testerResult.status !== 'ACCEPTED') {
+    const testerAccepted =
+      testerResult &&
+      (testerResult.status === 'ACCEPTED' || testerResult.stageExecution?.state === 'ACCEPTED');
+
+    if (!testerAccepted) {
       throw new Error(`Tester execution failed on cycle ${cycle}.`);
     }
 
-    const isPass = testerResult.content.includes('### Result\nPASS') || testerResult.content.includes('### Result\n\nPASS');
+    const isPass =
+      /###\s*Result\s*\r?\n\s*PASS\b/i.test(testerResult.content || '') &&
+      !/###\s*Result\s*\r?\n\s*FAIL\b/i.test(testerResult.content || '');
 
     if (isPass) {
       emit({
@@ -199,7 +205,11 @@ export async function verifyAndRepairWorkspace(
     });
 
     const debugResult = await executeStageFn('Debugger', testerResult.content);
-    if (!debugResult || debugResult.status !== 'ACCEPTED') {
+    const debugAccepted =
+      debugResult &&
+      (debugResult.status === 'ACCEPTED' || debugResult.stageExecution?.state === 'ACCEPTED');
+
+    if (!debugAccepted) {
       throw new Error(`Debugger repair execution failed on cycle ${cycle}.`);
     }
 

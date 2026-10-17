@@ -1,10 +1,14 @@
 import { prisma } from '../../db';
 import { computeWorkspaceFingerprint } from './verification-loop';
-import { extractRequiredSection } from './contracts/markdown-sections';
 import { parseSecurityOutput } from './contracts/schemas/security';
 import { parseReviewerOutput } from './contracts/schemas/reviewer';
-import { extractEmbeddedWorkspaceHash } from './workspace-policy';
-
+import {
+  extractEmbeddedWorkspaceHash,
+  isControlPlaneArtifact,
+  loadAuthorizedFileSet,
+  normalizeProjectPath,
+} from './workspace-policy';
+import { validateSecurityGate } from './security-gate';
 
 export interface FinalGateResult {
   valid: boolean;
@@ -59,6 +63,12 @@ export async function evaluateFinalPipelineGate(
     if (!accepted) {
       errors.push(`Final Gate Error: Missing accepted artifact for mandatory stage "${stageName}" in run ${pipelineRunId}.`);
     } else {
+      if ((accepted as any).projectionStatus && (accepted as any).projectionStatus !== 'SYNCED') {
+        errors.push(
+          `Final Gate Error: Stage "${stageName}" artifact has unsynced VFS projectionStatus "${(accepted as any).projectionStatus}".`
+        );
+      }
+
       // Check embedded workspace hash for Tester, Security, Reviewer
       if (['Tester', 'Security', 'Reviewer'].includes(stageName)) {
         const embedded = extractEmbeddedWorkspaceHash(stageName, accepted.content);
@@ -94,7 +104,7 @@ export async function evaluateFinalPipelineGate(
     errors.push('Final Gate Error: Latest VerificationRun workspace hash does not match current project workspace state (stale verification).');
   }
 
-  // 5. Require Security pass
+  // 5. Require Security stage report pass
   const securityArtifact = await prisma.artifactVersion.findFirst({
     where: { conversationId, pipelineRunId, stageName: 'Security', state: 'ACCEPTED' },
     orderBy: { version: 'desc' },
@@ -111,7 +121,59 @@ export async function evaluateFinalPipelineGate(
     }
   }
 
-  // 6. Require Reviewer pass
+  // 6. Require Deterministic Security Gate pass on current workspace VFS files (F-06, F-14)
+  const vfsRecords = await prisma.virtualFile.findMany({
+    where: { conversationId },
+  });
+  const vfsFileMap: Record<string, string> = {};
+  for (const vf of vfsRecords) {
+    const norm = normalizeProjectPath(vf.filePath);
+    if (!isControlPlaneArtifact(norm)) {
+      vfsFileMap[norm] = vf.content;
+    }
+  }
+
+  const authorizedFileSet = await loadAuthorizedFileSet(conversationId);
+  const requiredWorkspaceFiles =
+    authorizedFileSet.blueprintFiles.size > 0
+      ? Array.from(authorizedFileSet.blueprintFiles)
+      : Object.keys(vfsFileMap);
+
+  const deterministicSecurity = validateSecurityGate(vfsFileMap, requiredWorkspaceFiles);
+  if (!deterministicSecurity.passed) {
+    for (const block of deterministicSecurity.blocking) {
+      errors.push(`Final Gate Error: Deterministic Security Gate blocked (${block.file}:${block.line} [${block.ruleId}]): ${block.message}`);
+    }
+  }
+
+  // 7. Check QualityGate decision if recorded for this run (F-06)
+  const latestQualityGate = await prisma.gateDecision.findFirst({
+    where: {
+      conversationId,
+      pipelineRunId,
+      gateName: 'QUALITY_GATE',
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (latestQualityGate && latestQualityGate.decision === 'BLOCKED') {
+    const overrideDecision = await prisma.gateDecision.findFirst({
+      where: {
+        conversationId,
+        pipelineRunId,
+        gateName: 'QUALITY_GATE_OVERRIDE',
+        decision: 'APPROVED',
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!overrideDecision) {
+      errors.push(
+        `Final Gate Error: Deterministic Quality Gate decision is BLOCKED (${latestQualityGate.reason || 'FINAL_GATE_FAILED'}) without an audited QUALITY_GATE_OVERRIDE.`
+      );
+    }
+  }
+
+  // 8. Require Reviewer pass
   const reviewerArtifact = await prisma.artifactVersion.findFirst({
     where: { conversationId, pipelineRunId, stageName: 'Reviewer', state: 'ACCEPTED' },
     orderBy: { version: 'desc' },

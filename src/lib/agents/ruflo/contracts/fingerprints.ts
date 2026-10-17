@@ -1,4 +1,6 @@
 import crypto from 'crypto';
+import { CONTRACT_VERSIONS, StageName } from './versions';
+import { AGENT_DEFS } from '../agents';
 
 export type ContractFingerprint = {
   contractName: string;
@@ -40,6 +42,23 @@ export function computeContractFingerprint(params: {
       })
     )
     .digest('hex');
+}
+
+export function computeStageContractFingerprint(stageName: StageName): string {
+  const versionInfo = CONTRACT_VERSIONS[stageName];
+  const agentDef = AGENT_DEFS[stageName];
+  return computeContractFingerprint({
+    contractName: versionInfo.contractName,
+    contractVersion: versionInfo.version,
+    schemaContent: JSON.stringify({
+      format: versionInfo.format,
+      outputArtifactName: versionInfo.outputArtifactName,
+      requiredHeadings: versionInfo.requiredHeadings || [],
+      parserId: versionInfo.parserId,
+    }),
+    promptContent: `${versionInfo.promptVersion}:${agentDef?.systemPrompt || ''}`,
+    validatorContent: `${versionInfo.validatorVersion}:${versionInfo.parserId}`,
+  });
 }
 
 export function computeDependencyFingerprint(parentArtifactHashes: string[]): string {

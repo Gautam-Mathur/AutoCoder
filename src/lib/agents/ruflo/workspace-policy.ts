@@ -419,17 +419,54 @@ export function extractEmbeddedWorkspaceHash(stageName: string, content: string)
   const mdMatch = content.match(/###\s*Workspace Hash[\s\S]*?([a-f0-9]{64})/i);
   if (mdMatch) return mdMatch[1].toLowerCase();
 
-  if (stageName === 'Reviewer') {
-    try {
-      const parsed = JSON.parse(content);
-      if (parsed && typeof parsed.workspaceHash === 'string') {
-        return parsed.workspaceHash.toLowerCase();
-      }
-    } catch {
-      const jsonMatch = content.match(/"workspaceHash"\s*:\s*"([a-f0-9]{64})"/i);
-      if (jsonMatch) return jsonMatch[1].toLowerCase();
-    }
+  return null;
+}
+
+export async function loadAuthorizedFileSet(
+  conversationId: string,
+  pipelineRunId?: string
+): Promise<AuthorizedFileSet> {
+  const { prisma } = await import('../../db');
+  const whereBase: any = {
+    conversationId,
+    state: 'ACCEPTED',
+  };
+  if (pipelineRunId) {
+    whereBase.pipelineRunId = pipelineRunId;
   }
 
-  return null;
+  const archArtifact = await prisma.artifactVersion.findFirst({
+    where: {
+      ...whereBase,
+      filePath: 'architecture.md',
+    },
+    orderBy: { version: 'desc' },
+  });
+
+  if (!archArtifact) {
+    throw new Error(`Authorization Exception: ACCEPTED architecture.md not found for conversation ${conversationId}.`);
+  }
+
+  const blueprintArtifact = await prisma.artifactVersion.findFirst({
+    where: {
+      ...whereBase,
+      filePath: 'blueprint.md',
+    },
+    orderBy: { version: 'desc' },
+  });
+
+  if (!blueprintArtifact) {
+    throw new Error(`Authorization Exception: ACCEPTED blueprint.md not found for conversation ${conversationId}.`);
+  }
+
+  const { authorizedFileSet, errors } = computeAuthorizedFileSet(
+    archArtifact.content,
+    blueprintArtifact.content
+  );
+
+  if (!authorizedFileSet || errors.length > 0) {
+    throw new Error(`Authorization Exception: Failed to compute authorized file set: ${errors.join('; ')}`);
+  }
+
+  return authorizedFileSet;
 }

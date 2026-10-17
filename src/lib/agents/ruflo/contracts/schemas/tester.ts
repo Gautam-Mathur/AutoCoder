@@ -1,4 +1,5 @@
 import { countHeading, extractRequiredSection } from '../markdown-sections';
+import { CONTRACT_VERSIONS } from '../versions';
 
 export interface TesterOutput {
   result: 'PASS' | 'FAIL';
@@ -10,12 +11,14 @@ export interface TesterOutput {
 }
 
 export const TESTER_SCHEMA = {
-  contractName: 'TesterOutput',
-  version: '1.0.0',
+  contractName: CONTRACT_VERSIONS.Tester.name,
+  version: CONTRACT_VERSIONS.Tester.version,
+  format: CONTRACT_VERSIONS.Tester.format,
+  requiredSections: CONTRACT_VERSIONS.Tester.requiredHeadings,
   requiredFields: ['result', 'summary', 'tests', 'failures', 'workspaceHash'],
   mandatoryInvariants: [
     'Tester must render accurate summary from test verification run',
-    'Tester result must be PASS for acceptance',
+    'Tester result must be PASS for final release gate and routes FAIL to Debugger in verification loop',
     'Tester report must include valid Workspace Hash matching current project state',
   ],
 } as const;

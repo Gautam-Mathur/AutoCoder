@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { verifyConversationOwnership } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,6 +10,10 @@ export async function GET(
 ) {
   try {
     const { id } = await context.params;
+    const auth = await verifyConversationOwnership(request, id);
+    if (!auth.authorized) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status });
+    }
 
     // Fetch all outputs for the conversation
     const outputs = await prisma.agentOutput.findMany({

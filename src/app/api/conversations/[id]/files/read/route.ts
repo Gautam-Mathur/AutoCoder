@@ -2,13 +2,20 @@ import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 import { readVirtualFile } from '@/lib/agents/ruflo/vfs';
+import { getAuthenticatedSession, verifyConversationOwnership } from '@/lib/auth';
 
 export async function GET(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const session = await getAuthenticatedSession(request);
     const { id } = await context.params;
+    const access = await verifyConversationOwnership(id, session);
+    if (!access.authorized) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+
     const { searchParams } = new URL(request.url);
     const file = searchParams.get('file');
 

@@ -7,11 +7,24 @@ import path from 'path';
 import { prisma } from '../../db';
 import {
   isControlPlaneArtifact,
+  loadAuthorizedFileSet,
   normalizeProjectPath,
   parseBlueprintContract,
 } from './workspace-policy';
+import { requiresModuleOwnership } from './architecture-file-policy';
 
 const execFileAsync = promisify(execFile);
+
+const SAFE_NPM_PACKAGE_SPEC_REGEX =
+  /^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*(?:@[a-z0-9-._~^>=<|-]+)?$/i;
+
+export function isValidNpmPackageSpec(spec: string): boolean {
+  if (!spec || typeof spec !== 'string') return false;
+  const trimmed = spec.trim();
+  if (!trimmed || trimmed.length > 214) return false;
+  if (/[;&|`$<>\\!\n\r]/.test(trimmed) || trimmed.startsWith('-')) return false;
+  return SAFE_NPM_PACKAGE_SPEC_REGEX.test(trimmed);
+}
 
 export async function assertAuthorizedToolMutation(conversationId: string, rawFilePath: string): Promise<void> {
   const normPath = normalizeProjectPath(rawFilePath);
@@ -19,7 +32,16 @@ export async function assertAuthorizedToolMutation(conversationId: string, rawFi
     throw new Error(`Authorization Exception: Cannot modify control plane artifact "${normPath}".`);
   }
 
-  // Check if an accepted blueprint exists for this conversation
+  // Try full architecture + blueprint authorized file set first if both exist
+  const archArtifact = await prisma.artifactVersion.findFirst({
+    where: {
+      conversationId,
+      filePath: 'architecture.md',
+      state: 'ACCEPTED',
+    },
+    orderBy: { version: 'desc' },
+  });
+
   const blueprintArtifact = await prisma.artifactVersion.findFirst({
     where: {
       conversationId,
@@ -29,35 +51,71 @@ export async function assertAuthorizedToolMutation(conversationId: string, rawFi
     orderBy: { version: 'desc' },
   });
 
+  if (archArtifact && blueprintArtifact) {
+    const authorized = await loadAuthorizedFileSet(conversationId);
+    if (authorized.authorizedFiles.length > 0) {
+      const lowerSet = new Set(authorized.authorizedFiles.map((f) => f.toLowerCase()));
+      const lowerPath = normPath.toLowerCase();
+      if (!lowerSet.has(lowerPath) && requiresModuleOwnership(normPath)) {
+        throw new Error(
+          `Authorization Exception: File "${normPath}" is not in approved architecture/blueprint authorized file set.`
+        );
+      }
+      return;
+    }
+  }
+
   if (blueprintArtifact) {
     const parsedBlueprint = parseBlueprintContract(blueprintArtifact.content);
     if (parsedBlueprint.files.length > 0) {
       const authorizedFiles = new Set(parsedBlueprint.files.map((f) => f.path.toLowerCase()));
       const lowerPath = normPath.toLowerCase();
-      const standardAllowed = new Set(['package.json', 'tsconfig.json', '.gitignore', 'readme.md']);
-      if (!authorizedFiles.has(lowerPath) && !standardAllowed.has(lowerPath)) {
+      if (!authorizedFiles.has(lowerPath) && requiresModuleOwnership(normPath)) {
         throw new Error(`Authorization Exception: File "${normPath}" is not in approved blueprint authorized file set.`);
       }
     }
   }
 }
 
-async function runProjectCommand(command: string, conversationId: string, timeoutMs: number = 180000) {
+async function runProjectBinary(
+  binary: string,
+  args: string[],
+  conversationId: string,
+  timeoutMs: number = 180000
+) {
   const projectDir = path.join(process.cwd(), 'projects', conversationId);
   if (!fs.existsSync(projectDir)) {
-    return { success: false, exitCode: 1, stdout: '', stderr: `Project directory does not exist for conversation ${conversationId}.` };
+    return {
+      success: false,
+      exitCode: 1,
+      stdout: '',
+      stderr: `Project directory does not exist for conversation ${conversationId}.`,
+    };
   }
+  const resolvedBin =
+    process.platform === 'win32' && (binary === 'npm' || binary === 'npx')
+      ? `${binary}.cmd`
+      : binary;
   try {
-    const { stdout, stderr } = await execFileAsync('sh', ['-c', command], {
+    const { stdout, stderr } = await execFileAsync(resolvedBin, args, {
       cwd: projectDir,
       timeout: timeoutMs,
-      env: { ...process.env, NODE_ENV: 'development' },
+      windowsHide: true,
+      env: {
+        PATH: process.env.PATH,
+        SystemRoot: process.env.SystemRoot,
+        HOME: process.env.HOME || process.env.USERPROFILE,
+        USERPROFILE: process.env.USERPROFILE,
+        TEMP: process.env.TEMP,
+        TMP: process.env.TMP,
+        NODE_ENV: 'development',
+      },
     });
     return { success: true, exitCode: 0, stdout: (stdout || '').trim(), stderr: (stderr || '').trim() };
   } catch (err: any) {
     return {
       success: false,
-      exitCode: err.code || 1,
+      exitCode: typeof err.code === 'number' ? err.code : 1,
       stdout: (err.stdout || '').trim(),
       stderr: (err.stderr || err.message || '').trim(),
     };
@@ -215,8 +273,16 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
       },
     },
     execute: async (args, conversationId) => {
-      const cmd = args.package_name ? `npm install ${args.package_name}` : 'npm install';
-      return await runProjectCommand(cmd, conversationId, 120000);
+      if (args.package_name) {
+        const pkg = String(args.package_name).trim();
+        if (!isValidNpmPackageSpec(pkg)) {
+          throw new Error(
+            `Security Exception: Invalid or unsafe npm package specifier "${pkg}".`
+          );
+        }
+        return await runProjectBinary('npm', ['install', pkg], conversationId, 120000);
+      }
+      return await runProjectBinary('npm', ['install'], conversationId, 120000);
     },
   },
 
@@ -226,7 +292,7 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
       'Runs full project TypeScript typechecking (tsc --noEmit) across all files in the workspace.',
     parameters: {},
     execute: async (_args, conversationId) => {
-      return await runProjectCommand('npx tsc --noEmit', conversationId, 60000);
+      return await runProjectBinary('npx', ['tsc', '--noEmit'], conversationId, 60000);
     },
   },
 
@@ -236,7 +302,7 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
       'Runs the production build command (npm run build) for the generated project and returns success status and logs.',
     parameters: {},
     execute: async (_args, conversationId) => {
-      return await runProjectCommand('npm run build', conversationId, 120000);
+      return await runProjectBinary('npm', ['run', 'build'], conversationId, 120000);
     },
   },
 
@@ -246,7 +312,7 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
       'Runs test suite (npm test) for the generated project and returns test results.',
     parameters: {},
     execute: async (_args, conversationId) => {
-      return await runProjectCommand('npm test', conversationId, 60000);
+      return await runProjectBinary('npm', ['test'], conversationId, 60000);
     },
   },
 ];

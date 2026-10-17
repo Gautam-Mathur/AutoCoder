@@ -11,6 +11,9 @@ export type StageOutputArtifact = {
   name: string;
   contract: string;
   version: string;
+  outputFormat: 'markdown' | 'json';
+  requiredHeadings: readonly string[];
+  parserId: string;
 };
 
 export type StageContract = {
@@ -29,6 +32,9 @@ export const STAGE_CONTRACTS: Record<StageName, StageContract> = {
       name: CONTRACT_VERSIONS.Queen.outputArtifactName,
       contract: CONTRACT_VERSIONS.Queen.name,
       version: CONTRACT_VERSIONS.Queen.version,
+      outputFormat: CONTRACT_VERSIONS.Queen.format,
+      requiredHeadings: CONTRACT_VERSIONS.Queen.requiredHeadings,
+      parserId: CONTRACT_VERSIONS.Queen.parserId,
     },
   },
   Planner: {
@@ -38,13 +44,16 @@ export const STAGE_CONTRACTS: Record<StageName, StageContract> = {
       {
         name: 'plan.md',
         contract: CONTRACT_VERSIONS.Queen.name,
-        minVersion: '1.0.0',
+        minVersion: CONTRACT_VERSIONS.Queen.version,
       },
     ],
     outputArtifact: {
       name: CONTRACT_VERSIONS.Planner.outputArtifactName,
       contract: CONTRACT_VERSIONS.Planner.name,
       version: CONTRACT_VERSIONS.Planner.version,
+      outputFormat: CONTRACT_VERSIONS.Planner.format,
+      requiredHeadings: CONTRACT_VERSIONS.Planner.requiredHeadings,
+      parserId: CONTRACT_VERSIONS.Planner.parserId,
     },
   },
   Architect: {
@@ -54,18 +63,21 @@ export const STAGE_CONTRACTS: Record<StageName, StageContract> = {
       {
         name: 'requirements.md',
         contract: CONTRACT_VERSIONS.Planner.name,
-        minVersion: '1.0.0',
+        minVersion: CONTRACT_VERSIONS.Planner.version,
       },
       {
         name: 'plan.md',
         contract: CONTRACT_VERSIONS.Queen.name,
-        minVersion: '1.0.0',
+        minVersion: CONTRACT_VERSIONS.Queen.version,
       },
     ],
     outputArtifact: {
       name: CONTRACT_VERSIONS.Architect.outputArtifactName,
       contract: CONTRACT_VERSIONS.Architect.name,
       version: CONTRACT_VERSIONS.Architect.version,
+      outputFormat: CONTRACT_VERSIONS.Architect.format,
+      requiredHeadings: CONTRACT_VERSIONS.Architect.requiredHeadings,
+      parserId: CONTRACT_VERSIONS.Architect.parserId,
     },
   },
   System: {
@@ -75,18 +87,21 @@ export const STAGE_CONTRACTS: Record<StageName, StageContract> = {
       {
         name: 'architecture.md',
         contract: CONTRACT_VERSIONS.Architect.name,
-        minVersion: '1.0.0',
+        minVersion: CONTRACT_VERSIONS.Architect.version,
       },
       {
         name: 'requirements.md',
         contract: CONTRACT_VERSIONS.Planner.name,
-        minVersion: '1.0.0',
+        minVersion: CONTRACT_VERSIONS.Planner.version,
       },
     ],
     outputArtifact: {
       name: CONTRACT_VERSIONS.System.outputArtifactName,
       contract: CONTRACT_VERSIONS.System.name,
       version: CONTRACT_VERSIONS.System.version,
+      outputFormat: CONTRACT_VERSIONS.System.format,
+      requiredHeadings: CONTRACT_VERSIONS.System.requiredHeadings,
+      parserId: CONTRACT_VERSIONS.System.parserId,
     },
   },
   Designer: {
@@ -96,18 +111,21 @@ export const STAGE_CONTRACTS: Record<StageName, StageContract> = {
       {
         name: 'architecture.md',
         contract: CONTRACT_VERSIONS.Architect.name,
-        minVersion: '1.0.0',
+        minVersion: CONTRACT_VERSIONS.Architect.version,
       },
       {
         name: 'requirements.md',
         contract: CONTRACT_VERSIONS.Planner.name,
-        minVersion: '1.0.0',
+        minVersion: CONTRACT_VERSIONS.Planner.version,
       },
     ],
     outputArtifact: {
       name: CONTRACT_VERSIONS.Designer.outputArtifactName,
       contract: CONTRACT_VERSIONS.Designer.name,
       version: CONTRACT_VERSIONS.Designer.version,
+      outputFormat: CONTRACT_VERSIONS.Designer.format,
+      requiredHeadings: CONTRACT_VERSIONS.Designer.requiredHeadings,
+      parserId: CONTRACT_VERSIONS.Designer.parserId,
     },
   },
   Blueprinter: {
@@ -117,23 +135,26 @@ export const STAGE_CONTRACTS: Record<StageName, StageContract> = {
       {
         name: 'architecture.md',
         contract: CONTRACT_VERSIONS.Architect.name,
-        minVersion: '1.0.0',
+        minVersion: CONTRACT_VERSIONS.Architect.version,
       },
       {
         name: 'backend_spec.md',
         contract: CONTRACT_VERSIONS.System.name,
-        minVersion: '1.0.0',
+        minVersion: CONTRACT_VERSIONS.System.version,
       },
       {
         name: 'ui_spec.md',
         contract: CONTRACT_VERSIONS.Designer.name,
-        minVersion: '1.0.0',
+        minVersion: CONTRACT_VERSIONS.Designer.version,
       },
     ],
     outputArtifact: {
       name: CONTRACT_VERSIONS.Blueprinter.outputArtifactName,
       contract: CONTRACT_VERSIONS.Blueprinter.name,
       version: CONTRACT_VERSIONS.Blueprinter.version,
+      outputFormat: CONTRACT_VERSIONS.Blueprinter.format,
+      requiredHeadings: CONTRACT_VERSIONS.Blueprinter.requiredHeadings,
+      parserId: CONTRACT_VERSIONS.Blueprinter.parserId,
     },
   },
   Coder: {
@@ -143,28 +164,31 @@ export const STAGE_CONTRACTS: Record<StageName, StageContract> = {
       {
         name: 'blueprint.md',
         contract: CONTRACT_VERSIONS.Blueprinter.name,
-        minVersion: '1.0.0',
+        minVersion: CONTRACT_VERSIONS.Blueprinter.version,
       },
       {
         name: 'architecture.md',
         contract: CONTRACT_VERSIONS.Architect.name,
-        minVersion: '1.0.0',
+        minVersion: CONTRACT_VERSIONS.Architect.version,
       },
       {
         name: 'backend_spec.md',
         contract: CONTRACT_VERSIONS.System.name,
-        minVersion: '1.0.0',
+        minVersion: CONTRACT_VERSIONS.System.version,
       },
       {
         name: 'ui_spec.md',
         contract: CONTRACT_VERSIONS.Designer.name,
-        minVersion: '1.0.0',
+        minVersion: CONTRACT_VERSIONS.Designer.version,
       },
     ],
     outputArtifact: {
       name: CONTRACT_VERSIONS.Coder.outputArtifactName,
       contract: CONTRACT_VERSIONS.Coder.name,
       version: CONTRACT_VERSIONS.Coder.version,
+      outputFormat: CONTRACT_VERSIONS.Coder.format,
+      requiredHeadings: CONTRACT_VERSIONS.Coder.requiredHeadings,
+      parserId: CONTRACT_VERSIONS.Coder.parserId,
     },
   },
   Tester: {
@@ -174,13 +198,16 @@ export const STAGE_CONTRACTS: Record<StageName, StageContract> = {
       {
         name: 'workspace.manifest.json',
         contract: CONTRACT_VERSIONS.Coder.name,
-        minVersion: '1.0.0',
+        minVersion: CONTRACT_VERSIONS.Coder.version,
       },
     ],
     outputArtifact: {
       name: CONTRACT_VERSIONS.Tester.outputArtifactName,
       contract: CONTRACT_VERSIONS.Tester.name,
       version: CONTRACT_VERSIONS.Tester.version,
+      outputFormat: CONTRACT_VERSIONS.Tester.format,
+      requiredHeadings: CONTRACT_VERSIONS.Tester.requiredHeadings,
+      parserId: CONTRACT_VERSIONS.Tester.parserId,
     },
   },
   Debugger: {
@@ -190,18 +217,21 @@ export const STAGE_CONTRACTS: Record<StageName, StageContract> = {
       {
         name: 'test_report.md',
         contract: CONTRACT_VERSIONS.Tester.name,
-        minVersion: '1.0.0',
+        minVersion: CONTRACT_VERSIONS.Tester.version,
       },
       {
         name: 'workspace.manifest.json',
         contract: CONTRACT_VERSIONS.Coder.name,
-        minVersion: '1.0.0',
+        minVersion: CONTRACT_VERSIONS.Coder.version,
       },
     ],
     outputArtifact: {
       name: CONTRACT_VERSIONS.Debugger.outputArtifactName,
       contract: CONTRACT_VERSIONS.Debugger.name,
       version: CONTRACT_VERSIONS.Debugger.version,
+      outputFormat: CONTRACT_VERSIONS.Debugger.format,
+      requiredHeadings: CONTRACT_VERSIONS.Debugger.requiredHeadings,
+      parserId: CONTRACT_VERSIONS.Debugger.parserId,
     },
   },
   Reviewer: {
@@ -211,23 +241,26 @@ export const STAGE_CONTRACTS: Record<StageName, StageContract> = {
       {
         name: 'test_report.md',
         contract: CONTRACT_VERSIONS.Tester.name,
-        minVersion: '1.0.0',
+        minVersion: CONTRACT_VERSIONS.Tester.version,
       },
       {
         name: 'architecture.md',
         contract: CONTRACT_VERSIONS.Architect.name,
-        minVersion: '1.0.0',
+        minVersion: CONTRACT_VERSIONS.Architect.version,
       },
       {
         name: 'workspace.manifest.json',
         contract: CONTRACT_VERSIONS.Coder.name,
-        minVersion: '1.0.0',
+        minVersion: CONTRACT_VERSIONS.Coder.version,
       },
     ],
     outputArtifact: {
       name: CONTRACT_VERSIONS.Reviewer.outputArtifactName,
       contract: CONTRACT_VERSIONS.Reviewer.name,
       version: CONTRACT_VERSIONS.Reviewer.version,
+      outputFormat: CONTRACT_VERSIONS.Reviewer.format,
+      requiredHeadings: CONTRACT_VERSIONS.Reviewer.requiredHeadings,
+      parserId: CONTRACT_VERSIONS.Reviewer.parserId,
     },
   },
   Security: {
@@ -237,18 +270,21 @@ export const STAGE_CONTRACTS: Record<StageName, StageContract> = {
       {
         name: 'workspace.manifest.json',
         contract: CONTRACT_VERSIONS.Coder.name,
-        minVersion: '1.0.0',
+        minVersion: CONTRACT_VERSIONS.Coder.version,
       },
       {
         name: 'architecture.md',
         contract: CONTRACT_VERSIONS.Architect.name,
-        minVersion: '1.0.0',
+        minVersion: CONTRACT_VERSIONS.Architect.version,
       },
     ],
     outputArtifact: {
       name: CONTRACT_VERSIONS.Security.outputArtifactName,
       contract: CONTRACT_VERSIONS.Security.name,
       version: CONTRACT_VERSIONS.Security.version,
+      outputFormat: CONTRACT_VERSIONS.Security.format,
+      requiredHeadings: CONTRACT_VERSIONS.Security.requiredHeadings,
+      parserId: CONTRACT_VERSIONS.Security.parserId,
     },
   },
 };

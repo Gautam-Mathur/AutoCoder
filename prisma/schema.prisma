@@ -8,6 +8,7 @@ generator client {
 
 model Conversation {
   id                  String                 @id @default(uuid())
+  ownerId             String                 @default("local-owner")
   title               String
   status              String                 // "Active", "Completed", "Paused", "Cancelled"
   currentStage        String                 // "Queen", "Planner", etc.
@@ -519,6 +520,7 @@ model ArtifactVersion {
   parentArtifactIds     String?  // Stringified JSON array
   dependencyFingerprint String?
 
+  projectionStatus      String   @default("SYNCED") // "PENDING" | "SYNCED" | "FAILED"
   state                 String   // "CANDIDATE" | "ACCEPTED" | "SUPERSEDED" | "INVALIDATED"
   createdAt             DateTime @default(now())
 

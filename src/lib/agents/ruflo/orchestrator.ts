@@ -7,7 +7,7 @@ import { loadExecutiveMemory, writeExecutiveMemoryRecord, OWNERSHIP, StageLedger
 import { calculateTokenBudget } from './token-budgeter';
 import fs from 'fs';
 import path from 'path';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { writeVirtualFile, readVirtualFile, listVirtualFiles, applyDiff, flushVfsToDisk, safeWriteFileSync } from './vfs';
 import { runLinter, runCrossFileImportCheck } from './linter';
 import { buildAndPersistStructuralGraph, detectAndPersistArchitectureDrift } from './structural-graph';
@@ -542,6 +542,16 @@ export async function launchVSCodePreview(conversationId: string, onEvent: Pipel
     const projectPath = path.join(process.cwd(), 'projects', conversationId);
     if (!fs.existsSync(projectPath)) return;
 
+    const sanitizedEnv: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+      SystemRoot: process.env.SystemRoot,
+      HOME: process.env.HOME || process.env.USERPROFILE,
+      USERPROFILE: process.env.USERPROFILE,
+      TEMP: process.env.TEMP,
+      TMP: process.env.TMP,
+      NODE_ENV: 'development',
+    };
+
     const potentialEntries = ['main.js', 'app.js', 'server.js', 'index.js'];
     let entryFile = '';
     for (const f of potentialEntries) {
@@ -556,20 +566,31 @@ export async function launchVSCodePreview(conversationId: string, onEvent: Pipel
         type: 'AGENT_LOG',
         message: `⚡ Automatic Local Execution: Launching Node.js backend server (${entryFile})...`,
       });
-      exec(`node ${entryFile}`, { cwd: projectPath }, (error, stdout, stderr) => {
-        if (error) {
-          onEvent({
-            type: 'AGENT_LOG',
-            message: `⚠️ Node.js Runtime Error: ${error.message}`,
-          });
+      execFile(
+        process.execPath,
+        [entryFile],
+        { cwd: projectPath, env: sanitizedEnv, timeout: 60000, windowsHide: true },
+        (error) => {
+          if (error) {
+            onEvent({
+              type: 'AGENT_LOG',
+              message: `⚠️ Node.js Runtime Error: ${error.message}`,
+            });
+          }
         }
-      });
+      );
     } else if (fs.existsSync(path.join(projectPath, 'index.html'))) {
       onEvent({
         type: 'AGENT_LOG',
         message: `⚡ Automatic Local Execution: Launching local web preview server (npx serve)...`,
       });
-      exec(`npx serve -s . -l 8080`, { cwd: projectPath });
+      const npxBin = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+      execFile(
+        npxBin,
+        ['serve', '-s', '.', '-l', '8080'],
+        { cwd: projectPath, env: sanitizedEnv, timeout: 60000, windowsHide: true },
+        () => {}
+      );
     }
   } catch (err: any) {
     console.error('Failed to launch preview:', err);
@@ -1750,16 +1771,51 @@ export async function runOrchestrator(
       }
     }
 
-    // Flush all VFS files to disk workspace for preview execution
+    // Flush all VFS files to disk workspace before final gate & deterministic verification
     await flushVfsToDisk(conversationId);
-    await launchVSCodePreview(conversationId, emit);
 
     // Assert pipeline lease before final gate evaluation
     await assertPipelineLease(conversationId, leaseOwnerId);
 
-    // Evaluate final gate before marking Completed
+    // Run deterministic Security Gate & persist GateDecision (F-06, F-14)
+    const vfsRecordsForGate = await prisma.virtualFile.findMany({ where: { conversationId } });
+    const vfsMapForGate: Record<string, string> = {};
+    for (const vf of vfsRecordsForGate) {
+      vfsMapForGate[vf.filePath] = vf.content;
+    }
+    const securityGateRes = validateSecurityGate(vfsMapForGate);
+    if (runId) {
+      await prisma.gateDecision.create({
+        data: {
+          conversationId,
+          pipelineRunId: runId,
+          stageName: 'Security',
+          gateName: 'SECURITY_GATE',
+          decision: securityGateRes.passed ? 'PASSED' : 'BLOCKED',
+          actor: 'SYSTEM',
+          reason: securityGateRes.passed
+            ? 'DETERMINISTIC_SCAN_CLEAN'
+            : `SECURITY_HARD_BLOCK: ${securityGateRes.blocking.map((b) => b.message).join('; ')}`,
+        },
+      });
+    }
+
+    // Evaluate final gate before launching preview or marking Completed
     const finalGate = await evaluateFinalPipelineGate(conversationId, runId, leaseOwnerId);
     if (!finalGate.valid) {
+      if (runId) {
+        await prisma.gateDecision.create({
+          data: {
+            conversationId,
+            pipelineRunId: runId,
+            stageName: 'Reviewer',
+            gateName: 'QUALITY_GATE',
+            decision: 'BLOCKED',
+            actor: 'SYSTEM',
+            reason: finalGate.errors.join('; '),
+          },
+        });
+      }
       const gateErr = `Final Pipeline Gate Validation Failed: ${finalGate.errors.join('; ')}`;
       emit({
         type: 'PIPELINE_ERROR',
@@ -1767,6 +1823,23 @@ export async function runOrchestrator(
       });
       throw new Error(gateErr);
     }
+
+    if (runId) {
+      await prisma.gateDecision.create({
+        data: {
+          conversationId,
+          pipelineRunId: runId,
+          stageName: 'Reviewer',
+          gateName: 'QUALITY_GATE',
+          decision: 'PASSED',
+          actor: 'SYSTEM',
+          reason: 'FINAL_GATE_PASSED',
+        },
+      });
+    }
+
+    // Launch preview ONLY after Final Gate and deterministic Security/Quality Gates pass (F-08)
+    await launchVSCodePreview(conversationId, emit);
 
     await prisma.$transaction([
       prisma.conversation.update({

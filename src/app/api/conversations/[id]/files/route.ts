@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 import { listVirtualFiles } from '@/lib/agents/ruflo/vfs';
+import { getAuthenticatedSession, verifyConversationOwnership } from '@/lib/auth';
 
 function getFilesRecursively(dir: string, baseDir: string = dir): string[] {
   let results: string[] = [];
@@ -28,7 +29,13 @@ export async function GET(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const session = await getAuthenticatedSession(request);
     const { id } = await context.params;
+    const access = await verifyConversationOwnership(id, session);
+    if (!access.authorized) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+
     const fileSet = new Set<string>();
 
     // 1. Fetch VFS Virtual Workspace files

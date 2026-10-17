@@ -4,6 +4,7 @@ import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { flushVfsToDisk } from '@/lib/agents/ruflo/vfs';
+import { getAuthenticatedSession, verifyConversationOwnership } from '@/lib/auth';
 
 const execFilePromise = promisify(execFile);
 
@@ -12,7 +13,12 @@ export async function GET(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const session = await getAuthenticatedSession(request);
     const { id } = await context.params;
+    const access = await verifyConversationOwnership(id, session);
+    if (!access.authorized) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
 
     // Flush any in-memory/database virtual files to disk before creating zip archive
     await flushVfsToDisk(id);

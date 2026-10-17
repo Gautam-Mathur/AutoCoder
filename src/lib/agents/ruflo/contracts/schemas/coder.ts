@@ -1,3 +1,5 @@
+import { CONTRACT_VERSIONS } from '../versions';
+
 export interface WorkspaceFile {
   path: string;
   hash: string;
@@ -13,15 +15,16 @@ export interface WorkspaceManifest {
   entryPoints: string[];
   generatedAt: string;
   sourceStageExecutionId: string;
-  architectureFileSetHash?: string;
-  blueprintFileSetHash?: string;
-  workspaceFileSetHash?: string;
-  authorizedFileSetHash?: string;
+  architectureFileSetHash: string;
+  blueprintFileSetHash: string;
+  workspaceFileSetHash: string;
+  authorizedFileSetHash: string;
 }
 
 export const CODER_SCHEMA = {
-  contractName: 'CoderOutput',
-  version: '1.0.0',
+  contractName: CONTRACT_VERSIONS.Coder.name,
+  version: CONTRACT_VERSIONS.Coder.version,
+  format: CONTRACT_VERSIONS.Coder.format,
   requiredFields: [
     'schemaVersion',
     'projectRoot',

@@ -1,9 +1,13 @@
+import { CONTRACT_VERSIONS } from '../versions';
+
 export const PLANNER_SCHEMA = {
-  contractName: 'PlannerOutput',
-  version: '1.0.0',
-  requiredFields: ['frontendFramework', 'backendFramework', 'databaseType'],
+  contractName: CONTRACT_VERSIONS.Planner.name,
+  version: CONTRACT_VERSIONS.Planner.version,
+  format: CONTRACT_VERSIONS.Planner.format,
+  requiredSections: CONTRACT_VERSIONS.Planner.requiredHeadings,
+  requiredFields: ['features', 'functionalRequirements', 'acceptanceCriteria'],
   mandatoryInvariants: [
-    'Frontend framework must be valid (Next.js, Vite, etc.)',
-    'Backend framework and database provider must be compatible',
+    'Every feature must have a stable Feature-NNN identifier and priority',
+    'Functional requirements and acceptance criteria must trace to declared features',
   ],
 } as const;

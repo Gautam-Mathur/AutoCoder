@@ -1,12 +1,20 @@
 import { prisma } from '../../db';
-import { createContentHash, computeDependencyFingerprint } from './contracts/fingerprints';
+import {
+  createContentHash,
+  computeDependencyFingerprint,
+  computeStageContractFingerprint,
+} from './contracts/fingerprints';
 import { getStageContract, STAGE_CONTRACTS } from './contracts/registry';
 import { getDescendantStages } from './contracts/stage-graph';
 import { assertArtifactFreshForStage } from './contracts/compatibility';
-import { writeVirtualFile, generateWorkspaceManifest, loadAuthorizedFileSet } from './vfs';
+import {
+  writeVirtualFile,
+  readVirtualFile,
+  generateWorkspaceManifest,
+  loadAuthorizedFileSet,
+} from './vfs';
 import { extractEmbeddedWorkspaceHash } from './workspace-policy';
 import { StageName } from './contracts/versions';
-
 
 export interface CommitArtifactParams {
   conversationId: string;
@@ -26,8 +34,12 @@ export interface CommitArtifactParams {
 
 export async function commitAcceptedArtifact(params: CommitArtifactParams) {
   const contentHash = createContentHash(params.content);
+  const resolvedContractHash =
+    params.contractHash && params.contractHash !== contentHash
+      ? params.contractHash
+      : computeStageContractFingerprint(params.stage as StageName);
 
-  const artifact = await prisma.$transaction(async (tx) => {
+  const created = await prisma.$transaction(async (tx) => {
     const latest = await tx.artifactVersion.findFirst({
       where: {
         conversationId: params.conversationId,
@@ -63,20 +75,70 @@ export async function commitAcceptedArtifact(params: CommitArtifactParams) {
         content: params.content,
         contractName: params.contractName,
         contractVersion: params.contractVersion,
-        contractHash: params.contractHash,
+        contractHash: resolvedContractHash,
         validatorVersion: params.validatorVersion,
         promptVersion: params.promptVersion,
         parentArtifactIds: params.parentArtifactIds ? JSON.stringify(params.parentArtifactIds) : undefined,
         dependencyFingerprint: params.dependencyFingerprint,
         state: 'ACCEPTED',
+        projectionStatus: 'PENDING',
       },
     });
   });
 
-  // Materialize to VFS workspace projection
-  await writeVirtualFile(params.conversationId, params.filePath, params.content);
+  // Materialize to VFS workspace projection and verify projection integrity
+  try {
+    await writeVirtualFile(params.conversationId, params.filePath, params.content);
+    const projectedContent = await readVirtualFile(params.conversationId, params.filePath);
+    if (projectedContent === null || createContentHash(projectedContent) !== contentHash) {
+      throw new Error(`VFS projection hash mismatch for "${params.filePath}".`);
+    }
 
-  return artifact;
+    return await prisma.artifactVersion.update({
+      where: { id: created.id },
+      data: { projectionStatus: 'SYNCED' },
+    });
+  } catch (err: any) {
+    await prisma.artifactVersion
+      .update({
+        where: { id: created.id },
+        data: { projectionStatus: 'FAILED' },
+      })
+      .catch(() => {});
+    throw err;
+  }
+}
+
+export async function reconcilePendingProjections(conversationId: string): Promise<number> {
+  const unsynced = await prisma.artifactVersion.findMany({
+    where: {
+      conversationId,
+      state: 'ACCEPTED',
+      projectionStatus: { in: ['PENDING', 'FAILED'] },
+    },
+    orderBy: { version: 'asc' },
+  });
+
+  let reconciledCount = 0;
+  for (const art of unsynced) {
+    await writeVirtualFile(conversationId, art.filePath, art.content);
+    const projected = await readVirtualFile(conversationId, art.filePath);
+    if (projected !== null && createContentHash(projected) === art.contentHash) {
+      await prisma.artifactVersion.update({
+        where: { id: art.id },
+        data: { projectionStatus: 'SYNCED' },
+      });
+      reconciledCount++;
+    } else {
+      await prisma.artifactVersion.update({
+        where: { id: art.id },
+        data: { projectionStatus: 'FAILED' },
+      });
+      throw new Error(`Failed to reconcile VFS projection for artifact "${art.filePath}" (id: ${art.id}).`);
+    }
+  }
+
+  return reconciledCount;
 }
 
 export interface InputDetail {
@@ -116,7 +178,7 @@ export async function resolveAcceptedStageInputs(params: {
       whereCondition.pipelineRunId = params.pipelineRunId;
     }
 
-    const artifact = await prisma.artifactVersion.findFirst({
+    let artifact = await prisma.artifactVersion.findFirst({
       where: whereCondition,
       orderBy: {
         version: 'desc',
@@ -127,6 +189,18 @@ export async function resolveAcceptedStageInputs(params: {
       throw new Error(
         `Required input artifact '${inputDef.name}' for stage '${params.stageName}' was not found in ACCEPTED state.`
       );
+    }
+
+    if ((artifact as any).projectionStatus && (artifact as any).projectionStatus !== 'SYNCED') {
+      if ((artifact as any).projectionStatus === 'PENDING') {
+        await reconcilePendingProjections(params.conversationId);
+        artifact = await prisma.artifactVersion.findUnique({ where: { id: artifact.id } });
+      }
+      if (!artifact || (artifact as any).projectionStatus !== 'SYNCED') {
+        throw new Error(
+          `Required input artifact '${inputDef.name}' for stage '${params.stageName}' has unsynced projectionStatus '${(artifact as any)?.projectionStatus}'.`
+        );
+      }
     }
 
     // Verify content hash integrity
@@ -259,7 +333,7 @@ export async function refreshCoderWorkspaceManifest(
     content,
     contractName: coderReg.outputArtifact.contract,
     contractVersion: coderReg.outputArtifact.version,
-    contractHash: createContentHash(content),
+    contractHash: computeStageContractFingerprint('Coder'),
     validatorVersion: '1.2.0',
     promptVersion: '1.2.0',
     parentArtifactIds: resolved.artifactIds,

@@ -1,11 +1,13 @@
 export const CONTRACT_VERSIONS = {
   Queen: {
     name: "QueenOutput",
+    contractName: "QueenOutput",
     version: "1.2.0",
     promptVersion: "1.2.0",
     validatorVersion: "1.2.0",
     outputArtifactName: "plan.md",
     format: "markdown",
+    parserId: "validateQueen",
     requiredHeadings: [
       "### Project Name",
       "### Project Goal",
@@ -16,11 +18,13 @@ export const CONTRACT_VERSIONS = {
   },
   Planner: {
     name: "PlannerOutput",
+    contractName: "PlannerOutput",
     version: "1.2.0",
     promptVersion: "1.2.0",
     validatorVersion: "1.2.0",
     outputArtifactName: "requirements.md",
     format: "markdown",
+    parserId: "validatePlanner",
     requiredHeadings: [
       "### Features",
       "### Functional Requirements",
@@ -29,11 +33,13 @@ export const CONTRACT_VERSIONS = {
   },
   Architect: {
     name: "ArchitectureOutput",
+    contractName: "ArchitectureOutput",
     version: "1.2.0",
     promptVersion: "1.2.0",
     validatorVersion: "1.2.0",
     outputArtifactName: "architecture.md",
     format: "markdown",
+    parserId: "validateArchitect",
     requiredHeadings: [
       "### Tech Stack",
       "### Project Folder Structure",
@@ -44,19 +50,31 @@ export const CONTRACT_VERSIONS = {
   },
   System: {
     name: "SystemOutput",
+    contractName: "SystemOutput",
     version: "1.2.0",
     promptVersion: "1.2.0",
     validatorVersion: "1.2.0",
     outputArtifactName: "backend_spec.md",
     format: "markdown",
+    parserId: "validateSystem",
+    requiredHeadings: [
+      "### Database Design",
+      "### Seed Data",
+      "### API Endpoints",
+    ],
+    alternativeHeadings: [
+      "### No Backend Required",
+    ],
   },
   Designer: {
     name: "DesignerOutput",
+    contractName: "DesignerOutput",
     version: "1.2.0",
     promptVersion: "1.2.0",
     validatorVersion: "1.2.0",
     outputArtifactName: "ui_spec.md",
     format: "markdown",
+    parserId: "validateDesigner",
     requiredHeadings: [
       "### Design System",
       "### Pages",
@@ -66,28 +84,38 @@ export const CONTRACT_VERSIONS = {
   },
   Blueprinter: {
     name: "BlueprintOutput",
+    contractName: "BlueprintOutput",
     version: "1.2.0",
     promptVersion: "1.2.0",
     validatorVersion: "1.2.0",
     outputArtifactName: "blueprint.md",
     format: "markdown",
+    parserId: "validateBlueprinter",
     repeatedHeading: "### File:",
+    requiredHeadings: [
+      "### File:",
+    ],
   },
   Coder: {
     name: "CoderOutput",
+    contractName: "CoderOutput",
     version: "1.2.0",
     promptVersion: "1.2.0",
     validatorVersion: "1.2.0",
     outputArtifactName: "workspace.manifest.json",
     format: "json",
+    parserId: "validateCoder",
+    requiredHeadings: [],
   },
   Tester: {
     name: "TesterOutput",
+    contractName: "TesterOutput",
     version: "1.2.0",
     promptVersion: "1.2.0",
     validatorVersion: "1.2.0",
     outputArtifactName: "test_report.md",
     format: "markdown",
+    parserId: "parseTesterOutput",
     requiredHeadings: [
       "### Result",
       "### Summary",
@@ -98,11 +126,13 @@ export const CONTRACT_VERSIONS = {
   },
   Debugger: {
     name: "DebuggerOutput",
+    contractName: "DebuggerOutput",
     version: "1.2.0",
     promptVersion: "1.2.0",
     validatorVersion: "1.2.0",
     outputArtifactName: "debug_report.md",
     format: "markdown",
+    parserId: "parseDebuggerOutput",
     requiredHeadings: [
       "### Issues Addressed",
       "### Patches Applied",
@@ -111,11 +141,13 @@ export const CONTRACT_VERSIONS = {
   },
   Reviewer: {
     name: "ReviewerOutput",
+    contractName: "ReviewerOutput",
     version: "1.2.0",
     promptVersion: "1.2.0",
     validatorVersion: "1.2.0",
     outputArtifactName: "review_report.md",
     format: "markdown",
+    parserId: "parseReviewerOutput",
     requiredHeadings: [
       "### Overall Assessment",
       "### Quality Score",
@@ -127,11 +159,13 @@ export const CONTRACT_VERSIONS = {
   },
   Security: {
     name: "SecurityOutput",
+    contractName: "SecurityOutput",
     version: "1.2.0",
     promptVersion: "1.2.0",
     validatorVersion: "1.2.0",
     outputArtifactName: "security_report.md",
     format: "markdown",
+    parserId: "parseSecurityOutput",
     requiredHeadings: [
       "### Overall Status",
       "### Security Score",
