@@ -26,12 +26,12 @@ export function getPackageRoot(specifier: string): string {
 
 export function detectExplicitNoAuth(text: string): boolean {
   return [
-    /authentication\s*:\s*none\b/i,
-    /auth\s*:\s*none\b/i,
-    /authentication\s*\/\s*session\s*:\s*none\b/i,
-    /auth\s*\/\s*session\s*:\s*none\b/i,
-    /authentication\s*required\s*:\s*no\b/i,
-    /auth\s*required\s*:\s*no\b/i,
+    /(?:\*\*)?authentication(?:\*\*)?\s*:\s*(?:\*\*)?none\b/i,
+    /(?:\*\*)?auth(?:\*\*)?\s*:\s*(?:\*\*)?none\b/i,
+    /(?:\*\*)?authentication\s*\/\s*session(?:\*\*)?\s*:\s*(?:\*\*)?none\b/i,
+    /(?:\*\*)?auth\s*\/\s*session(?:\*\*)?\s*:\s*(?:\*\*)?none\b/i,
+    /(?:\*\*)?authentication\s*required(?:\*\*)?\s*:\s*(?:\*\*)?no\b/i,
+    /(?:\*\*)?auth\s*required(?:\*\*)?\s*:\s*(?:\*\*)?no\b/i,
     /\bno\s+auth(?:entication)?\b/i,
     /\bwithout\s+auth(?:entication)?\b/i,
   ].some((pattern) => pattern.test(text));

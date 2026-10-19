@@ -26,33 +26,47 @@ export function isValidNpmPackageSpec(spec: string): boolean {
   return SAFE_NPM_PACKAGE_SPEC_REGEX.test(trimmed);
 }
 
-export async function assertAuthorizedToolMutation(conversationId: string, rawFilePath: string): Promise<void> {
+export async function assertAuthorizedToolMutation(
+  conversationId: string,
+  rawFilePath: string,
+  pipelineRunId?: string
+): Promise<void> {
   const normPath = normalizeProjectPath(rawFilePath);
   if (isControlPlaneArtifact(normPath)) {
     throw new Error(`Authorization Exception: Cannot modify control plane artifact "${normPath}".`);
   }
 
+  if (normPath.startsWith('../') || normPath.includes('/../') || normPath === '..') {
+    throw new Error(`Authorization Exception: Directory traversal detected for path "${rawFilePath}".`);
+  }
+
+  const whereBase: any = {
+    conversationId,
+    state: 'ACCEPTED',
+  };
+  if (pipelineRunId) {
+    whereBase.pipelineRunId = pipelineRunId;
+  }
+
   // Try full architecture + blueprint authorized file set first if both exist
   const archArtifact = await prisma.artifactVersion.findFirst({
     where: {
-      conversationId,
+      ...whereBase,
       filePath: 'architecture.md',
-      state: 'ACCEPTED',
     },
     orderBy: { version: 'desc' },
   });
 
   const blueprintArtifact = await prisma.artifactVersion.findFirst({
     where: {
-      conversationId,
+      ...whereBase,
       filePath: 'blueprint.md',
-      state: 'ACCEPTED',
     },
     orderBy: { version: 'desc' },
   });
 
   if (archArtifact && blueprintArtifact) {
-    const authorized = await loadAuthorizedFileSet(conversationId);
+    const authorized = await loadAuthorizedFileSet(conversationId, pipelineRunId);
     if (authorized.authorizedFiles.length > 0) {
       const lowerSet = new Set(authorized.authorizedFiles.map((f) => f.toLowerCase()));
       const lowerPath = normPath.toLowerCase();

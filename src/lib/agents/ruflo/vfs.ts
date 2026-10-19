@@ -488,8 +488,8 @@ export async function applyAuthorizedDiff(params: {
     where: { id: stageExecutionId },
   });
 
-  if (!stageExec || stageExec.pipelineRunId !== pipelineRunId || stageExec.stageName !== 'Debugger') {
-    throw new Error(`Authorization Exception: StageExecution ${stageExecutionId} is not an authorized Debugger execution.`);
+  if (!stageExec || stageExec.pipelineRunId !== pipelineRunId || (stageExec.stageName !== 'Debugger' && stageExec.stageName !== 'Coder')) {
+    throw new Error(`Authorization Exception: StageExecution ${stageExecutionId} is not an authorized Debugger or Coder execution.`);
   }
 
   const authorized = await loadAuthorizedFileSet(conversationId, pipelineRunId);

@@ -66,6 +66,7 @@ function getProjectCompilerOptions(
     module: ts.ModuleKind.CommonJS,
     jsx: ts.JsxEmit.ReactJSX,
     allowJs: true,
+    esModuleInterop: true,
     noEmit: true,
     skipLibCheck: true,
     moduleResolution: ts.ModuleResolutionKind.Node10,

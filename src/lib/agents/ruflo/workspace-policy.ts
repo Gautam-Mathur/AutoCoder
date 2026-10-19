@@ -3,7 +3,10 @@ import {
   CanonicalArchitecture,
   parseCanonicalArchitecture,
 } from './architecture-parser';
-import { requiresModuleOwnership } from './architecture-file-policy';
+import {
+  requiresModuleOwnership,
+  classifyArchitectureFile,
+} from './architecture-file-policy';
 import { WorkspaceManifest } from './contracts/schemas/coder';
 
 export type WorkspaceFileClass = 'project' | 'pipeline-artifact';
@@ -226,6 +229,9 @@ export interface AuthorizedFileSet {
   architectureAllFiles: string[];
   blueprintFiles: string[];
   authorizedFiles: string[];
+  requiredProjectFiles?: string[];
+  coderAuthorizedFiles?: string[];
+  setupManagedFiles?: string[];
   ownerByFile: Record<string, string>;
   entryPoints: { frontend: string | null; backend: string | null };
   architectureFileSetHash: string;
@@ -258,6 +264,24 @@ export function computeAuthorizedFileSet(
     .map((f) => normalizeProjectPath(f.path));
   const authorizedFiles = Array.from(new Set([...blueprintFiles, ...unownedArchFiles])).sort();
 
+  const setupManagedFiles = architectureAllFiles.filter((f) => {
+    const cls = classifyArchitectureFile(f);
+    return (
+      cls === 'static-asset' ||
+      f.endsWith('package-lock.json') ||
+      f.endsWith('pnpm-lock.yaml') ||
+      f.endsWith('yarn.lock')
+    );
+  });
+
+  const coderAuthorizedFiles = Array.from(
+    new Set([...blueprintFiles, ...unownedArchFiles.filter((f) => !setupManagedFiles.includes(f))])
+  ).sort();
+
+  const requiredProjectFiles = Array.from(
+    new Set([...architectureAllFiles, ...blueprintFiles])
+  ).sort();
+
   const ownerByFile: Record<string, string> = {};
   for (const bf of blueprint.files) {
     const norm = normalizeProjectPath(bf.path);
@@ -279,6 +303,9 @@ export function computeAuthorizedFileSet(
       architectureAllFiles,
       blueprintFiles,
       authorizedFiles,
+      requiredProjectFiles,
+      coderAuthorizedFiles,
+      setupManagedFiles,
       ownerByFile,
       entryPoints: architecture.entryPoints,
       architectureFileSetHash,

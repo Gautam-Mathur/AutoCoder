@@ -1,4 +1,8 @@
-import { validateArchitectureArtifact } from './spec-contract';
+import {
+  validateArchitectureArtifact,
+  extractProjectContract,
+  validateProjectContract,
+} from './spec-contract';
 import { parseArchitecture, parseCanonicalArchitecture } from './architecture-parser';
 import {
   countHeading,
@@ -185,6 +189,32 @@ function validateSystem(content: string, ctx?: StageAcceptanceContext): Acceptan
         if (!archFilesLower.has(norm)) {
           errors.push(`System Contract Error: API endpoint path "${token}" is absent from architecture project files.`);
         }
+      }
+    }
+  }
+
+  // Pre-acceptance Specification Consistency Checks (Workstream F / Section 9)
+  if (ctx?.upstreamContext) {
+    const planMd = ctx.upstreamContext['plan.md'] || '';
+    const reqsMd = ctx.upstreamContext['requirements.md'] || '';
+    const archMd = ctx.upstreamContext['architecture.md'] || '';
+
+    if (planMd && reqsMd && archMd) {
+      const extractedContract = extractProjectContract({
+        'plan.md': planMd,
+        'requirements.md': reqsMd,
+        'architecture.md': archMd,
+        'backend_spec.md': content,
+      });
+
+      const contractValidation = validateProjectContract(extractedContract);
+      if (!contractValidation.valid) {
+        for (const err of contractValidation.errors) {
+          errors.push(`Specification Contradiction: ${err}`);
+        }
+      }
+      if (contractValidation.warnings && contractValidation.warnings.length > 0) {
+        warnings.push(...contractValidation.warnings);
       }
     }
   }

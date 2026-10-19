@@ -162,61 +162,15 @@ ${runRecord.id}
 export async function verifyAndRepairWorkspace(
   conversationId: string,
   pipelineRunId: string,
-  executeStageFn: (stageName: string, customInput?: string) => Promise<any>,
+  executeStageFn: (stageName: string, customInput?: string, targetFile?: string) => Promise<any>,
   emit: (evt: any) => void
 ): Promise<void> {
-  for (let cycle = 1; cycle <= MAX_DEBUG_CYCLES; cycle++) {
-    emit({
-      type: 'AGENT_START',
-      agent: 'Tester',
-      message: `Running deterministic workspace verification cycle ${cycle}/${MAX_DEBUG_CYCLES}...`,
-    });
-
-    const testerResult = await executeStageFn('Tester');
-    const testerAccepted =
-      testerResult &&
-      (testerResult.status === 'ACCEPTED' || testerResult.stageExecution?.state === 'ACCEPTED');
-
-    if (!testerAccepted) {
-      throw new Error(`Tester execution failed on cycle ${cycle}.`);
-    }
-
-    const isPass =
-      /###\s*Result\s*\r?\n\s*PASS\b/i.test(testerResult.content || '') &&
-      !/###\s*Result\s*\r?\n\s*FAIL\b/i.test(testerResult.content || '');
-
-    if (isPass) {
-      emit({
-        type: 'AGENT_COMPLETE',
-        agent: 'Tester',
-        message: `Workspace verification passed cleanly on cycle ${cycle}.`,
-      });
-      return;
-    }
-
-    if (cycle === MAX_DEBUG_CYCLES) {
-      throw new Error(`Workspace verification failed after ${MAX_DEBUG_CYCLES} debug repair cycles.`);
-    }
-
-    emit({
-      type: 'AGENT_START',
-      agent: 'Debugger',
-      message: `Launching Debugger repair cycle ${cycle}...`,
-    });
-
-    const debugResult = await executeStageFn('Debugger', testerResult.content);
-    const debugAccepted =
-      debugResult &&
-      (debugResult.status === 'ACCEPTED' || debugResult.stageExecution?.state === 'ACCEPTED');
-
-    if (!debugAccepted) {
-      throw new Error(`Debugger repair execution failed on cycle ${cycle}.`);
-    }
-
-    emit({
-      type: 'AGENT_COMPLETE',
-      agent: 'Debugger',
-      message: `Debugger repair cycle ${cycle} completed. Re-running Tester verification...`,
-    });
-  }
+  const { coordinateRepair } = await import('./repair-coordinator');
+  return coordinateRepair({
+    conversationId,
+    pipelineRunId,
+    executeStageFn,
+    emit,
+    maxCycles: MAX_DEBUG_CYCLES,
+  });
 }

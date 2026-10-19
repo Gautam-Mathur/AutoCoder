@@ -133,10 +133,10 @@ export async function evaluateFinalPipelineGate(
     }
   }
 
-  const authorizedFileSet = await loadAuthorizedFileSet(conversationId);
+  const authorizedFileSet = await loadAuthorizedFileSet(conversationId, pipelineRunId);
   const requiredWorkspaceFiles =
-    authorizedFileSet.blueprintFiles.size > 0
-      ? Array.from(authorizedFileSet.blueprintFiles)
+    Array.isArray(authorizedFileSet.blueprintFiles) && authorizedFileSet.blueprintFiles.length > 0
+      ? authorizedFileSet.blueprintFiles
       : Object.keys(vfsFileMap);
 
   const deterministicSecurity = validateSecurityGate(vfsFileMap, requiredWorkspaceFiles);

@@ -66,7 +66,7 @@ Do NOT use vague instructions like "fetch data" or "render components". The Code
 === FILE ORDERING RULES ===
 
 CRITICAL: Entry points and base files MUST come FIRST.
-- FOR WEB APPS: index.html (or public/index.html) MUST ALWAYS be ### File: n(n is the final file).
+- FOR WEB APPS: index.html (or public/index.html) is the primary entry point and must come first.
 - Files with Dependencies: "None" come next (e.g. style.css)
 - Files that import from other project files come AFTER those files
 - If A depends on B, then B's ### File: section must appear BEFORE A's section
