@@ -1,4 +1,12 @@
-import { readVirtualFile, writeVirtualFile, listVirtualFiles, applyDiff } from './vfs';
+import {
+  readVirtualFile,
+  writeVirtualFile,
+  listVirtualFiles,
+  applyDiff,
+  deleteVirtualFile,
+  assertAuthorizedFileMutation,
+  FileMutationAuth,
+} from './vfs';
 import { runLinter } from './linter';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -7,11 +15,8 @@ import path from 'path';
 import { prisma } from '../../db';
 import {
   isControlPlaneArtifact,
-  loadAuthorizedFileSet,
   normalizeProjectPath,
-  parseBlueprintContract,
 } from './workspace-policy';
-import { requiresModuleOwnership } from './architecture-file-policy';
 
 const execFileAsync = promisify(execFile);
 
@@ -26,10 +31,20 @@ export function isValidNpmPackageSpec(spec: string): boolean {
   return SAFE_NPM_PACKAGE_SPEC_REGEX.test(trimmed);
 }
 
+export interface ToolExecutionContext {
+  conversationId: string;
+  pipelineRunId: string;
+  stageExecutionId?: string;
+  stageName?: string;
+  isSetupOperation?: boolean;
+}
+
 export async function assertAuthorizedToolMutation(
   conversationId: string,
   rawFilePath: string,
-  pipelineRunId?: string
+  pipelineRunId?: string,
+  stageExecutionId?: string,
+  isSetupOperation?: boolean
 ): Promise<void> {
   const normPath = normalizeProjectPath(rawFilePath);
   if (isControlPlaneArtifact(normPath)) {
@@ -40,55 +55,17 @@ export async function assertAuthorizedToolMutation(
     throw new Error(`Authorization Exception: Directory traversal detected for path "${rawFilePath}".`);
   }
 
-  const whereBase: any = {
-    conversationId,
-    state: 'ACCEPTED',
-  };
-  if (pipelineRunId) {
-    whereBase.pipelineRunId = pipelineRunId;
+  if (!pipelineRunId || typeof pipelineRunId !== 'string' || !pipelineRunId.trim()) {
+    throw new Error(
+      `Authorization Exception: active pipelineRunId is mandatory for tool mutation. Conversation-wide fallback authorization without a pipelineRunId is strictly forbidden.`
+    );
   }
 
-  // Try full architecture + blueprint authorized file set first if both exist
-  const archArtifact = await prisma.artifactVersion.findFirst({
-    where: {
-      ...whereBase,
-      filePath: 'architecture.md',
-    },
-    orderBy: { version: 'desc' },
+  await assertAuthorizedFileMutation(conversationId, normPath, 'write', {
+    pipelineRunId,
+    stageExecutionId,
+    isSetupOperation,
   });
-
-  const blueprintArtifact = await prisma.artifactVersion.findFirst({
-    where: {
-      ...whereBase,
-      filePath: 'blueprint.md',
-    },
-    orderBy: { version: 'desc' },
-  });
-
-  if (archArtifact && blueprintArtifact) {
-    const authorized = await loadAuthorizedFileSet(conversationId, pipelineRunId);
-    if (authorized.authorizedFiles.length > 0) {
-      const lowerSet = new Set(authorized.authorizedFiles.map((f) => f.toLowerCase()));
-      const lowerPath = normPath.toLowerCase();
-      if (!lowerSet.has(lowerPath) && requiresModuleOwnership(normPath)) {
-        throw new Error(
-          `Authorization Exception: File "${normPath}" is not in approved architecture/blueprint authorized file set.`
-        );
-      }
-      return;
-    }
-  }
-
-  if (blueprintArtifact) {
-    const parsedBlueprint = parseBlueprintContract(blueprintArtifact.content);
-    if (parsedBlueprint.files.length > 0) {
-      const authorizedFiles = new Set(parsedBlueprint.files.map((f) => f.path.toLowerCase()));
-      const lowerPath = normPath.toLowerCase();
-      if (!authorizedFiles.has(lowerPath) && requiresModuleOwnership(normPath)) {
-        throw new Error(`Authorization Exception: File "${normPath}" is not in approved blueprint authorized file set.`);
-      }
-    }
-  }
 }
 
 async function runProjectBinary(
@@ -146,7 +123,7 @@ export interface ToolDefinition {
   name: string;
   description: string;
   parameters: Record<string, ToolParameter>;
-  execute: (args: Record<string, any>, conversationId: string) => Promise<any>;
+  execute: (args: Record<string, any>, contextOrConversationId: string | ToolExecutionContext) => Promise<any>;
 }
 
 export const TOOL_REGISTRY: ToolDefinition[] = [
@@ -163,7 +140,10 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
         required: true,
       },
     },
-    execute: async (args, conversationId) => {
+    execute: async (args, contextOrConversationId) => {
+      const conversationId = typeof contextOrConversationId === 'string'
+        ? contextOrConversationId
+        : contextOrConversationId.conversationId;
       const content = await readVirtualFile(conversationId, args.file_path);
       if (content === null) {
         return { 
@@ -194,9 +174,23 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
         required: true,
       },
     },
-    execute: async (args, conversationId) => {
-      await assertAuthorizedToolMutation(conversationId, args.file_path);
-      await writeVirtualFile(conversationId, args.file_path, args.content);
+    execute: async (args, contextOrConversationId) => {
+      const ctx = typeof contextOrConversationId === 'string'
+        ? ({ conversationId: contextOrConversationId, pipelineRunId: '' } as ToolExecutionContext)
+        : contextOrConversationId;
+
+      if (!ctx.pipelineRunId || typeof ctx.pipelineRunId !== 'string' || !ctx.pipelineRunId.trim()) {
+        throw new Error(
+          `Authorization Exception: active pipelineRunId is mandatory for tool mutation. Conversation-wide fallback authorization without a pipelineRunId is strictly forbidden.`
+        );
+      }
+
+      await writeVirtualFile(ctx.conversationId, args.file_path, args.content, {
+        pipelineRunId: ctx.pipelineRunId,
+        stageExecutionId: ctx.stageExecutionId,
+        stageName: ctx.stageName,
+        isSetupOperation: ctx.isSetupOperation,
+      });
       return { success: true, message: `File "${args.file_path}" written successfully (${args.content.length} bytes).` };
     },
   },
@@ -230,10 +224,69 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
         required: true,
       },
     },
-    execute: async (args, conversationId) => {
-      await assertAuthorizedToolMutation(conversationId, args.file_path);
-      await applyDiff(conversationId, args.file_path, args.start_line, args.end_line, args.new_content);
+    execute: async (args, contextOrConversationId) => {
+      const ctx = typeof contextOrConversationId === 'string'
+        ? ({ conversationId: contextOrConversationId, pipelineRunId: '' } as ToolExecutionContext)
+        : contextOrConversationId;
+
+      if (!ctx.pipelineRunId || typeof ctx.pipelineRunId !== 'string' || !ctx.pipelineRunId.trim()) {
+        throw new Error(
+          `Authorization Exception: active pipelineRunId is mandatory for tool mutation. Conversation-wide fallback authorization without a pipelineRunId is strictly forbidden.`
+        );
+      }
+
+      await applyDiff(
+        ctx.conversationId,
+        args.file_path,
+        args.start_line,
+        args.end_line,
+        args.new_content,
+        {
+          pipelineRunId: ctx.pipelineRunId,
+          stageExecutionId: ctx.stageExecutionId,
+          stageName: ctx.stageName,
+          isSetupOperation: ctx.isSetupOperation,
+        }
+      );
       return { success: true, message: `Lines ${args.start_line}-${args.end_line} of "${args.file_path}" replaced successfully.` };
+    },
+  },
+
+  {
+    name: 'delete_file',
+    description:
+      'Deletes an authorized file from the project workspace. ' +
+      'Cannot be used to delete control-plane artifacts.',
+    parameters: {
+      file_path: {
+        type: 'string',
+        description: 'The relative path of the file to delete.',
+        required: true,
+      },
+    },
+    execute: async (args, contextOrConversationId) => {
+      const ctx = typeof contextOrConversationId === 'string'
+        ? ({ conversationId: contextOrConversationId, pipelineRunId: '' } as ToolExecutionContext)
+        : contextOrConversationId;
+
+      if (!ctx.pipelineRunId || typeof ctx.pipelineRunId !== 'string' || !ctx.pipelineRunId.trim()) {
+        throw new Error(
+          `Authorization Exception: active pipelineRunId is mandatory for tool mutation. Conversation-wide fallback authorization without a pipelineRunId is strictly forbidden.`
+        );
+      }
+
+      const deleted = await deleteVirtualFile(ctx.conversationId, args.file_path, {
+        pipelineRunId: ctx.pipelineRunId,
+        stageExecutionId: ctx.stageExecutionId,
+        stageName: ctx.stageName,
+        isSetupOperation: ctx.isSetupOperation,
+      });
+      return {
+        success: deleted,
+        message: deleted
+          ? `File "${args.file_path}" deleted successfully.`
+          : `File "${args.file_path}" did not exist.`,
+      };
     },
   },
 
@@ -243,7 +296,10 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
       'Returns a list of all file paths currently in the project workspace. ' +
       'Use this at the start of a task to understand what already exists before creating new files.',
     parameters: {},
-    execute: async (args, conversationId) => {
+    execute: async (args, contextOrConversationId) => {
+      const conversationId = typeof contextOrConversationId === 'string'
+        ? contextOrConversationId
+        : contextOrConversationId.conversationId;
       const files = await listVirtualFiles(conversationId);
       return {
         count: files.length,
@@ -269,7 +325,10 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
         required: true,
       },
     },
-    execute: async (args, conversationId) => {
+    execute: async (args, contextOrConversationId) => {
+      const conversationId = typeof contextOrConversationId === 'string'
+        ? contextOrConversationId
+        : contextOrConversationId.conversationId;
       const result = await runLinter(conversationId, args.file_path);
       return result;
     },
@@ -286,7 +345,10 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
         required: false,
       },
     },
-    execute: async (args, conversationId) => {
+    execute: async (args, contextOrConversationId) => {
+      const conversationId = typeof contextOrConversationId === 'string'
+        ? contextOrConversationId
+        : contextOrConversationId.conversationId;
       if (args.package_name) {
         const pkg = String(args.package_name).trim();
         if (!isValidNpmPackageSpec(pkg)) {
@@ -305,7 +367,10 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
     description:
       'Runs full project TypeScript typechecking (tsc --noEmit) across all files in the workspace.',
     parameters: {},
-    execute: async (_args, conversationId) => {
+    execute: async (_args, contextOrConversationId) => {
+      const conversationId = typeof contextOrConversationId === 'string'
+        ? contextOrConversationId
+        : contextOrConversationId.conversationId;
       return await runProjectBinary('npx', ['tsc', '--noEmit'], conversationId, 60000);
     },
   },
@@ -315,7 +380,10 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
     description:
       'Runs the production build command (npm run build) for the generated project and returns success status and logs.',
     parameters: {},
-    execute: async (_args, conversationId) => {
+    execute: async (_args, contextOrConversationId) => {
+      const conversationId = typeof contextOrConversationId === 'string'
+        ? contextOrConversationId
+        : contextOrConversationId.conversationId;
       return await runProjectBinary('npm', ['run', 'build'], conversationId, 120000);
     },
   },
@@ -325,7 +393,10 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
     description:
       'Runs test suite (npm test) for the generated project and returns test results.',
     parameters: {},
-    execute: async (_args, conversationId) => {
+    execute: async (_args, contextOrConversationId) => {
+      const conversationId = typeof contextOrConversationId === 'string'
+        ? contextOrConversationId
+        : contextOrConversationId.conversationId;
       return await runProjectBinary('npm', ['test'], conversationId, 60000);
     },
   },
@@ -342,7 +413,8 @@ export function getToolsForAgent(toolNames: string[]): ToolDefinition[] {
 export async function executeTool(
   toolName: string,
   toolArgs: Record<string, any>,
-  conversationId: string
+  contextOrConversationId: string | ToolExecutionContext,
+  options?: Partial<ToolExecutionContext>
 ): Promise<any> {
   const tool = TOOL_REGISTRY.find((t) => t.name === toolName);
 
@@ -352,6 +424,20 @@ export async function executeTool(
       message: `Tool "${toolName}" is not registered. Available tools: ${TOOL_REGISTRY.map((t) => t.name).join(', ')}`,
     };
   }
+
+  const context: ToolExecutionContext =
+    typeof contextOrConversationId === 'string'
+      ? {
+          conversationId: contextOrConversationId,
+          pipelineRunId: options?.pipelineRunId || '',
+          stageExecutionId: options?.stageExecutionId,
+          stageName: options?.stageName,
+          isSetupOperation: options?.isSetupOperation,
+        }
+      : {
+          ...contextOrConversationId,
+          ...options,
+        };
 
   const validatedArgs: Record<string, any> = {};
 
@@ -394,7 +480,7 @@ export async function executeTool(
       }
     }
 
-    return await tool.execute(validatedArgs, conversationId);
+    return await tool.execute(validatedArgs, context);
   } catch (err: any) {
     return {
       error: true,

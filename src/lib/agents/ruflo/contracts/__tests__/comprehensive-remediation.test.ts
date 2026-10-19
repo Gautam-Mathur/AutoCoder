@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
 import { prisma } from '../../../../db';
@@ -12,6 +13,9 @@ import {
   stripStringsFromCode,
   validateGateException,
   TrustedGateException,
+  registerTrustedApprover,
+  unregisterTrustedApprover,
+  createSignedGateException,
 } from '../../security-gate';
 import {
   computeAuthorizedFileSet,
@@ -165,6 +169,25 @@ project-root/
         contentHash: 'hash-blue-1',
         content: validBlueprintMd,
         state: 'ACCEPTED',
+      },
+    });
+
+    await prisma.stageExecution.upsert({
+      where: {
+        pipelineRunId_stageName_attempt: {
+          pipelineRunId: runId1,
+          stageName: 'Coder',
+          attempt: 1,
+        },
+      },
+      update: { state: 'RUNNING' },
+      create: {
+        id: 'comp-stage-coder-1',
+        conversationId: convId,
+        pipelineRunId: runId1,
+        stageName: 'Coder',
+        attempt: 1,
+        state: 'RUNNING',
       },
     });
   });
@@ -323,11 +346,12 @@ project-root/
       ]);
       assert.strictEqual(decisionInconclusive.decision, 'block');
 
-      // 5. Approved exception on blocking check -> allow
-      const decisionOverride = decideRelease([
+      // 5. Legacy approvedException: true alone is rejected and fails closed
+      const decisionLegacyBlocked = decideRelease([
         { name: 'LEGACY_SCAN', status: 'failed', criticality: 'blocking', approvedException: true },
       ]);
-      assert.strictEqual(decisionOverride.decision, 'allow');
+      assert.strictEqual(decisionLegacyBlocked.decision, 'block');
+      assert.strictEqual(decisionLegacyBlocked.reasons[0], 'LEGACY_SCAN: failed');
     });
   });
 
@@ -470,7 +494,10 @@ ${'a'.repeat(64)}
 
     it('executes full repair cycle: Tester FAIL -> Debugger plan -> Coder authorized repair -> Tester PASS', async () => {
       // 1. Write an initial broken file into the workspace
-      await writeVirtualFile(convId, 'src/components/Calculator.tsx', 'export const calc = broken + syntax;');
+      await writeVirtualFile(convId, 'src/components/Calculator.tsx', 'export const calc = broken + syntax;', {
+        pipelineRunId: runId1,
+        stageExecutionId: 'comp-stage-coder-1',
+      });
       const initialHash = await computeWorkspaceFingerprint(convId);
 
       const stageCalls: string[] = [];
@@ -511,7 +538,10 @@ ${'a'.repeat(64)}
           if (stageName === 'Coder') {
             assert.strictEqual(targetFile, 'src/components/Calculator.tsx');
             // Coder fixes the file in VFS
-            await writeVirtualFile(convId, 'src/components/Calculator.tsx', 'export const calc = (a: number, b: number) => a + b;');
+            await writeVirtualFile(convId, 'src/components/Calculator.tsx', 'export const calc = (a: number, b: number) => a + b;', {
+              pipelineRunId: runId1,
+              stageExecutionId: 'comp-stage-coder-1',
+            });
             return {
               status: 'ACCEPTED',
               stageExecution: { id: 'coder-exec-repair', state: 'ACCEPTED' },
@@ -533,6 +563,421 @@ ${'a'.repeat(64)}
 
       const postHash = await computeWorkspaceFingerprint(convId);
       assert.notStrictEqual(initialHash, postHash, 'Workspace hash must have changed after Coder repair');
+    });
+
+    it('regression: fails closed on authorization-loader failure (never invokes Coder or falls back to Tester paths)', async () => {
+      let coderInvoked = false;
+      const emittedEvents: any[] = [];
+
+      // Case A: Missing database fixtures (non-existent conversation / run)
+      await assert.rejects(
+        async () => {
+          await coordinateRepair({
+            conversationId: 'missing-conv-no-fixtures',
+            pipelineRunId: 'missing-run-no-fixtures',
+            emit: (evt) => emittedEvents.push(evt),
+            executeStageFn: async (stageName: string) => {
+              if (stageName === 'Tester') {
+                return {
+                  status: 'ACCEPTED',
+                  stageExecution: { state: 'ACCEPTED' },
+                  content: `# Test Report\n\n### Result\nFAIL\n\n### Failures\n- [src/components/Calculator.tsx] Syntax error\n\n### Workspace Hash\n${'a'.repeat(64)}`,
+                };
+              }
+              if (stageName === 'Debugger') {
+                return {
+                  status: 'ACCEPTED',
+                  stageExecution: { state: 'ACCEPTED' },
+                  content: `# Debug Report\n\n### Issues Addressed\n- File: src/components/Calculator.tsx\nSyntax error\n\n### Patches Applied\n- File: src/components/Calculator.tsx\nFix syntax\n\n### Verification\nPass`,
+                };
+              }
+              if (stageName === 'Coder') {
+                coderInvoked = true;
+                return { status: 'ACCEPTED' };
+              }
+              throw new Error(`Unexpected stage ${stageName}`);
+            },
+          });
+        },
+        /authorization loader failed/i
+      );
+
+      assert.strictEqual(coderInvoked, false, 'Coder must NOT be invoked when authorization loading fails');
+      assert.ok(
+        emittedEvents.some((e) => e.type === 'AGENT_FAIL' && e.message.includes('Failed to load authorized file set')),
+        'Must emit AGENT_FAIL on authorization loader failure'
+      );
+
+      // Case B: Injected loader that throws
+      coderInvoked = false;
+      await assert.rejects(
+        async () => {
+          await coordinateRepair({
+            conversationId: convId,
+            pipelineRunId: runId1,
+            loadAuthorizedFileSetFn: async () => {
+              throw new Error('Injected authorization loader connection error');
+            },
+            emit: () => {},
+            executeStageFn: async (stageName: string) => {
+              if (stageName === 'Tester') {
+                return {
+                  status: 'ACCEPTED',
+                  content: `# Test Report\n\n### Result\nFAIL\n\n### Failures\n- [src/components/Calculator.tsx] Syntax error\n\n### Workspace Hash\n${'a'.repeat(64)}`,
+                };
+              }
+              if (stageName === 'Debugger') {
+                return {
+                  status: 'ACCEPTED',
+                  content: `# Debug Report\n\n### Issues Addressed\n- File: src/components/Calculator.tsx\n\n### Patches Applied\n- File: src/components/Calculator.tsx\n\n### Verification\nPass`,
+                };
+              }
+              if (stageName === 'Coder') {
+                coderInvoked = true;
+                return { status: 'ACCEPTED' };
+              }
+              throw new Error(`Unexpected stage ${stageName}`);
+            },
+          });
+        },
+        /authorization loader failed.*Injected authorization loader connection error/i
+      );
+      assert.strictEqual(coderInvoked, false);
+    });
+
+    it('regression: fails closed on invalid repair plan (unknown failure IDs, empty failure IDs, or missing plan)', async () => {
+      const authSet = await loadAuthorizedFileSet(convId, runId1);
+      const normalized: NormalizedFailure[] = [
+        { id: 'FAIL-001', source: 'tester', message: 'Syntax error', affectedFiles: ['src/components/Calculator.tsx'] },
+      ];
+
+      // Unit check 1: null plan
+      const nullPlanVal = validateRepairPlan({
+        plan: null as any,
+        failures: normalized,
+        baseWorkspaceVersion: 'active-hash',
+        authorized: authSet,
+      });
+      assert.strictEqual(nullPlanVal.valid, false);
+      assert.deepStrictEqual(nullPlanVal.authorizedTargets, []);
+      assert.ok(nullPlanVal.issues.some((i) => i.code === 'MISSING_PLAN'));
+
+      // Unit check 2: empty failure IDs
+      const emptyIdsVal = validateRepairPlan({
+        plan: {
+          basedOnWorkspaceVersion: 'active-hash',
+          failureIds: [],
+          affectedFiles: ['src/components/Calculator.tsx'],
+          instructions: ['Fix'],
+          verificationTargets: [],
+        },
+        failures: normalized,
+        baseWorkspaceVersion: 'active-hash',
+        authorized: authSet,
+      });
+      assert.strictEqual(emptyIdsVal.valid, false);
+      assert.deepStrictEqual(emptyIdsVal.authorizedTargets, []);
+      assert.ok(emptyIdsVal.issues.some((i) => i.code === 'EMPTY_FAILURE_IDS'));
+
+      // Unit check 3: unknown failure ID
+      const unknownIdVal = validateRepairPlan({
+        plan: {
+          basedOnWorkspaceVersion: 'active-hash',
+          failureIds: ['FAIL-999'],
+          affectedFiles: ['src/components/Calculator.tsx'],
+          instructions: ['Fix'],
+          verificationTargets: [],
+        },
+        failures: normalized,
+        baseWorkspaceVersion: 'active-hash',
+        authorized: authSet,
+      });
+      assert.strictEqual(unknownIdVal.valid, false);
+      assert.deepStrictEqual(unknownIdVal.authorizedTargets, []);
+      assert.ok(unknownIdVal.issues.some((i) => i.code === 'UNKNOWN_FAILURE_ID'));
+
+      // Integration: coordinateRepair rejects invalid plan without invoking Coder
+      let coderInvoked = false;
+      await assert.rejects(
+        async () => {
+          await coordinateRepair({
+            conversationId: convId,
+            pipelineRunId: runId1,
+            emit: () => {},
+            executeStageFn: async (stageName: string) => {
+              if (stageName === 'Tester') {
+                return {
+                  status: 'ACCEPTED',
+                  content: `# Test Report\n\n### Result\nFAIL\n\n### Failures\n- [src/components/Calculator.tsx] Syntax error\n\n### Workspace Hash\n${'a'.repeat(64)}`,
+                };
+              }
+              if (stageName === 'Debugger') {
+                return {
+                  status: 'ACCEPTED',
+                  content: `# Debug Report\n\n### Issues Addressed\nNo files\n\n### Patches Applied\nNo patches applied\n\n### Verification\nPass`,
+                };
+              }
+              if (stageName === 'Coder') {
+                coderInvoked = true;
+                return { status: 'ACCEPTED' };
+              }
+              throw new Error(`Unexpected stage ${stageName}`);
+            },
+          });
+        },
+        /Repair plan validation failed.*NO_REPAIR_TARGETS/i
+      );
+      assert.strictEqual(coderInvoked, false, 'Coder must NOT be invoked when repair plan is invalid');
+    });
+
+    it('regression: fails closed on unauthorized targets', async () => {
+      const authSet = await loadAuthorizedFileSet(convId, runId1);
+      const normalized: NormalizedFailure[] = [
+        { id: 'FAIL-001', source: 'tester', message: 'Syntax error', affectedFiles: ['src/components/Calculator.tsx'] },
+      ];
+
+      // Unit check
+      const unauthPlan: RepairPlan = {
+        basedOnWorkspaceVersion: 'active-hash',
+        failureIds: ['FAIL-001'],
+        affectedFiles: ['src/secret/AdminCredentials.ts'],
+        instructions: ['Patch credentials'],
+        verificationTargets: ['FAIL-001'],
+      };
+
+      const valResult = validateRepairPlan({
+        plan: unauthPlan,
+        failures: normalized,
+        baseWorkspaceVersion: 'active-hash',
+        authorized: authSet,
+      });
+      assert.strictEqual(valResult.valid, false);
+      assert.deepStrictEqual(valResult.authorizedTargets, []);
+      assert.ok(valResult.issues.some((i) => i.code === 'UNAUTHORIZED_TARGET'));
+      assert.ok(valResult.rejectedTargets.some((r) => r.path === 'src/secret/AdminCredentials.ts'));
+
+      // Integration: coordinateRepair rejects unauthorized plan without invoking Coder
+      let coderInvoked = false;
+      await assert.rejects(
+        async () => {
+          await coordinateRepair({
+            conversationId: convId,
+            pipelineRunId: runId1,
+            emit: () => {},
+            executeStageFn: async (stageName: string) => {
+              if (stageName === 'Tester') {
+                return {
+                  status: 'ACCEPTED',
+                  content: `# Test Report\n\n### Result\nFAIL\n\n### Failures\n- [src/components/Calculator.tsx] Syntax error\n\n### Workspace Hash\n${'a'.repeat(64)}`,
+                };
+              }
+              if (stageName === 'Debugger') {
+                return {
+                  status: 'ACCEPTED',
+                  content: `# Debug Report\n\n### Issues Addressed\n- File: src/secret/AdminCredentials.ts\nFix\n\n### Patches Applied\n- File: src/secret/AdminCredentials.ts\nArea changed: 1\nWhat was changed: Export key\nWhy: Fix\n\n### Verification\nPass`,
+                };
+              }
+              if (stageName === 'Coder') {
+                coderInvoked = true;
+                return { status: 'ACCEPTED' };
+              }
+              throw new Error(`Unexpected stage ${stageName}`);
+            },
+          });
+        },
+        /UNAUTHORIZED_TARGET/i
+      );
+      assert.strictEqual(coderInvoked, false, 'Coder must NOT be invoked when target is unauthorized');
+    });
+
+    it('regression: fails closed on stale workspace revisions', async () => {
+      const authSet = await loadAuthorizedFileSet(convId, runId1);
+      const normalized: NormalizedFailure[] = [
+        { id: 'FAIL-001', source: 'tester', message: 'Syntax error', affectedFiles: ['src/components/Calculator.tsx'] },
+      ];
+
+      // Unit check: missing base version
+      const missingVerVal = validateRepairPlan({
+        plan: {
+          basedOnWorkspaceVersion: '',
+          failureIds: ['FAIL-001'],
+          affectedFiles: ['src/components/Calculator.tsx'],
+          instructions: ['Fix'],
+          verificationTargets: ['FAIL-001'],
+        },
+        failures: normalized,
+        baseWorkspaceVersion: 'active-hash',
+        authorized: authSet,
+      });
+      assert.strictEqual(missingVerVal.valid, false);
+      assert.deepStrictEqual(missingVerVal.authorizedTargets, []);
+      assert.ok(missingVerVal.issues.some((i) => i.code === 'MISSING_BASE_VERSION'));
+
+      // Unit check: stale base version
+      const stalePlan: RepairPlan = {
+        basedOnWorkspaceVersion: 'stale-hash-00000000000000000000000000000000',
+        failureIds: ['FAIL-001'],
+        affectedFiles: ['src/components/Calculator.tsx'],
+        instructions: ['Fix'],
+        verificationTargets: ['FAIL-001'],
+      };
+      const staleVerVal = validateRepairPlan({
+        plan: stalePlan,
+        failures: normalized,
+        baseWorkspaceVersion: 'active-hash-11111111111111111111111111111111',
+        authorized: authSet,
+      });
+      assert.strictEqual(staleVerVal.valid, false);
+      assert.deepStrictEqual(staleVerVal.authorizedTargets, []);
+      assert.ok(staleVerVal.issues.some((i) => i.code === 'STALE_BASE_VERSION'));
+
+      // Integration: coordinateRepair rejects stale version in Debugger output
+      let coderInvoked = false;
+      await assert.rejects(
+        async () => {
+          await coordinateRepair({
+            conversationId: convId,
+            pipelineRunId: runId1,
+            emit: () => {},
+            executeStageFn: async (stageName: string) => {
+              if (stageName === 'Tester') {
+                return {
+                  status: 'ACCEPTED',
+                  content: `# Test Report\n\n### Result\nFAIL\n\n### Failures\n- [src/components/Calculator.tsx] Syntax error\n\n### Workspace Hash\n${'a'.repeat(64)}`,
+                };
+              }
+              if (stageName === 'Debugger') {
+                return {
+                  status: 'ACCEPTED',
+                  content: `# Debug Report\n\n### Base Workspace Version\n0000000000000000000000000000000000000000000000000000000000000000\n\n### Issues Addressed\n- File: src/components/Calculator.tsx\n\n### Patches Applied\n- File: src/components/Calculator.tsx\nArea changed: 1\nWhat was changed: fix\nWhy: fix\n\n### Verification\nPass`,
+                };
+              }
+              if (stageName === 'Coder') {
+                coderInvoked = true;
+                return { status: 'ACCEPTED' };
+              }
+              throw new Error(`Unexpected stage ${stageName}`);
+            },
+          });
+        },
+        /STALE_BASE_VERSION/i
+      );
+      assert.strictEqual(coderInvoked, false, 'Coder must NOT be invoked when plan is based on a stale revision');
+    });
+
+    it('regression: fails closed on control-plane targets', async () => {
+      const authSet = await loadAuthorizedFileSet(convId, runId1);
+      const normalized: NormalizedFailure[] = [
+        { id: 'FAIL-001', source: 'tester', message: 'Syntax error', affectedFiles: ['src/components/Calculator.tsx'] },
+      ];
+
+      // Unit check
+      const controlPlan: RepairPlan = {
+        basedOnWorkspaceVersion: 'active-hash',
+        failureIds: ['FAIL-001'],
+        affectedFiles: ['architecture.md', 'blueprint.md'],
+        instructions: ['Tamper with architecture'],
+        verificationTargets: ['FAIL-001'],
+      };
+      const controlVal = validateRepairPlan({
+        plan: controlPlan,
+        failures: normalized,
+        baseWorkspaceVersion: 'active-hash',
+        authorized: authSet,
+      });
+      assert.strictEqual(controlVal.valid, false);
+      assert.deepStrictEqual(controlVal.authorizedTargets, []);
+      assert.ok(controlVal.issues.some((i) => i.code === 'CONTROL_PLANE_TARGET'));
+      assert.ok(controlVal.rejectedTargets.some((r) => r.path === 'architecture.md'));
+      assert.ok(controlVal.rejectedTargets.some((r) => r.path === 'blueprint.md'));
+
+      // Integration: coordinateRepair rejects control-plane targets without invoking Coder
+      let coderInvoked = false;
+      await assert.rejects(
+        async () => {
+          await coordinateRepair({
+            conversationId: convId,
+            pipelineRunId: runId1,
+            emit: () => {},
+            executeStageFn: async (stageName: string) => {
+              if (stageName === 'Tester') {
+                return {
+                  status: 'ACCEPTED',
+                  content: `# Test Report\n\n### Result\nFAIL\n\n### Failures\n- [src/components/Calculator.tsx] Syntax error\n\n### Workspace Hash\n${'a'.repeat(64)}`,
+                };
+              }
+              if (stageName === 'Debugger') {
+                return {
+                  status: 'ACCEPTED',
+                  content: `# Debug Report\n\n### Issues Addressed\n- File: architecture.md\nRewrite architecture\n\n### Patches Applied\n- File: architecture.md\nArea changed: 1\nWhat was changed: alter tech stack\nWhy: unauthorized\n\n### Verification\nPass`,
+                };
+              }
+              if (stageName === 'Coder') {
+                coderInvoked = true;
+                return { status: 'ACCEPTED' };
+              }
+              throw new Error(`Unexpected stage ${stageName}`);
+            },
+          });
+        },
+        /CONTROL_PLANE_TARGET/i
+      );
+      assert.strictEqual(coderInvoked, false, 'Coder must NOT be invoked when target is a control plane file');
+    });
+
+    it('preserves legitimate isolated-test behavior using dependency injection without weakening authorization', async () => {
+      const customAuth: AuthorizedFileSet = {
+        architectureImplementationFiles: ['src/utils/math.ts'],
+        architectureAllFiles: ['src/utils/math.ts'],
+        blueprintFiles: ['src/utils/math.ts'],
+        authorizedFiles: ['src/utils/math.ts'],
+        coderAuthorizedFiles: ['src/utils/math.ts'],
+        ownerByFile: { 'src/utils/math.ts': 'Math' },
+        entryPoints: { frontend: null, backend: null },
+        architectureFileSetHash: 'hash-1',
+        blueprintFileSetHash: 'hash-2',
+        authorizedFileSetHash: 'hash-3',
+      };
+
+      const executedStages: string[] = [];
+      let cycle = 0;
+
+      await coordinateRepair({
+        conversationId: 'isolated-conv-no-db',
+        pipelineRunId: 'isolated-run-no-db',
+        authorizedFileSet: customAuth,
+        emit: () => {},
+        executeStageFn: async (stageName: string, customInput?: string, targetFile?: string) => {
+          executedStages.push(stageName);
+          if (stageName === 'Tester') {
+            cycle++;
+            if (cycle === 1) {
+              return {
+                status: 'ACCEPTED',
+                content: `# Test Report\n\n### Result\nFAIL\n\n### Failures\n- [src/utils/math.ts] Type error on line 5\n\n### Workspace Hash\n${'b'.repeat(64)}`,
+              };
+            } else {
+              return {
+                status: 'ACCEPTED',
+                content: `# Test Report\n\n### Result\nPASS\n\n### Summary\nClean\n\n### Failures\nNone\n\n### Workspace Hash\n${'c'.repeat(64)}`,
+              };
+            }
+          }
+          if (stageName === 'Debugger') {
+            return {
+              status: 'ACCEPTED',
+              content: `# Debug Report\n\n### Issues Addressed\n- File: src/utils/math.ts\nType error\n\n### Patches Applied\n- File: src/utils/math.ts\nArea changed: 1\nWhat was changed: fix type\nWhy: fix\n\n### Verification\nPass`,
+            };
+          }
+          if (stageName === 'Coder') {
+            assert.strictEqual(targetFile, 'src/utils/math.ts');
+            return { status: 'ACCEPTED', content: 'export const sum = (a: number, b: number) => a + b;' };
+          }
+          throw new Error(`Unexpected stage ${stageName}`);
+        },
+      });
+
+      assert.deepStrictEqual(executedStages, ['Tester', 'Debugger', 'Coder', 'Tester']);
     });
   });
 
@@ -897,76 +1342,99 @@ File: src/app/api/route.ts
     });
 
     it('Gate 4A: Trusted gate authority rejects agent self-approval, forgery, and expired exceptions', () => {
-      const validException: TrustedGateException = {
-        checkName: 'UNSAFE_EVAL',
-        workspaceVersion: 'rev-001',
-        pipelineRunId: 'run-gate-001',
-        approver: 'SecurityOfficer-Jane',
-        signature: 'sig-valid-jane-7788',
-        expiresAt: Date.now() + 60000,
-        rationale: 'Approved sandbox eval for mathematical formula parser',
-      };
+      const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+      const pubPem = publicKey.export({ type: 'spki', format: 'pem' }) as string;
+      const privPem = privateKey.export({ type: 'pkcs8', format: 'pem' }) as string;
 
-      const validRes = validateGateException(validException, {
-        checkName: 'UNSAFE_EVAL',
-        workspaceVersion: 'rev-001',
-        pipelineRunId: 'run-gate-001',
+      registerTrustedApprover({
+        id: 'SecurityOfficer-Jane',
+        name: 'Jane Security',
+        role: 'Security Officer',
+        publicKey: pubPem,
+        status: 'ACTIVE',
+        allowedChecks: ['UNSAFE_EVAL', 'HARDCODED_SECRET'],
       });
-      assert.strictEqual(validRes.valid, true);
 
-      const agentSelfApproval: TrustedGateException = {
-        ...validException,
-        approver: 'Coder',
-      };
-      const agentRes = validateGateException(agentSelfApproval, {
-        checkName: 'UNSAFE_EVAL',
-        workspaceVersion: 'rev-001',
-        pipelineRunId: 'run-gate-001',
-      });
-      assert.strictEqual(agentRes.valid, false);
-      assert.ok(agentRes.reason?.includes('Unauthorized self-approval'));
-
-      const expiredException: TrustedGateException = {
-        ...validException,
-        expiresAt: Date.now() - 1000,
-      };
-      const expRes = validateGateException(expiredException, {
-        checkName: 'UNSAFE_EVAL',
-        workspaceVersion: 'rev-001',
-        pipelineRunId: 'run-gate-001',
-      });
-      assert.strictEqual(expRes.valid, false);
-      assert.ok(expRes.reason?.includes('expired'));
-
-      const decisionBlocked = decideRelease(
-        [
+      try {
+        const validException: TrustedGateException = createSignedGateException(
           {
-            name: 'UNSAFE_EVAL',
-            status: 'failed',
-            criticality: 'blocking',
-            approvedException: true,
+            checkName: 'UNSAFE_EVAL',
+            workspaceVersion: 'rev-001',
+            pipelineRunId: 'run-gate-001',
+            approver: 'SecurityOfficer-Jane',
+            expiresAt: Date.now() + 60000,
+            rationale: 'Approved sandbox eval for mathematical formula parser',
           },
-        ],
-        { enforceTrustedExceptionsOnly: true }
-      );
-      assert.strictEqual(decisionBlocked.decision, 'block');
+          privPem
+        );
 
-      const decisionAllowed = decideRelease(
-        [
-          {
-            name: 'UNSAFE_EVAL',
-            status: 'failed',
-            criticality: 'blocking',
-            trustedException: validException,
-          },
-        ],
-        {
+        const validRes = validateGateException(validException, {
+          checkName: 'UNSAFE_EVAL',
           workspaceVersion: 'rev-001',
           pipelineRunId: 'run-gate-001',
-          enforceTrustedExceptionsOnly: true,
-        }
-      );
-      assert.strictEqual(decisionAllowed.decision, 'allow');
+        });
+        assert.strictEqual(validRes.valid, true);
+
+        const agentSelfApproval: TrustedGateException = {
+          ...validException,
+          approver: 'Coder',
+        };
+        const agentRes = validateGateException(agentSelfApproval, {
+          checkName: 'UNSAFE_EVAL',
+          workspaceVersion: 'rev-001',
+          pipelineRunId: 'run-gate-001',
+        });
+        assert.strictEqual(agentRes.valid, false);
+        assert.ok(agentRes.reason?.includes('Unauthorized self-approval'));
+
+        const expiredException: TrustedGateException = {
+          ...validException,
+          expiresAt: Date.now() - 1000,
+        };
+        const expRes = validateGateException(expiredException, {
+          checkName: 'UNSAFE_EVAL',
+          workspaceVersion: 'rev-001',
+          pipelineRunId: 'run-gate-001',
+        });
+        assert.strictEqual(expRes.valid, false);
+        assert.ok(expRes.reason?.includes('expired'));
+
+        // Legacy approvedException: true bypass attempt must block
+        const decisionBlocked = decideRelease(
+          [
+            {
+              name: 'UNSAFE_EVAL',
+              status: 'failed',
+              criticality: 'blocking',
+              approvedException: true,
+            },
+          ],
+          {
+            workspaceVersion: 'rev-001',
+            pipelineRunId: 'run-gate-001',
+          }
+        );
+        assert.strictEqual(decisionBlocked.decision, 'block');
+
+        // Signed trusted exception from registered officer allows release
+        const decisionAllowed = decideRelease(
+          [
+            {
+              name: 'UNSAFE_EVAL',
+              status: 'failed',
+              criticality: 'blocking',
+              trustedException: validException,
+            },
+          ],
+          {
+            workspaceVersion: 'rev-001',
+            pipelineRunId: 'run-gate-001',
+          }
+        );
+        assert.strictEqual(decisionAllowed.decision, 'allow');
+      } finally {
+        unregisterTrustedApprover('SecurityOfficer-Jane');
+      }
     });
   });
 });

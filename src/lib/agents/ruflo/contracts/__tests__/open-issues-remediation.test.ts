@@ -49,6 +49,7 @@ describe('Open Issues & Contract Convergence Remediation Suite (F-01–F-14, C-1
   const convOwnerA = `${testPrefix}-conv-owner-a`;
   const convOwnerB = `${testPrefix}-conv-owner-b`;
   const runIdA = `${testPrefix}-run-a`;
+  const stageExecCoderA = `${testPrefix}-stage-coder-a`;
 
   before(async () => {
     await prisma.conversation.create({
@@ -71,6 +72,16 @@ describe('Open Issues & Contract Convergence Remediation Suite (F-01–F-14, C-1
         leaseExpiresAt: new Date(Date.now() + 60_000),
       },
     });
+    await prisma.stageExecution.create({
+      data: {
+        id: stageExecCoderA,
+        conversationId: convOwnerA,
+        pipelineRunId: runIdA,
+        stageName: 'Coder',
+        attempt: 1,
+        state: 'RUNNING',
+      },
+    });
     await prisma.conversation.create({
       data: {
         id: convOwnerB,
@@ -78,6 +89,79 @@ describe('Open Issues & Contract Convergence Remediation Suite (F-01–F-14, C-1
         ownerId: 'user-beta',
         status: 'Active',
         currentStage: 'Queen',
+      },
+    });
+
+    const archMd = `### Tech Stack
+- Frontend: Next.js
+- Frontend Entry Point: src/index.ts
+- Backend: None
+- Backend Entry Point: None
+- Database: None
+- ORM: None
+- Authentication: None
+- Build Tool: Next.js
+- Additional: None
+
+### Project Folder Structure
+project-root/
+└── src/
+    ├── index.ts
+    └── utils.ts
+
+### Project Files
+- src/index.ts
+- src/utils.ts
+
+### Modules
+**Core Module**
+- Responsibility: Main app logic
+- Owned Files: src/index.ts, src/utils.ts
+- Depends On: None
+- Supports Features: Core
+
+### Conventions
+- File Naming: camelCase
+`;
+
+    const blueprintMd = `### File: src/index.ts
+- Owner Module: Core Module
+- Purpose: Application entry
+- Dependencies: None
+- Specs Required: None
+- Exports: export const hello
+
+### File: src/utils.ts
+- Owner Module: Core Module
+- Purpose: Application utilities
+- Dependencies: None
+- Specs Required: None
+- Exports: export function sum
+`;
+
+    await prisma.artifactVersion.create({
+      data: {
+        conversationId: convOwnerA,
+        pipelineRunId: runIdA,
+        stageName: 'Architect',
+        filePath: 'architecture.md',
+        version: 1,
+        contentHash: 'hash-arch-open-owner',
+        content: archMd,
+        state: 'ACCEPTED',
+      },
+    });
+
+    await prisma.artifactVersion.create({
+      data: {
+        conversationId: convOwnerA,
+        pipelineRunId: runIdA,
+        stageName: 'Blueprinter',
+        filePath: 'blueprint.md',
+        version: 1,
+        contentHash: 'hash-blue-open-owner',
+        content: blueprintMd,
+        state: 'ACCEPTED',
       },
     });
   });
@@ -214,7 +298,7 @@ describe('Open Issues & Contract Convergence Remediation Suite (F-01–F-14, C-1
     await verifyAndRepairWorkspace(
       convOwnerA,
       runIdA,
-      async (stageName: string, customInput?: string) => {
+      async (stageName: string, customInput?: string, targetFile?: string) => {
         calls.push(stageName);
         if (stageName === 'Tester') {
           testerCount++;
@@ -222,7 +306,7 @@ describe('Open Issues & Contract Convergence Remediation Suite (F-01–F-14, C-1
           return {
             status: 'ACCEPTED',
             stageExecution: { id: `exec-tester-${testerCount}`, state: 'ACCEPTED' },
-            content: `# Test Report\n\n### Result\n${resultToken}\n\n### Summary\nCycle ${testerCount}\n\n### Tests\n- Check: ${resultToken}\n\n### Failures\n${resultToken === 'FAIL' ? '- Broken import' : 'None'}\n\n### Workspace Hash\n${'a'.repeat(64)}`,
+            content: `# Test Report\n\n### Result\n${resultToken}\n\n### Summary\nCycle ${testerCount}\n\n### Tests\n- Check: ${resultToken}\n\n### Failures\n${resultToken === 'FAIL' ? '- [src/index.ts] Broken import' : 'None'}\n\n### Workspace Hash\n${'a'.repeat(64)}`,
           };
         }
         if (stageName === 'Debugger') {
@@ -230,7 +314,15 @@ describe('Open Issues & Contract Convergence Remediation Suite (F-01–F-14, C-1
           return {
             status: 'ACCEPTED',
             stageExecution: { id: 'exec-debugger-1', state: 'ACCEPTED' },
-            content: `# Debug Report\n\n### Issues Addressed\nFixed import.\n\n### Patches Applied\nPatched src/index.ts.\n\n### Verification\nPassed.`,
+            content: `# Debug Report\n\n### Issues Addressed\n- File: src/index.ts\nFixed import.\n\n### Patches Applied\n- File: src/index.ts\nArea changed: 1\nWhat was changed: Export hello\nWhy: Fix import\n\n### Verification\nPassed.`,
+          };
+        }
+        if (stageName === 'Coder') {
+          assert.strictEqual(targetFile, 'src/index.ts');
+          return {
+            status: 'ACCEPTED',
+            stageExecution: { id: 'exec-coder-1', state: 'ACCEPTED' },
+            content: 'export const hello = "world";',
           };
         }
         throw new Error(`Unexpected stage ${stageName}`);
@@ -238,13 +330,22 @@ describe('Open Issues & Contract Convergence Remediation Suite (F-01–F-14, C-1
       () => {}
     );
 
-    assert.deepStrictEqual(calls, ['Tester', 'Debugger', 'Tester']);
+    assert.deepStrictEqual(calls, ['Tester', 'Debugger', 'Coder', 'Tester']);
   });
 
   it('F-02: buildWorkspaceEvidenceBundle indexes non-control-plane files with EV-NNN IDs and SHA-256 hashes', async () => {
-    await writeVirtualFile(convOwnerA, 'plan.md', '# Control Plane Plan');
-    await writeVirtualFile(convOwnerA, 'src/index.ts', 'export const hello = "world";\n');
-    await writeVirtualFile(convOwnerA, 'src/utils.ts', 'export function sum(a: number, b: number) { return a + b; }\n');
+    await writeVirtualFile(convOwnerA, 'plan.md', '# Control Plane Plan', {
+      pipelineRunId: runIdA,
+      allowControlPlane: true,
+    });
+    await writeVirtualFile(convOwnerA, 'src/index.ts', 'export const hello = "world";\n', {
+      pipelineRunId: runIdA,
+      stageExecutionId: stageExecCoderA,
+    });
+    await writeVirtualFile(convOwnerA, 'src/utils.ts', 'export function sum(a: number, b: number) { return a + b; }\n', {
+      pipelineRunId: runIdA,
+      stageExecutionId: stageExecCoderA,
+    });
 
     const bundle = await buildWorkspaceEvidenceBundle(convOwnerA, ['src/index.ts', 'src/utils.ts']);
     assert.strictEqual(bundle.fileCount, 2);

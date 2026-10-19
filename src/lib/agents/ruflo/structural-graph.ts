@@ -575,6 +575,9 @@ export async function detectAndPersistArchitectureDrift(
   reportMd += `- Broken imports: ${brokenImports.length}\n`;
   reportMd += `- Cycles: ${dependencyCycles.length}\n`;
 
-  await writeVirtualFile(conversationId, 'architecture_drift_report.md', reportMd);
+  await writeVirtualFile(conversationId, 'architecture_drift_report.md', reportMd, {
+    pipelineRunId: 'structural-graph',
+    allowControlPlane: true,
+  });
   return reportMd;
 }

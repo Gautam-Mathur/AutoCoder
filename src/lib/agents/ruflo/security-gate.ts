@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+
 export interface SecurityFinding {
   file: string;
   line: number;
@@ -40,6 +42,31 @@ export interface TrustedGateException {
   rationale: string;
 }
 
+export interface CanonicalExceptionPayload {
+  checkName: string;
+  workspaceVersion: string;
+  pipelineRunId: string;
+  approver: string;
+  expiresAt: number;
+  rationale: string;
+}
+
+export interface TrustedApprover {
+  id: string;
+  name: string;
+  role: string;
+  publicKey: string | crypto.KeyObject;
+  algorithm?: string; // defaults to 'ed25519'
+  status: 'ACTIVE' | 'REVOKED' | 'SUSPENDED';
+  allowedChecks?: string[]; // e.g. ['*'] or ['UNSAFE_EVAL', 'HARDCODED_SECRET']
+  expiresAt?: number;
+}
+
+export interface TrustedExceptionAuthorizationService {
+  getApprover(approverId: string): Promise<TrustedApprover | null> | TrustedApprover | null;
+  isApproverAuthorized?(approverId: string, checkName: string): Promise<boolean> | boolean;
+}
+
 const FORBIDDEN_AGENT_APPROVERS = new Set([
   'coder',
   'debugger',
@@ -54,11 +81,148 @@ const FORBIDDEN_AGENT_APPROVERS = new Set([
   'reviewer',
   'agent',
   'llm',
+  'autocoder',
+  'autogod',
+  'assistant',
 ]);
 
 /**
- * Validates that an exception was issued by a trusted non-agent identity,
- * is bound to the exact workspace revision and run ID, and is unexpired (Section 22.3).
+ * In-memory authority registry implementing TrustedExceptionAuthorizationService.
+ * External IAM/PKI/KMS systems can plug in by implementing the interface.
+ */
+export class TrustedAuthorityRegistry implements TrustedExceptionAuthorizationService {
+  private approvers = new Map<string, TrustedApprover>();
+
+  register(approver: TrustedApprover): void {
+    if (!approver || !approver.id) {
+      throw new Error('Approver must have a valid id.');
+    }
+    const cleanId = approver.id.trim();
+    if (FORBIDDEN_AGENT_APPROVERS.has(cleanId.toLowerCase())) {
+      throw new Error(`Cannot register agent "${cleanId}" as a trusted release exception approver.`);
+    }
+    if (!approver.publicKey) {
+      throw new Error(`Approver "${cleanId}" must provide a valid public key.`);
+    }
+    this.approvers.set(cleanId, {
+      ...approver,
+      id: cleanId,
+      status: approver.status || 'ACTIVE',
+      algorithm: approver.algorithm || 'ed25519',
+    });
+  }
+
+  unregister(approverId: string): boolean {
+    return this.approvers.delete(approverId.trim());
+  }
+
+  clear(): void {
+    this.approvers.clear();
+  }
+
+  getApprover(approverId: string): TrustedApprover | null {
+    if (!approverId) return null;
+    return this.approvers.get(approverId.trim()) || null;
+  }
+
+  isApproverAuthorized(approverId: string, checkName: string): boolean {
+    const approver = this.getApprover(approverId);
+    if (!approver) return false;
+    if (approver.status !== 'ACTIVE') return false;
+    if (approver.expiresAt && Date.now() > approver.expiresAt) return false;
+    if (FORBIDDEN_AGENT_APPROVERS.has(approver.id.toLowerCase())) return false;
+    if (!approver.allowedChecks || approver.allowedChecks.includes('*')) return true;
+    return approver.allowedChecks.includes(checkName);
+  }
+}
+
+export const defaultTrustedApproverRegistry = new TrustedAuthorityRegistry();
+
+export function registerTrustedApprover(approver: TrustedApprover): void {
+  defaultTrustedApproverRegistry.register(approver);
+}
+
+export function unregisterTrustedApprover(approverId: string): boolean {
+  return defaultTrustedApproverRegistry.unregister(approverId);
+}
+
+export function clearTrustedApprovers(): void {
+  defaultTrustedApproverRegistry.clear();
+}
+
+/**
+ * Produces a deterministic canonical string binding all 6 required fields of the exception.
+ */
+export function createCanonicalExceptionPayload(params: CanonicalExceptionPayload): string {
+  return [
+    'RELEASE_GATE_EXCEPTION_V1',
+    `checkName:${params.checkName}`,
+    `workspaceVersion:${params.workspaceVersion}`,
+    `pipelineRunId:${params.pipelineRunId}`,
+    `approver:${params.approver}`,
+    `expiresAt:${params.expiresAt}`,
+    `rationale:${params.rationale}`,
+  ].join('\n');
+}
+
+/**
+ * Signs a canonical exception payload using an asymmetric private key (Ed25519 or RSA/ECDSA).
+ */
+export function signGateException(
+  payload: CanonicalExceptionPayload,
+  privateKey: crypto.KeyLike | string,
+  algorithm?: string
+): string {
+  const canonical = createCanonicalExceptionPayload(payload);
+  const data = Buffer.from(canonical, 'utf8');
+  const algo = algorithm && algorithm.toLowerCase() !== 'ed25519' ? algorithm : null;
+  const signature = crypto.sign(algo, data, privateKey);
+  return signature.toString('base64');
+}
+
+/**
+ * Cryptographically verifies an exception signature against the registered public key.
+ */
+export function verifyExceptionSignature(
+  canonicalPayload: string,
+  signatureBase64: string,
+  publicKey: crypto.KeyLike | string,
+  algorithm?: string
+): boolean {
+  try {
+    if (!signatureBase64 || typeof signatureBase64 !== 'string') return false;
+    const data = Buffer.from(canonicalPayload, 'utf8');
+    const signature = Buffer.from(signatureBase64, 'base64');
+    if (signature.length === 0) return false;
+
+    const algo = algorithm && algorithm.toLowerCase() !== 'ed25519' ? algorithm : null;
+    return crypto.verify(algo, data, publicKey, signature);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Helper to construct a fully bound, cryptographically signed gate exception record.
+ */
+export function createSignedGateException(
+  params: CanonicalExceptionPayload,
+  privateKey: crypto.KeyLike | string,
+  algorithm?: string
+): TrustedGateException {
+  const signature = signGateException(params, privateKey, algorithm);
+  return {
+    ...params,
+    signature,
+  };
+}
+
+/**
+ * Validates that an exception was issued by a trusted identity enrolled in the authorization directory,
+ * is cryptographically signed against the approver's registered public key, is bound to the exact
+ * workspace revision, pipeline run ID, and check name, is unexpired, and includes a valid rationale (Section 22.3).
+ *
+ * Fails closed if the identity is unknown, revoked, suspended, unpermitted, or if signature verification fails.
  */
 export function validateGateException(
   exception: TrustedGateException | undefined,
@@ -66,36 +230,168 @@ export function validateGateException(
     checkName: string;
     workspaceVersion?: string;
     pipelineRunId?: string;
+    authorityService?: TrustedExceptionAuthorizationService;
+    currentTime?: number;
   }
 ): { valid: boolean; reason?: string } {
   if (!exception) {
     return { valid: false, reason: 'Missing exception authorization record.' };
   }
-  if (!exception.checkName || exception.checkName !== expected.checkName) {
+
+  // Fail closed if expected release context is missing
+  if (!expected.checkName || typeof expected.checkName !== 'string' || !expected.checkName.trim()) {
+    return { valid: false, reason: 'Validation context is missing required checkName.' };
+  }
+  if (!expected.workspaceVersion || typeof expected.workspaceVersion !== 'string' || !expected.workspaceVersion.trim()) {
+    return { valid: false, reason: 'Validation context is missing required workspaceVersion.' };
+  }
+  if (!expected.pipelineRunId || typeof expected.pipelineRunId !== 'string' || !expected.pipelineRunId.trim()) {
+    return { valid: false, reason: 'Validation context is missing required pipelineRunId.' };
+  }
+
+  // Reject malformed exception structure
+  if (typeof exception !== 'object') {
+    return { valid: false, reason: 'Malformed exception: payload must be an object.' };
+  }
+  if (typeof exception.checkName !== 'string' || !exception.checkName.trim()) {
+    return { valid: false, reason: 'Malformed exception: checkName is missing or invalid.' };
+  }
+  if (typeof exception.workspaceVersion !== 'string' || !exception.workspaceVersion.trim()) {
+    return { valid: false, reason: 'Malformed exception: workspaceVersion is missing or invalid.' };
+  }
+  if (typeof exception.pipelineRunId !== 'string' || !exception.pipelineRunId.trim()) {
+    return { valid: false, reason: 'Malformed exception: pipelineRunId is missing or invalid.' };
+  }
+  if (typeof exception.approver !== 'string' || !exception.approver.trim()) {
+    return { valid: false, reason: 'Malformed exception: approver is missing or invalid.' };
+  }
+  if (typeof exception.rationale !== 'string' || !exception.rationale.trim()) {
+    return { valid: false, reason: 'Malformed exception: rationale is missing or empty.' };
+  }
+  if (typeof exception.expiresAt !== 'number' || !Number.isFinite(exception.expiresAt) || exception.expiresAt <= 0) {
+    return { valid: false, reason: 'Malformed exception: expiresAt is missing or invalid timestamp.' };
+  }
+  if (typeof exception.signature !== 'string' || !exception.signature.trim()) {
+    return { valid: false, reason: 'Malformed exception: signature is missing or empty.' };
+  }
+
+  // Exact context bindings
+  if (exception.checkName !== expected.checkName) {
     return { valid: false, reason: `Exception is for "${exception.checkName}", not "${expected.checkName}".` };
   }
-  if (expected.workspaceVersion && exception.workspaceVersion !== expected.workspaceVersion) {
+  if (exception.workspaceVersion !== expected.workspaceVersion) {
     return { valid: false, reason: 'Exception workspace version does not match active revision.' };
   }
-  if (expected.pipelineRunId && exception.pipelineRunId !== expected.pipelineRunId) {
+  if (exception.pipelineRunId !== expected.pipelineRunId) {
     return { valid: false, reason: 'Exception pipelineRunId does not match active run.' };
   }
-  if (!exception.approver || FORBIDDEN_AGENT_APPROVERS.has(exception.approver.toLowerCase().trim())) {
+
+  // Check agent blacklist
+  const approverId = exception.approver.trim();
+  if (FORBIDDEN_AGENT_APPROVERS.has(approverId.toLowerCase())) {
     return { valid: false, reason: `Unauthorized self-approval: approver "${exception.approver}" is an agent.` };
   }
-  if (exception.expiresAt && Date.now() > exception.expiresAt) {
+
+  // Check expiration
+  const now = expected.currentTime ?? Date.now();
+  if (now > exception.expiresAt) {
     return { valid: false, reason: 'Exception has expired.' };
   }
-  if (!exception.signature || exception.signature.length < 8) {
-    return { valid: false, reason: 'Invalid or missing signature.' };
+
+  // Check authority service (fail closed if authority or approver not registered)
+  const authorityService = expected.authorityService ?? defaultTrustedApproverRegistry;
+  let approverRecord: TrustedApprover | null = null;
+  try {
+    const res = authorityService.getApprover(approverId);
+    if (res && typeof (res as Promise<any>).then === 'function') {
+      return {
+        valid: false,
+        reason: 'Async authorization service cannot be evaluated synchronously. Provide synchronous authority registry.',
+      };
+    }
+    approverRecord = res as TrustedApprover | null;
+  } catch (err: any) {
+    return {
+      valid: false,
+      reason: `Authorization service lookup error for "${approverId}": ${err?.message || 'unknown error'}`,
+    };
   }
+
+  if (!approverRecord) {
+    return {
+      valid: false,
+      reason: `Unauthorized approver: approver "${approverId}" is not enrolled in the trusted authority directory (fail-closed: identity/key missing).`,
+    };
+  }
+
+  if (approverRecord.status !== 'ACTIVE') {
+    return {
+      valid: false,
+      reason: `Unauthorized approver: authority record for "${approverId}" has status "${approverRecord.status}".`,
+    };
+  }
+
+  if (approverRecord.expiresAt && now > approverRecord.expiresAt) {
+    return {
+      valid: false,
+      reason: `Unauthorized approver: authority certificate for "${approverId}" has expired.`,
+    };
+  }
+
+  if (
+    approverRecord.allowedChecks &&
+    !approverRecord.allowedChecks.includes('*') &&
+    !approverRecord.allowedChecks.includes(expected.checkName)
+  ) {
+    return {
+      valid: false,
+      reason: `Unauthorized approver: "${approverId}" is not authorized to grant exceptions for check "${expected.checkName}".`,
+    };
+  }
+
+  if (!approverRecord.publicKey) {
+    return {
+      valid: false,
+      reason: `Unauthorized approver: missing public key in authority record for "${approverId}".`,
+    };
+  }
+
+  // Cryptographic signature verification against approver's registered public key
+  const canonicalPayload = createCanonicalExceptionPayload({
+    checkName: exception.checkName,
+    workspaceVersion: exception.workspaceVersion,
+    pipelineRunId: exception.pipelineRunId,
+    approver: exception.approver,
+    expiresAt: exception.expiresAt,
+    rationale: exception.rationale,
+  });
+
+  const isSigValid = verifyExceptionSignature(
+    canonicalPayload,
+    exception.signature,
+    approverRecord.publicKey,
+    approverRecord.algorithm
+  );
+
+  if (!isSigValid) {
+    return {
+      valid: false,
+      reason: 'Cryptographic signature verification failed: signature is forged, corrupt, or does not match canonical payload.',
+    };
+  }
+
   return { valid: true };
 }
 
 /**
  * Evaluates pipeline release readiness based on check criticality and status (Section 20.5 & 22.3).
- * Blocking checks fail closed on 'failed', 'inconclusive', 'unavailable', 'timed_out',
- * or 'skipped' without a valid trusted exception.
+ *
+ * Mandatory Release Boundary Enforcement:
+ * - Advisory checks do not block release.
+ * - Passed checks do not block release.
+ * - Blocking non-passed checks fail closed unless covered by an authenticated, cryptographically
+ *   verified TrustedGateException bound to the exact check, active workspaceVersion, and pipelineRunId.
+ * - Legacy `approvedException: true` bypass is strictly removed from production release decisions.
  */
 export function decideRelease(
   checks: Array<{
@@ -108,6 +404,8 @@ export function decideRelease(
   context?: {
     workspaceVersion?: string;
     pipelineRunId?: string;
+    authorityService?: TrustedExceptionAuthorizationService;
+    currentTime?: number;
     enforceTrustedExceptionsOnly?: boolean;
   }
 ): GateDecisionResult {
@@ -115,18 +413,30 @@ export function decideRelease(
     if (check.criticality === 'advisory') return false;
     if (check.status === 'passed') return false;
 
-    if (check.trustedException || context?.enforceTrustedExceptionsOnly) {
-      const val = validateGateException(check.trustedException, {
-        checkName: check.name,
-        workspaceVersion: context?.workspaceVersion,
-        pipelineRunId: context?.pipelineRunId,
-      });
-      if (val.valid) return false;
+    // Legacy approvedException: true is completely ignored.
+    // Blocking check MUST have a valid, cryptographically verified trustedException.
+    if (!check.trustedException) {
       return true;
     }
 
-    if (check.approvedException === true) return false;
-    return true;
+    if (!context?.workspaceVersion || !context?.pipelineRunId) {
+      // Cannot validate exception without active release context -> fail closed
+      return true;
+    }
+
+    const val = validateGateException(check.trustedException, {
+      checkName: check.name,
+      workspaceVersion: context.workspaceVersion,
+      pipelineRunId: context.pipelineRunId,
+      authorityService: context.authorityService,
+      currentTime: context.currentTime,
+    });
+
+    if (val.valid) {
+      return false; // Valid trusted exception waives this check
+    }
+
+    return true; // Invalid / untrusted / forged / expired exception -> block!
   });
 
   return blockers.length === 0

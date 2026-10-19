@@ -88,7 +88,10 @@ export async function commitAcceptedArtifact(params: CommitArtifactParams) {
 
   // Materialize to VFS workspace projection and verify projection integrity
   try {
-    await writeVirtualFile(params.conversationId, params.filePath, params.content);
+    await writeVirtualFile(params.conversationId, params.filePath, params.content, {
+      pipelineRunId: params.pipelineRunId,
+      allowControlPlane: true,
+    });
     const projectedContent = await readVirtualFile(params.conversationId, params.filePath);
     if (projectedContent === null || createContentHash(projectedContent) !== contentHash) {
       throw new Error(`VFS projection hash mismatch for "${params.filePath}".`);
@@ -121,7 +124,10 @@ export async function reconcilePendingProjections(conversationId: string): Promi
 
   let reconciledCount = 0;
   for (const art of unsynced) {
-    await writeVirtualFile(conversationId, art.filePath, art.content);
+    await writeVirtualFile(conversationId, art.filePath, art.content, {
+      pipelineRunId: art.pipelineRunId,
+      allowControlPlane: true,
+    });
     const projected = await readVirtualFile(conversationId, art.filePath);
     if (projected !== null && createContentHash(projected) === art.contentHash) {
       await prisma.artifactVersion.update({

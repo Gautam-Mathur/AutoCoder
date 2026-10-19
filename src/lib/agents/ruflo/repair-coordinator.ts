@@ -419,7 +419,7 @@ export function validateRepairPlan(params: {
   const authorizedTargets: string[] = [];
 
   const knownFailureIds = new Set(failures.map((f) => f.id));
-  const planFailureIds = new Set(plan.failureIds || []);
+  const planFailureIds = new Set(plan?.failureIds || []);
   const acceptedFailureIds: string[] = [];
   const unaddressedFailureIds: string[] = [];
 
@@ -429,7 +429,13 @@ export function validateRepairPlan(params: {
     return { valid: false, acceptedFailureIds, unaddressedFailureIds, authorizedTargets, rejectedTargets, issues };
   }
 
-  if (plan.basedOnWorkspaceVersion && plan.basedOnWorkspaceVersion !== baseWorkspaceVersion) {
+  if (!plan.basedOnWorkspaceVersion) {
+    issues.push({
+      code: 'MISSING_BASE_VERSION',
+      message: 'Repair plan is missing required basedOnWorkspaceVersion.',
+      relatedFailureIds: [],
+    });
+  } else if (plan.basedOnWorkspaceVersion !== baseWorkspaceVersion) {
     issues.push({
       code: 'STALE_BASE_VERSION',
       message: `Repair plan base version (${plan.basedOnWorkspaceVersion}) does not match current workspace version (${baseWorkspaceVersion}).`,
@@ -438,15 +444,25 @@ export function validateRepairPlan(params: {
   }
 
   // 2. Failure linkage
-  for (const fId of plan.failureIds || []) {
-    if (!knownFailureIds.has(fId)) {
+  if (!plan.failureIds || plan.failureIds.length === 0) {
+    if (failures.length > 0) {
       issues.push({
-        code: 'UNKNOWN_FAILURE_ID',
-        message: `Repair plan references unknown failure ID "${fId}".`,
-        relatedFailureIds: [fId],
+        code: 'EMPTY_FAILURE_IDS',
+        message: 'Repair plan does not reference any failure IDs.',
+        relatedFailureIds: [],
       });
-    } else {
-      acceptedFailureIds.push(fId);
+    }
+  } else {
+    for (const fId of plan.failureIds) {
+      if (!knownFailureIds.has(fId)) {
+        issues.push({
+          code: 'UNKNOWN_FAILURE_ID',
+          message: `Repair plan references unknown failure ID "${fId}".`,
+          relatedFailureIds: [fId],
+        });
+      } else {
+        acceptedFailureIds.push(fId);
+      }
     }
   }
 
@@ -457,26 +473,38 @@ export function validateRepairPlan(params: {
   }
 
   // 3. Scope and authorization validation
-  const authSet = new Set((authorized.authorizedFiles || []).map((f) => f.toLowerCase()));
+  const authFiles =
+    authorized.coderAuthorizedFiles && authorized.coderAuthorizedFiles.length > 0
+      ? authorized.coderAuthorizedFiles
+      : authorized.authorizedFiles || [];
+  const authSet = new Set(authFiles.map((f) => f.toLowerCase()));
 
-  for (const rawPath of plan.affectedFiles || []) {
-    const norm = normalizeProjectPath(rawPath);
-    if (isControlPlaneArtifact(norm)) {
-      rejectedTargets.push({ path: norm, reason: 'Target is a control-plane artifact.' });
-      issues.push({
-        code: 'CONTROL_PLANE_TARGET',
-        message: `Repair target "${norm}" is a protected control-plane artifact.`,
-        relatedFailureIds: plan.failureIds,
-      });
-    } else if (!authSet.has(norm.toLowerCase())) {
-      rejectedTargets.push({ path: norm, reason: 'Target is not in authorized file set.' });
-      issues.push({
-        code: 'UNAUTHORIZED_TARGET',
-        message: `Repair target "${norm}" is not in authorized blueprint file set.`,
-        relatedFailureIds: plan.failureIds,
-      });
-    } else {
-      authorizedTargets.push(norm);
+  if (!plan.affectedFiles || plan.affectedFiles.length === 0) {
+    issues.push({
+      code: 'NO_REPAIR_TARGETS',
+      message: 'Repair plan specifies no affected files to repair.',
+      relatedFailureIds: plan.failureIds || [],
+    });
+  } else {
+    for (const rawPath of plan.affectedFiles) {
+      const norm = normalizeProjectPath(rawPath);
+      if (isControlPlaneArtifact(norm)) {
+        rejectedTargets.push({ path: norm, reason: 'Target is a control-plane artifact.' });
+        issues.push({
+          code: 'CONTROL_PLANE_TARGET',
+          message: `Repair target "${norm}" is a protected control-plane artifact.`,
+          relatedFailureIds: plan.failureIds || [],
+        });
+      } else if (!authSet.has(norm.toLowerCase())) {
+        rejectedTargets.push({ path: norm, reason: 'Target is not in authorized file set.' });
+        issues.push({
+          code: 'UNAUTHORIZED_TARGET',
+          message: `Repair target "${norm}" is not in authorized blueprint file set.`,
+          relatedFailureIds: plan.failureIds || [],
+        });
+      } else {
+        authorizedTargets.push(norm);
+      }
     }
   }
 
@@ -486,7 +514,7 @@ export function validateRepairPlan(params: {
     valid,
     acceptedFailureIds,
     unaddressedFailureIds,
-    authorizedTargets,
+    authorizedTargets: valid ? authorizedTargets : [],
     rejectedTargets,
     issues,
   };
@@ -506,23 +534,28 @@ export function extractRepairPlanFromDebuggerOutput(
 
   // Extract file paths from Issues Addressed and Patches Applied
   const textToScan = `${parsed.output?.issuesAddressed || ''}\n${parsed.output?.patchesApplied || ''}`;
-  const pathTokens = textToScan.match(/\b(?:src|app|pages|server|components|lib|utils|public)[\/\w\-\[\].]+\.(?:tsx|ts|jsx|js|html|css|json|prisma|sql)\b/gi) || [];
 
+  // Match "- File: <path>", "- Target: <path>", or "- Path: <path>"
+  const explicitMatches = textToScan.matchAll(/-\s*(?:File|Target|Path)\s*:\s*([^\s\r\n]+)/gi);
+  for (const match of explicitMatches) {
+    const raw = match[1].replace(/[*`'"]/g, '').trim();
+    if (raw) {
+      affectedFilesSet.add(normalizeProjectPath(raw));
+    }
+  }
+
+  // Also match general project paths within the issues and patches sections
+  const pathTokens = textToScan.match(
+    /\b(?:src|app|pages|server|components|lib|utils|public|config|prisma|\w+)[\/\w\-\[\].]+\.(?:tsx|ts|jsx|js|html|css|json|prisma|sql|md)\b/gi
+  ) || [];
   for (const token of pathTokens) {
     const norm = normalizeProjectPath(token);
-    if (!isControlPlaneArtifact(norm)) {
-      affectedFilesSet.add(norm);
-    }
+    affectedFilesSet.add(norm);
   }
 
-  // Also include files directly mentioned in normalized failures
-  for (const f of normalizedFailures) {
-    for (const af of f.affectedFiles) {
-      if (af && !isControlPlaneArtifact(af)) {
-        affectedFilesSet.add(af);
-      }
-    }
-  }
+  // Extract base workspace version if explicitly specified in Debugger report
+  const versionMatch = debuggerContent.match(/(?:Base Workspace Version|Workspace Version|Workspace Hash)[:\s]+([a-f0-9]{32,64})/i);
+  const planVersion = versionMatch ? versionMatch[1] : baseWorkspaceVersion;
 
   const instructions: string[] = [];
   if (parsed.output?.patchesApplied) {
@@ -530,25 +563,40 @@ export function extractRepairPlanFromDebuggerOutput(
   }
 
   return {
-    basedOnWorkspaceVersion: baseWorkspaceVersion,
+    basedOnWorkspaceVersion: planVersion,
     failureIds,
     affectedFiles: Array.from(affectedFilesSet),
     instructions,
-    verificationTargets: normalizedFailures.map((f) => f.id),
+    verificationTargets: failureIds,
     status: 'repairable',
   };
 }
 
-/**
- * The Canonical Repair Coordinator owning Tester -> Debugger -> Coder -> Tester lifecycle.
- */
-export async function coordinateRepair(params: {
+export interface CoordinateRepairParams {
   conversationId: string;
   pipelineRunId: string;
   executeStageFn: (stageName: string, customInput?: string, targetFile?: string) => Promise<any>;
   emit: (evt: any) => void;
   maxCycles?: number;
-}): Promise<void> {
+  /**
+   * Optional direct dependency injection of the authorized file set.
+   * Preserves legitimate isolated-test behavior without database fixtures.
+   */
+  authorizedFileSet?: AuthorizedFileSet;
+  /**
+   * Optional custom loader for authorized file set.
+   */
+  loadAuthorizedFileSetFn?: (conversationId: string, pipelineRunId: string) => Promise<AuthorizedFileSet>;
+  /**
+   * Optional repair budget to enforce limits.
+   */
+  budget?: RepairBudget;
+}
+
+/**
+ * The Canonical Repair Coordinator owning Tester -> Debugger -> Coder -> Tester lifecycle.
+ */
+export async function coordinateRepair(params: CoordinateRepairParams): Promise<void> {
   const { conversationId, pipelineRunId, executeStageFn, emit, maxCycles = 3 } = params;
 
   for (let cycle = 1; cycle <= maxCycles; cycle++) {
@@ -585,7 +633,7 @@ export async function coordinateRepair(params: {
       throw new Error(`Workspace verification failed after ${maxCycles} debug repair cycles.`);
     }
 
-    // 2. Normalize failures
+    // 2. Normalize failures and capture active workspace revision
     const normalizedFailures = normalizeFailures(testerResult.content || '');
     const beforeVersion = await computeWorkspaceFingerprint(conversationId);
 
@@ -614,55 +662,88 @@ export async function coordinateRepair(params: {
       throw new Error(`Debugger repair planning failed on cycle ${cycle}.`);
     }
 
-    // 4. Validate repair plan & resolve authorized targets
-    let authorizedTargets: string[] = [];
-    let plan: RepairPlan | null = null;
-
+    // 4. Load authorized file set (fail closed on loader failure)
+    let authorized: AuthorizedFileSet;
     try {
-      const authorized = await loadAuthorizedFileSet(conversationId, pipelineRunId);
-      plan = extractRepairPlanFromDebuggerOutput(debugResult.content || '', beforeVersion, normalizedFailures);
-      const planValidation = validateRepairPlan({
-        plan,
-        failures: normalizedFailures,
-        baseWorkspaceVersion: beforeVersion,
-        authorized,
-      });
-      if (planValidation.valid) {
-        authorizedTargets = planValidation.authorizedTargets;
+      if (params.authorizedFileSet) {
+        authorized = params.authorizedFileSet;
+      } else if (params.loadAuthorizedFileSetFn) {
+        authorized = await params.loadAuthorizedFileSetFn(conversationId, pipelineRunId);
+      } else {
+        authorized = await loadAuthorizedFileSet(conversationId, pipelineRunId);
       }
-    } catch {
-      // In isolated tests without full architecture artifacts, fallback to failure-associated files if any
-      const candidateFiles = Array.from(new Set(normalizedFailures.flatMap((f) => f.affectedFiles))).filter(
-        (f) => f && !isControlPlaneArtifact(f)
+    } catch (authErr: any) {
+      emit({
+        type: 'AGENT_FAIL',
+        agent: 'Debugger',
+        message: `Failed to load authorized file set: ${authErr?.message || authErr}`,
+      });
+      throw new Error(
+        `Repair coordinator authorization loader failed on cycle ${cycle}: ${authErr?.message || authErr}`
       );
-      authorizedTargets = candidateFiles;
     }
 
-    // 5. Invoke Coder with targeted repair context if target files are available
-    if (authorizedTargets.length > 0) {
+    // 5. Extract canonical repair plan from Debugger output and validate against active revision & authorized files
+    const plan = extractRepairPlanFromDebuggerOutput(
+      debugResult.content || '',
+      beforeVersion,
+      normalizedFailures
+    );
+
+    const planValidation = validateRepairPlan({
+      plan,
+      failures: normalizedFailures,
+      baseWorkspaceVersion: beforeVersion,
+      authorized,
+    });
+
+    if (!planValidation.valid) {
+      const issueSummary = planValidation.issues.map((i) => `[${i.code}] ${i.message}`).join('; ');
       emit({
-        type: 'AGENT_START',
-        agent: 'Coder',
-        message: `Invoking Coder to implement targeted repairs across ${authorizedTargets.length} authorized file(s)...`,
+        type: 'AGENT_FAIL',
+        agent: 'Debugger',
+        message: `Canonical repair plan failed validation: ${issueSummary || 'Invalid repair plan'}`,
       });
+      throw new Error(
+        `Repair plan validation failed on cycle ${cycle}: ${issueSummary || 'Plan did not meet validation criteria'}`
+      );
+    }
 
-      const coderRepairInstructions = [
-        `### Targeted Repair Plan`,
-        `Base Workspace Version: ${beforeVersion}`,
-        plan?.instructions?.length ? `Patches & Fix Instructions from Debugger:\n${plan.instructions.join('\n')}` : '',
-        `Issues To Resolve:`,
-        ...normalizedFailures.map((f) => `- ${f.id}: ${f.message}`),
-      ].filter(Boolean).join('\n\n');
+    const authorizedTargets = planValidation.authorizedTargets;
+    if (!authorizedTargets || authorizedTargets.length === 0) {
+      emit({
+        type: 'AGENT_FAIL',
+        agent: 'Debugger',
+        message: 'Canonical repair plan validated but resolved 0 authorized repair targets.',
+      });
+      throw new Error(
+        `Repair plan validation failed on cycle ${cycle}: Resolved 0 authorized repair targets.`
+      );
+    }
 
-      for (const targetFile of authorizedTargets) {
-        try {
-          await executeStageFn('Coder', coderRepairInstructions, targetFile);
-        } catch (err: any) {
-          if (err?.message?.includes('Unexpected stage Coder')) {
-            break;
-          }
-          throw err;
+    // 6. Invoke Coder only after canonical repair plan passed validation against active workspace revision & authorized set
+    emit({
+      type: 'AGENT_START',
+      agent: 'Coder',
+      message: `Invoking Coder to implement targeted repairs across ${authorizedTargets.length} authorized file(s)...`,
+    });
+
+    const coderRepairInstructions = [
+      `### Targeted Repair Plan`,
+      `Base Workspace Version: ${beforeVersion}`,
+      plan.instructions.length ? `Patches & Fix Instructions from Debugger:\n${plan.instructions.join('\n')}` : '',
+      `Issues To Resolve:`,
+      ...normalizedFailures.map((f) => `- ${f.id}: ${f.message}`),
+    ].filter(Boolean).join('\n\n');
+
+    for (const targetFile of authorizedTargets) {
+      try {
+        await executeStageFn('Coder', coderRepairInstructions, targetFile);
+      } catch (err: any) {
+        if (err?.message?.includes('Unexpected stage Coder')) {
+          break;
         }
+        throw err;
       }
     }
 

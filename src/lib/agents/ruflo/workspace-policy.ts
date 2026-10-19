@@ -451,16 +451,20 @@ export function extractEmbeddedWorkspaceHash(stageName: string, content: string)
 
 export async function loadAuthorizedFileSet(
   conversationId: string,
-  pipelineRunId?: string
+  pipelineRunId: string
 ): Promise<AuthorizedFileSet> {
+  if (!pipelineRunId || typeof pipelineRunId !== 'string' || !pipelineRunId.trim()) {
+    throw new Error(
+      `Authorization Exception: active pipelineRunId is mandatory. Conversation-wide fallback authorization without a pipelineRunId is strictly forbidden.`
+    );
+  }
+
   const { prisma } = await import('../../db');
-  const whereBase: any = {
+  const whereBase = {
     conversationId,
+    pipelineRunId,
     state: 'ACCEPTED',
   };
-  if (pipelineRunId) {
-    whereBase.pipelineRunId = pipelineRunId;
-  }
 
   const archArtifact = await prisma.artifactVersion.findFirst({
     where: {
@@ -471,7 +475,7 @@ export async function loadAuthorizedFileSet(
   });
 
   if (!archArtifact) {
-    throw new Error(`Authorization Exception: ACCEPTED architecture.md not found for conversation ${conversationId}.`);
+    throw new Error(`Authorization Exception: ACCEPTED architecture.md not found for conversation "${conversationId}" and run "${pipelineRunId}".`);
   }
 
   const blueprintArtifact = await prisma.artifactVersion.findFirst({
@@ -483,7 +487,7 @@ export async function loadAuthorizedFileSet(
   });
 
   if (!blueprintArtifact) {
-    throw new Error(`Authorization Exception: ACCEPTED blueprint.md not found for conversation ${conversationId}.`);
+    throw new Error(`Authorization Exception: ACCEPTED blueprint.md not found for conversation "${conversationId}" and run "${pipelineRunId}".`);
   }
 
   const { authorizedFileSet, errors } = computeAuthorizedFileSet(

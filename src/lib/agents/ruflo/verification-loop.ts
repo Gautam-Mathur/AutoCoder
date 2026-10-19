@@ -163,7 +163,12 @@ export async function verifyAndRepairWorkspace(
   conversationId: string,
   pipelineRunId: string,
   executeStageFn: (stageName: string, customInput?: string, targetFile?: string) => Promise<any>,
-  emit: (evt: any) => void
+  emit: (evt: any) => void,
+  options?: {
+    authorizedFileSet?: any;
+    loadAuthorizedFileSetFn?: (conversationId: string, pipelineRunId: string) => Promise<any>;
+    maxCycles?: number;
+  }
 ): Promise<void> {
   const { coordinateRepair } = await import('./repair-coordinator');
   return coordinateRepair({
@@ -171,6 +176,8 @@ export async function verifyAndRepairWorkspace(
     pipelineRunId,
     executeStageFn,
     emit,
-    maxCycles: MAX_DEBUG_CYCLES,
+    maxCycles: options?.maxCycles ?? MAX_DEBUG_CYCLES,
+    authorizedFileSet: options?.authorizedFileSet,
+    loadAuthorizedFileSetFn: options?.loadAuthorizedFileSetFn,
   });
 }

@@ -1356,7 +1356,12 @@ export async function runAgent(
   // If agent specifies an output filename in VFS_OUTPUT_MAP, write to VFS
   const outputFilename = VFS_OUTPUT_MAP[agentName];
   if (outputFilename && persistOutput) {
-    await writeVirtualFile(conversationId, outputFilename, finalContent);
+    const pipelineRun = await prisma.pipelineRun.findUnique({ where: { conversationId } });
+    const runId = pipelineRun?.id || 'system-run';
+    await writeVirtualFile(conversationId, outputFilename, finalContent, {
+      pipelineRunId: runId,
+      allowControlPlane: true,
+    });
   }
 
   const durationMs = Date.now() - startTime;

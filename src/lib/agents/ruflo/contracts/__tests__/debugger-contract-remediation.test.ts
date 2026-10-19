@@ -9,15 +9,118 @@ import { prisma } from '../../../../db';
 
 describe('Debugger Contract Remediation (C-01, C-02, C-03)', () => {
   const testConvoId = 'debugger-remediation-test-' + Date.now();
+  const testRunId = 'run-' + testConvoId;
+  const testStageExecId = 'stage-dbg-' + testConvoId;
 
   before(async () => {
     // Clean test data before running
+    await prisma.artifactVersion.deleteMany({ where: { conversationId: testConvoId } });
+    await prisma.stageExecution.deleteMany({ where: { conversationId: testConvoId } });
+    await prisma.pipelineRun.deleteMany({ where: { conversationId: testConvoId } });
     await prisma.virtualFile.deleteMany({ where: { conversationId: testConvoId } });
+    await prisma.conversation.deleteMany({ where: { id: testConvoId } });
+
+    await prisma.conversation.create({
+      data: {
+        id: testConvoId,
+        title: 'Debugger Remediation Test',
+        status: 'Active',
+        currentStage: 'Debugger',
+      },
+    });
+
+    await prisma.pipelineRun.create({
+      data: {
+        id: testRunId,
+        conversationId: testConvoId,
+        state: 'RUNNING',
+      },
+    });
+
+    await prisma.stageExecution.create({
+      data: {
+        id: testStageExecId,
+        conversationId: testConvoId,
+        pipelineRunId: testRunId,
+        stageName: 'Debugger',
+        attempt: 1,
+        state: 'RUNNING',
+      },
+    });
+
+    const archMd = `### Tech Stack
+- Frontend: React
+- Frontend Entry Point: src/math/calculator.ts
+- Backend: None
+- Backend Entry Point: None
+- Database: None
+- ORM: None
+- Authentication: None
+- Build Tool: Vite
+- Additional: None
+
+### Project Folder Structure
+project-root/
+└── src/
+    └── math/
+        └── calculator.ts
+
+### Project Files
+- src/math/calculator.ts
+
+### Modules
+**Math Module**
+- Responsibility: Arithmetic
+- Owned Files: src/math/calculator.ts
+- Depends On: None
+- Supports Features: Calculator
+
+### Conventions
+- File Naming: camelCase
+`;
+
+    const blueprintMd = `### File: src/math/calculator.ts
+- Owner Module: Math Module
+- Purpose: Calculator arithmetic
+- Dependencies: None
+- Specs Required: None
+- Exports: export function add
+`;
+
+    await prisma.artifactVersion.create({
+      data: {
+        conversationId: testConvoId,
+        pipelineRunId: testRunId,
+        stageName: 'Architect',
+        filePath: 'architecture.md',
+        version: 1,
+        contentHash: 'hash-arch-dbg',
+        content: archMd,
+        state: 'ACCEPTED',
+      },
+    });
+
+    await prisma.artifactVersion.create({
+      data: {
+        conversationId: testConvoId,
+        pipelineRunId: testRunId,
+        stageName: 'Blueprinter',
+        filePath: 'blueprint.md',
+        version: 1,
+        contentHash: 'hash-blue-dbg',
+        content: blueprintMd,
+        state: 'ACCEPTED',
+      },
+    });
   });
 
   after(async () => {
     // Clean test data after running
+    await prisma.artifactVersion.deleteMany({ where: { conversationId: testConvoId } });
+    await prisma.stageExecution.deleteMany({ where: { conversationId: testConvoId } });
+    await prisma.pipelineRun.deleteMany({ where: { conversationId: testConvoId } });
     await prisma.virtualFile.deleteMany({ where: { conversationId: testConvoId } });
+    await prisma.conversation.deleteMany({ where: { id: testConvoId } });
     await prisma.$disconnect();
   });
 
@@ -39,7 +142,7 @@ describe('Debugger Contract Remediation (C-01, C-02, C-03)', () => {
     const cpWriteResult = await executeTool(
       'write_file',
       { file_path: 'debug_report.md', content: 'fake report' },
-      testConvoId
+      { conversationId: testConvoId, pipelineRunId: testRunId, stageExecutionId: testStageExecId }
     );
     assert.strictEqual(cpWriteResult.error, true);
     assert.ok(cpWriteResult.message.includes('Authorization Exception'));
@@ -48,7 +151,7 @@ describe('Debugger Contract Remediation (C-01, C-02, C-03)', () => {
     const cpDiffResult = await executeTool(
       'apply_diff',
       { file_path: 'plan.md', start_line: 1, end_line: 1, new_content: 'hijacked' },
-      testConvoId
+      { conversationId: testConvoId, pipelineRunId: testRunId, stageExecutionId: testStageExecId }
     );
     assert.strictEqual(cpDiffResult.error, true);
     assert.ok(cpDiffResult.message.includes('Authorization Exception'));
@@ -57,7 +160,10 @@ describe('Debugger Contract Remediation (C-01, C-02, C-03)', () => {
   it('executes authorized workspace mutation and verifies repair (C-03)', async () => {
     const targetFile = 'src/math/calculator.ts';
     const brokenCode = `export function add(a: number, b: number): number {\n  return a - b;\n}`;
-    await writeVirtualFile(testConvoId, targetFile, brokenCode);
+    await writeVirtualFile(testConvoId, targetFile, brokenCode, {
+      pipelineRunId: testRunId,
+      stageExecutionId: testStageExecId,
+    });
 
     // Initial check: verify code has bug
     const initialContent = await readVirtualFile(testConvoId, targetFile);
@@ -72,7 +178,11 @@ describe('Debugger Contract Remediation (C-01, C-02, C-03)', () => {
         end_line: 2,
         new_content: '  return a + b;',
       },
-      testConvoId
+      {
+        conversationId: testConvoId,
+        pipelineRunId: testRunId,
+        stageExecutionId: testStageExecId,
+      }
     );
     assert.strictEqual(diffResult.success, true);
 

@@ -8,7 +8,15 @@ import {
   loadAuthorizedFileSet,
   normalizeProjectPath,
 } from './workspace-policy';
-import { validateSecurityGate } from './security-gate';
+import {
+  validateSecurityGate,
+  decideRelease,
+  validateGateException,
+  type TrustedGateException,
+  type TrustedExceptionAuthorizationService,
+  type CheckCriticality,
+  type CheckStatus,
+} from './security-gate';
 
 export interface FinalGateResult {
   valid: boolean;
@@ -18,7 +26,11 @@ export interface FinalGateResult {
 export async function evaluateFinalPipelineGate(
   conversationId: string,
   pipelineRunId: string,
-  leaseOwnerId?: string
+  leaseOwnerId?: string,
+  options?: {
+    trustedExceptions?: TrustedGateException[];
+    authorityService?: TrustedExceptionAuthorizationService;
+  }
 ): Promise<FinalGateResult> {
   const errors: string[] = [];
 
@@ -140,9 +152,64 @@ export async function evaluateFinalPipelineGate(
       : Object.keys(vfsFileMap);
 
   const deterministicSecurity = validateSecurityGate(vfsFileMap, requiredWorkspaceFiles);
-  if (!deterministicSecurity.passed) {
-    for (const block of deterministicSecurity.blocking) {
-      errors.push(`Final Gate Error: Deterministic Security Gate blocked (${block.file}:${block.line} [${block.ruleId}]): ${block.message}`);
+
+  // Load any recorded trusted gate exceptions from GateDecision table or passed options
+  const dbGateDecisions = await prisma.gateDecision.findMany({
+    where: { conversationId, pipelineRunId, decision: 'APPROVED' },
+  });
+  const trustedExceptions: TrustedGateException[] = [...(options?.trustedExceptions || [])];
+  for (const gd of dbGateDecisions) {
+    if (gd.reason) {
+      try {
+        const parsed = JSON.parse(gd.reason);
+        if (parsed && typeof parsed === 'object' && parsed.signature && parsed.checkName) {
+          trustedExceptions.push(parsed as TrustedGateException);
+        }
+      } catch {
+        // Not a JSON exception payload
+      }
+    }
+  }
+
+  if (deterministicSecurity.blocking.length > 0) {
+    const securityChecks = deterministicSecurity.blocking.map((block) => {
+      const matchingException = trustedExceptions.find(
+        (e) => e.checkName === block.ruleId || e.checkName === 'SECURITY_GATE'
+      );
+      return {
+        name: block.ruleId,
+        status: 'failed' as CheckStatus,
+        criticality: 'blocking' as CheckCriticality,
+        trustedException: matchingException,
+      };
+    });
+
+    const releaseDecision = decideRelease(securityChecks, {
+      workspaceVersion: currentWorkspaceFingerprint,
+      pipelineRunId,
+      authorityService: options?.authorityService,
+    });
+
+    if (releaseDecision.decision === 'block') {
+      for (const block of deterministicSecurity.blocking) {
+        const matchingException = trustedExceptions.find(
+          (e) => e.checkName === block.ruleId || e.checkName === 'SECURITY_GATE'
+        );
+        const val = matchingException
+          ? validateGateException(matchingException, {
+              checkName: block.ruleId,
+              workspaceVersion: currentWorkspaceFingerprint,
+              pipelineRunId,
+              authorityService: options?.authorityService,
+            })
+          : { valid: false, reason: 'Missing exception authorization record.' };
+
+        if (!val.valid) {
+          errors.push(
+            `Final Gate Error: Deterministic Security Gate blocked (${block.file}:${block.line} [${block.ruleId}]): ${block.message}${val.reason ? ` (Exception rejected: ${val.reason})` : ''}`
+          );
+        }
+      }
     }
   }
 

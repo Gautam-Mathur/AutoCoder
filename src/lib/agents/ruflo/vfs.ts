@@ -8,7 +8,140 @@ import {
   computeAuthorizedFileSet,
   AuthorizedFileSet,
   computeFileSetHash,
+  loadAuthorizedFileSet,
 } from './workspace-policy';
+
+export { loadAuthorizedFileSet };
+
+export interface FileMutationAuth {
+  pipelineRunId: string;
+  stageExecutionId?: string;
+  stageName?: string;
+  isSetupOperation?: boolean;
+  allowControlPlane?: boolean;
+  authorizedFileSet?: AuthorizedFileSet;
+}
+
+/**
+ * Asserts that a file mutation operation (write, diff, delete) is strictly authorized.
+ * Enforces:
+ * 1. Path safety and directory traversal prevention.
+ * 2. Control plane artifact immunity against direct code-generation mutations.
+ * 3. Mandatory active pipelineRunId (conversation-wide fallback strictly forbidden).
+ * 4. Verification that stageExecution belongs to the same conversation and pipelineRun (cross-run write prevention).
+ * 5. Stage execution lifecycle validation (must be in RUNNING state; rejects stale authorization).
+ * 6. Permitted stage verification (Coder/Debugger for code files; Setup/System/Coder for setup-managed files).
+ * 7. Canonical authorized file set validation against accepted architecture/blueprint contracts.
+ */
+export async function assertAuthorizedFileMutation(
+  conversationId: string,
+  filePath: string,
+  operation: 'write' | 'diff' | 'delete',
+  auth?: FileMutationAuth
+): Promise<void> {
+  // 1. Path sanitization and directory traversal check
+  const safePath = sanitizePath(filePath);
+  const normPath = normalizeWorkspacePath(safePath);
+
+  // 2. Control plane artifact guard
+  if (isControlPlaneArtifact(normPath)) {
+    if (auth?.allowControlPlane === true) {
+      if (!auth?.pipelineRunId || typeof auth.pipelineRunId !== 'string' || !auth.pipelineRunId.trim()) {
+        throw new Error(
+          `Authorization Exception: active pipelineRunId is mandatory for control-plane file mutation. Conversation-wide fallback authorization without a pipelineRunId is strictly forbidden.`
+        );
+      }
+      return;
+    }
+    throw new Error(
+      `Authorization Exception: Cannot modify control-plane artifact "${normPath}". Direct mutation of control-plane artifacts by code-generation stages or tools is strictly forbidden.`
+    );
+  }
+
+  // 3. Mandatory active pipelineRunId
+  if (!auth || !auth.pipelineRunId || typeof auth.pipelineRunId !== 'string' || !auth.pipelineRunId.trim()) {
+    throw new Error(
+      `Authorization Exception: active pipelineRunId is mandatory for file mutation. Conversation-wide fallback authorization without a pipelineRunId is strictly forbidden.`
+    );
+  }
+
+  // 4. Mandatory stageExecutionId for project files
+  if (!auth.stageExecutionId || typeof auth.stageExecutionId !== 'string' || !auth.stageExecutionId.trim()) {
+    throw new Error(
+      `Authorization Exception: active stageExecutionId is mandatory for project file mutation.`
+    );
+  }
+
+  // 5. Verify stage execution identity in database
+  const stageExec = await prisma.stageExecution.findUnique({
+    where: { id: auth.stageExecutionId },
+  });
+
+  if (!stageExec) {
+    throw new Error(`Authorization Exception: StageExecution "${auth.stageExecutionId}" not found.`);
+  }
+
+  if (stageExec.conversationId !== conversationId) {
+    throw new Error(
+      `Authorization Exception: Cross-conversation mutation rejected. StageExecution belongs to "${stageExec.conversationId}", not "${conversationId}".`
+    );
+  }
+
+  if (stageExec.pipelineRunId !== auth.pipelineRunId) {
+    throw new Error(
+      `Authorization Exception: Cross-run mutation rejected. StageExecution belongs to pipelineRun "${stageExec.pipelineRunId}", not "${auth.pipelineRunId}".`
+    );
+  }
+
+  if (stageExec.state !== 'RUNNING') {
+    throw new Error(
+      `Authorization Exception: Stale stage execution authorization. StageExecution "${auth.stageExecutionId}" is in state "${stageExec.state}", expected "RUNNING".`
+    );
+  }
+
+  // 6. Permitted stage check
+  const permittedStages = auth.isSetupOperation
+    ? ['Setup', 'System', 'Coder']
+    : ['Coder', 'Debugger'];
+
+  if (!permittedStages.includes(stageExec.stageName)) {
+    throw new Error(
+      `Authorization Exception: Stage "${stageExec.stageName}" is not permitted to mutate workspace files.`
+    );
+  }
+
+  // 7. Canonical authorized file set validation
+  const authorized = auth.authorizedFileSet || (await loadAuthorizedFileSet(conversationId, auth.pipelineRunId));
+  const lowerPath = normPath.toLowerCase();
+
+  // Setup-managed file protection
+  const setupManagedLower = new Set(
+    (authorized.setupManagedFiles || []).map((f) => f.toLowerCase())
+  );
+
+  if (setupManagedLower.has(lowerPath)) {
+    if (!auth.isSetupOperation && stageExec.stageName !== 'Setup' && stageExec.stageName !== 'System') {
+      throw new Error(
+        `Authorization Exception: File "${normPath}" is a setup-managed file and requires explicit setup authorization.`
+      );
+    }
+  }
+
+  // Project file authorization check
+  const authorizedLower = new Set(authorized.authorizedFiles.map((f) => f.toLowerCase()));
+  const coderAuthorizedLower = new Set(
+    (authorized.coderAuthorizedFiles || authorized.authorizedFiles).map((f) => f.toLowerCase())
+  );
+
+  const effectiveSet = auth.isSetupOperation ? authorizedLower : coderAuthorizedLower;
+
+  if (!effectiveSet.has(lowerPath)) {
+    throw new Error(
+      `Authorization Exception: File "${normPath}" is not in approved blueprint authorized file set for pipeline run "${auth.pipelineRunId}".`
+    );
+  }
+}
+
 
 
 // In-memory locks to serialize write/diff operations per file to prevent race conditions
@@ -112,9 +245,12 @@ export async function readVirtualFile(
 export async function writeVirtualFile(
   conversationId: string,
   filePath: string,
-  content: string
+  content: string,
+  auth?: FileMutationAuth
 ): Promise<void> {
   const safePath = sanitizePath(filePath);
+  await assertAuthorizedFileMutation(conversationId, safePath, 'write', auth);
+
   const release = await acquireLock(conversationId, safePath);
 
   try {
@@ -168,9 +304,11 @@ export async function applyDiff(
   filePath: string,
   startLine: number,
   endLine: number,
-  newContent: string
+  newContent: string,
+  auth?: FileMutationAuth
 ): Promise<void> {
   const safePath = sanitizePath(filePath);
+  await assertAuthorizedFileMutation(conversationId, safePath, 'diff', auth);
   const release = await acquireLock(conversationId, safePath);
 
   try {
@@ -379,53 +517,58 @@ export async function generateWorkspaceManifest(
   };
 }
 
-export async function loadAuthorizedFileSet(
+/**
+ * Deletes a file from the virtual workspace.
+ * Requires mutation authorization and synchronizes deletion to disk.
+ */
+export async function deleteVirtualFile(
   conversationId: string,
-  pipelineRunId?: string
-): Promise<AuthorizedFileSet> {
-  const whereBase: any = {
-    conversationId,
-    state: 'ACCEPTED',
-  };
-  if (pipelineRunId) {
-    whereBase.pipelineRunId = pipelineRunId;
+  filePath: string,
+  auth?: FileMutationAuth
+): Promise<boolean> {
+  const safePath = sanitizePath(filePath);
+  await assertAuthorizedFileMutation(conversationId, safePath, 'delete', auth);
+
+  const release = await acquireLock(conversationId, safePath);
+
+  try {
+    const existing = await prisma.virtualFile.findUnique({
+      where: {
+        conversationId_filePath: {
+          conversationId,
+          filePath: safePath,
+        },
+      },
+    });
+
+    if (!existing) {
+      return false;
+    }
+
+    await prisma.virtualFile.delete({
+      where: {
+        conversationId_filePath: {
+          conversationId,
+          filePath: safePath,
+        },
+      },
+    });
+
+    // Instant Physical Disk Sync
+    try {
+      const projectDir = path.join(process.cwd(), 'projects', conversationId);
+      const fullPath = path.join(projectDir, safePath);
+      if (fs.existsSync(fullPath)) {
+        fs.unlinkSync(fullPath);
+      }
+    } catch (diskErr) {
+      console.error(`Failed instant disk delete for ${safePath}:`, diskErr);
+    }
+
+    return true;
+  } finally {
+    release();
   }
-
-  const archArtifact = await prisma.artifactVersion.findFirst({
-    where: {
-      ...whereBase,
-      filePath: 'architecture.md',
-    },
-    orderBy: { version: 'desc' },
-  });
-
-  if (!archArtifact) {
-    throw new Error(`Authorization Exception: ACCEPTED architecture.md not found for run ${pipelineRunId || conversationId}.`);
-  }
-
-  const blueprintArtifact = await prisma.artifactVersion.findFirst({
-    where: {
-      ...whereBase,
-      filePath: 'blueprint.md',
-    },
-    orderBy: { version: 'desc' },
-  });
-
-
-  if (!blueprintArtifact) {
-    throw new Error(`Authorization Exception: ACCEPTED blueprint.md not found for run ${pipelineRunId || conversationId}.`);
-  }
-
-  const { authorizedFileSet, errors } = computeAuthorizedFileSet(
-    archArtifact.content,
-    blueprintArtifact.content
-  );
-
-  if (!authorizedFileSet || errors.length > 0) {
-    throw new Error(`Authorization Exception: Failed to compute authorized file set: ${errors.join('; ')}`);
-  }
-
-  return authorizedFileSet;
 }
 
 export async function writeAuthorizedProjectFile(params: {
@@ -434,38 +577,14 @@ export async function writeAuthorizedProjectFile(params: {
   stageExecutionId: string;
   filePath: string;
   content: string;
+  isSetupOperation?: boolean;
 }): Promise<void> {
-  const { conversationId, pipelineRunId, stageExecutionId, filePath, content } = params;
-  const normPath = normalizeWorkspacePath(filePath);
-
-  if (isControlPlaneArtifact(normPath)) {
-    throw new Error(
-      `Authorization Exception: Stage execution ${stageExecutionId} cannot write control plane file "${normPath}" via writeAuthorizedProjectFile.`
-    );
-  }
-
-  const stageExec = await prisma.stageExecution.findUnique({
-    where: { id: stageExecutionId },
+  const { conversationId, pipelineRunId, stageExecutionId, filePath, content, isSetupOperation } = params;
+  await writeVirtualFile(conversationId, filePath, content, {
+    pipelineRunId,
+    stageExecutionId,
+    isSetupOperation,
   });
-
-  if (!stageExec) {
-    throw new Error(`Authorization Exception: StageExecution ${stageExecutionId} not found.`);
-  }
-  if (stageExec.pipelineRunId !== pipelineRunId) {
-    throw new Error(`Authorization Exception: PipelineRun mismatch (${stageExec.pipelineRunId} vs ${pipelineRunId}).`);
-  }
-  if (stageExec.stageName !== 'Coder' && stageExec.stageName !== 'Debugger') {
-    throw new Error(`Authorization Exception: Stage "${stageExec.stageName}" is not authorized to write project files.`);
-  }
-
-  const authorized = await loadAuthorizedFileSet(conversationId, pipelineRunId);
-  const authorizedSet = new Set(authorized.authorizedFiles.map((f) => f.toLowerCase()));
-
-  if (!authorizedSet.has(normPath.toLowerCase())) {
-    throw new Error(`Authorization Exception: File "${normPath}" is not in approved blueprint authorized file set.`);
-  }
-
-  await writeVirtualFile(conversationId, normPath, content);
 }
 
 export async function applyAuthorizedDiff(params: {
@@ -478,29 +597,21 @@ export async function applyAuthorizedDiff(params: {
   newContent: string;
 }): Promise<void> {
   const { conversationId, pipelineRunId, stageExecutionId, filePath, startLine, endLine, newContent } = params;
-  const normPath = normalizeWorkspacePath(filePath);
-
-  if (isControlPlaneArtifact(normPath)) {
-    throw new Error(`Authorization Exception: Cannot patch control plane file "${normPath}".`);
-  }
-
-  const stageExec = await prisma.stageExecution.findUnique({
-    where: { id: stageExecutionId },
+  await applyDiff(conversationId, filePath, startLine, endLine, newContent, {
+    pipelineRunId,
+    stageExecutionId,
   });
-
-  if (!stageExec || stageExec.pipelineRunId !== pipelineRunId || (stageExec.stageName !== 'Debugger' && stageExec.stageName !== 'Coder')) {
-    throw new Error(`Authorization Exception: StageExecution ${stageExecutionId} is not an authorized Debugger or Coder execution.`);
-  }
-
-  const authorized = await loadAuthorizedFileSet(conversationId, pipelineRunId);
-  const authorizedSet = new Set(authorized.authorizedFiles.map((f) => f.toLowerCase()));
-
-  if (!authorizedSet.has(normPath.toLowerCase())) {
-    throw new Error(`Authorization Exception: File "${normPath}" is not in authorized file set.`);
-  }
-
-  await applyDiff(conversationId, normPath, startLine, endLine, newContent);
 }
 
-
-
+export async function deleteAuthorizedProjectFile(params: {
+  conversationId: string;
+  pipelineRunId: string;
+  stageExecutionId: string;
+  filePath: string;
+}): Promise<boolean> {
+  const { conversationId, pipelineRunId, stageExecutionId, filePath } = params;
+  return await deleteVirtualFile(conversationId, filePath, {
+    pipelineRunId,
+    stageExecutionId,
+  });
+}
