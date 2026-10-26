@@ -18,12 +18,12 @@ export const DEFAULT_STAGE_TIMEOUT_MS: Record<string, number> = {
   Architect: 900_000,   // 15 minutes
   System: 900_000,      // 15 minutes
   Designer: 900_000,    // 15 minutes
-  Blueprinter: 1200_000, // 20 minutes
-  Coder: 1800_000,      // 30 minutes
+  Blueprinter: 1800_000, // 30 minutes
+  Coder: 3600_000,      // 60 minutes
   Tester: 900_000,      // 15 minutes
-  Debugger: 1200_000,   // 20 minutes
-  Security: 900_000,    // 15 minutes
-  Reviewer: 900_000,    // 15 minutes
+  Debugger: 3600_000,   // 60 minutes
+  Security: 1800_000,    // 30 minutes
+  Reviewer: 1800_000,    // 30 minutes
 };
 
 export function countSectionItems(markdown: string, sectionName: string): number {

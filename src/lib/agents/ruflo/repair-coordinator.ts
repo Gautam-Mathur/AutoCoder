@@ -526,7 +526,8 @@ export function validateRepairPlan(params: {
 export function extractRepairPlanFromDebuggerOutput(
   debuggerContent: string,
   baseWorkspaceVersion: string,
-  normalizedFailures: NormalizedFailure[]
+  normalizedFailures: NormalizedFailure[],
+  authorized?: AuthorizedFileSet
 ): RepairPlan {
   const parsed = parseDebuggerOutput(debuggerContent);
   const failureIds = normalizedFailures.map((f) => f.id);
@@ -535,22 +536,46 @@ export function extractRepairPlanFromDebuggerOutput(
   // Extract file paths from Issues Addressed and Patches Applied
   const textToScan = `${parsed.output?.issuesAddressed || ''}\n${parsed.output?.patchesApplied || ''}`;
 
-  // Match "- File: <path>", "- Target: <path>", or "- Path: <path>"
-  const explicitMatches = textToScan.matchAll(/-\s*(?:File|Target|Path)\s*:\s*([^\s\r\n]+)/gi);
+  // Match "- File: <path>", "**File: <path>**", "### File: <path>", "- Target: <path>", or "- Path: <path>"
+  const explicitMatches = textToScan.matchAll(
+    /(?:[-*#]+\s*)?(?:\*\*)?(?:File|Target|Path)\s*:\s*(?:\*\*)?\s*[`'"]?([^\s\r\n*`'"]+)/gi
+  );
   for (const match of explicitMatches) {
     const raw = match[1].replace(/[*`'"]/g, '').trim();
     if (raw) {
-      affectedFilesSet.add(normalizeProjectPath(raw));
+      const norm = normalizeProjectPath(raw);
+      if (!norm.includes('node_modules') && !norm.endsWith('.d.ts')) {
+        affectedFilesSet.add(norm);
+      }
     }
   }
 
-  // Also match general project paths within the issues and patches sections
-  const pathTokens = textToScan.match(
-    /\b(?:src|app|pages|server|components|lib|utils|public|config|prisma|\w+)[\/\w\-\[\].]+\.(?:tsx|ts|jsx|js|html|css|json|prisma|sql|md)\b/gi
-  ) || [];
-  for (const token of pathTokens) {
-    const norm = normalizeProjectPath(token);
-    affectedFilesSet.add(norm);
+  // Also match general project paths within the issues and patches sections only if no explicit matches found
+  if (affectedFilesSet.size === 0) {
+    const pathTokens = textToScan.match(
+      /\b(?:src|app|pages|server|components|lib|utils|public|config|styles)[\/\w\-\[\].]+\.(?:tsx|ts|jsx|js|html|css|json|prisma|sql|md)\b/gi
+    ) || [];
+    for (const token of pathTokens) {
+      const norm = normalizeProjectPath(token);
+      if (!norm.includes('node_modules') && !norm.endsWith('.d.ts')) {
+        affectedFilesSet.add(norm);
+      }
+    }
+  }
+
+  // If authorized set is provided, filter affectedFiles to ensure only authorized files are targeted
+  let affectedFiles = Array.from(affectedFilesSet);
+  if (authorized) {
+    const validAuth = new Set(
+      (authorized.coderAuthorizedFiles && authorized.coderAuthorizedFiles.length > 0
+        ? authorized.coderAuthorizedFiles
+        : authorized.authorizedFiles || []
+      ).map((f) => f.toLowerCase())
+    );
+    const filtered = affectedFiles.filter((f) => validAuth.has(f.toLowerCase()));
+    if (filtered.length > 0) {
+      affectedFiles = filtered;
+    }
   }
 
   // Extract base workspace version if explicitly specified in Debugger report
@@ -565,7 +590,7 @@ export function extractRepairPlanFromDebuggerOutput(
   return {
     basedOnWorkspaceVersion: planVersion,
     failureIds,
-    affectedFiles: Array.from(affectedFilesSet),
+    affectedFiles,
     instructions,
     verificationTargets: failureIds,
     status: 'repairable',
@@ -597,7 +622,7 @@ export interface CoordinateRepairParams {
  * The Canonical Repair Coordinator owning Tester -> Debugger -> Coder -> Tester lifecycle.
  */
 export async function coordinateRepair(params: CoordinateRepairParams): Promise<void> {
-  const { conversationId, pipelineRunId, executeStageFn, emit, maxCycles = 3 } = params;
+  const { conversationId, pipelineRunId, executeStageFn, emit, maxCycles = 10 } = params;
 
   for (let cycle = 1; cycle <= maxCycles; cycle++) {
     // 1. Run Tester
@@ -687,7 +712,8 @@ export async function coordinateRepair(params: CoordinateRepairParams): Promise<
     const plan = extractRepairPlanFromDebuggerOutput(
       debugResult.content || '',
       beforeVersion,
-      normalizedFailures
+      normalizedFailures,
+      authorized
     );
 
     const planValidation = validateRepairPlan({

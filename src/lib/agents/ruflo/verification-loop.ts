@@ -4,7 +4,7 @@ import { runLinter, runCrossFileImportCheck } from './linter';
 import { validateGeneratedProject } from './project-validator';
 import { isControlPlaneArtifact, normalizeProjectPath } from './workspace-policy';
 
-const MAX_DEBUG_CYCLES = 3;
+const MAX_DEBUG_CYCLES = 10;
 
 export interface VerificationFailure {
   file: string;

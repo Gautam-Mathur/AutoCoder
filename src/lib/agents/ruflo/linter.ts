@@ -65,6 +65,10 @@ export async function runLinter(
 
   function getVirtualContent(fileName: string): { key: string; content: string } | undefined {
     const cleanName = fileName.replace(/\\/g, '/');
+    // Critical: never hijack real installed node_modules with virtual workspace files
+    if (cleanName.includes('/node_modules/')) {
+      return undefined;
+    }
     if (fileMap.has(cleanName)) {
       return { key: cleanName, content: fileMap.get(cleanName)! };
     }
@@ -83,13 +87,17 @@ export async function runLinter(
   const compilerOptions: ts.CompilerOptions = {
     target: ts.ScriptTarget.ES2020,
     module: ts.ModuleKind.CommonJS,
-    jsx: ts.JsxEmit.React,
+    jsx: ts.JsxEmit.ReactJSX,
     strict: false,
     noEmit: true,
     allowJs: true,
     checkJs: true,
     skipLibCheck: true,
     moduleResolution: ts.ModuleResolutionKind.NodeJs,
+    baseUrl: '.',
+    paths: {
+      '@/*': ['./src/*', './*'],
+    },
   };
 
   const host = ts.createCompilerHost(compilerOptions);
@@ -156,6 +164,12 @@ export async function runLinter(
         } else if (diagnostic.code === 1479 || diagnostic.code === 2304 || diagnostic.code === 2552) {
           return;
         }
+      }
+
+      // In a virtual workspace, Prisma client models are defined in schema.prisma/backend_spec.md
+      // but not generated into the host's node_modules/@prisma/client. Ignore ungenerated Prisma client model access.
+      if (diagnostic.code === 2339 && message.includes('PrismaClient')) {
+        return;
       }
 
       errors.push({

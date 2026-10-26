@@ -580,10 +580,20 @@ export async function writeAuthorizedProjectFile(params: {
   isSetupOperation?: boolean;
 }): Promise<void> {
   const { conversationId, pipelineRunId, stageExecutionId, filePath, content, isSetupOperation } = params;
+  let effectiveSetup = isSetupOperation;
+  if (effectiveSetup === undefined) {
+    try {
+      const authorized = await loadAuthorizedFileSet(conversationId, pipelineRunId);
+      const norm = normalizeProjectPath(filePath).toLowerCase();
+      effectiveSetup = (authorized.setupManagedFiles || []).some((sf) => sf.toLowerCase() === norm);
+    } catch {
+      effectiveSetup = false;
+    }
+  }
   await writeVirtualFile(conversationId, filePath, content, {
     pipelineRunId,
     stageExecutionId,
-    isSetupOperation,
+    isSetupOperation: effectiveSetup,
   });
 }
 
@@ -595,11 +605,23 @@ export async function applyAuthorizedDiff(params: {
   startLine: number;
   endLine: number;
   newContent: string;
+  isSetupOperation?: boolean;
 }): Promise<void> {
-  const { conversationId, pipelineRunId, stageExecutionId, filePath, startLine, endLine, newContent } = params;
+  const { conversationId, pipelineRunId, stageExecutionId, filePath, startLine, endLine, newContent, isSetupOperation } = params;
+  let effectiveSetup = isSetupOperation;
+  if (effectiveSetup === undefined) {
+    try {
+      const authorized = await loadAuthorizedFileSet(conversationId, pipelineRunId);
+      const norm = normalizeProjectPath(filePath).toLowerCase();
+      effectiveSetup = (authorized.setupManagedFiles || []).some((sf) => sf.toLowerCase() === norm);
+    } catch {
+      effectiveSetup = false;
+    }
+  }
   await applyDiff(conversationId, filePath, startLine, endLine, newContent, {
     pipelineRunId,
     stageExecutionId,
+    isSetupOperation: effectiveSetup,
   });
 }
 

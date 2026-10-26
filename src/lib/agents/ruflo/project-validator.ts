@@ -166,6 +166,9 @@ export async function validateGeneratedProject(
 
   host.readFile = (fileName: string) => {
     const normalized = fileName.replace(/\\/g, '/').replace(/^\.\//, '');
+    if (normalized.includes('/node_modules/')) {
+      return defaultReadFile(fileName);
+    }
     if (vfsContentMap.has(normalized)) {
       return vfsContentMap.get(normalized)!;
     }
@@ -177,6 +180,9 @@ export async function validateGeneratedProject(
 
   host.fileExists = (fileName: string) => {
     const normalized = fileName.replace(/\\/g, '/').replace(/^\.\//, '');
+    if (normalized.includes('/node_modules/')) {
+      return defaultFileExists(fileName);
+    }
     if (vfsContentMap.has(normalized)) return true;
     for (const k of vfsContentMap.keys()) {
       if (normalized.endsWith(k)) return true;
@@ -200,6 +206,13 @@ export async function validateGeneratedProject(
     }
 
     const message = ts.flattenDiagnosticMessageText(diag.messageText, '\n');
+
+    // In a virtual workspace, Prisma client models are defined dynamically in schema.prisma/backend_spec.md
+    // but not generated into the host's node_modules/@prisma/client. Ignore ungenerated Prisma client model access.
+    if (diag.code === 2339 && message.includes('PrismaClient')) {
+      continue;
+    }
+
     const errObj: ProjectValidationError = {
       file,
       line,

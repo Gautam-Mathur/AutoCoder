@@ -37,6 +37,7 @@ import { appendPipelineEvent } from './pipeline-events';
 import { commitAcceptedArtifact, findReusableAcceptedArtifact, refreshCoderWorkspaceManifest, resolveAcceptedStageInputs } from './artifact-store';
 import { validateStageCandidate } from './stage-acceptance';
 import { createContentHash } from './contracts/fingerprints';
+import { normalizeProjectPath } from './workspace-policy';
 
 
 // Global Event Emitter for decoupling browser SSE streams from background Node pipeline compilation
@@ -1236,15 +1237,59 @@ export async function runAgent(
 - Output MUST be valid structured markdown matching the exact header specifications.
 - Do NOT wrap your entire response in markdown code blocks (\`\`\`markdown). Return raw text directly.`;
 
-  const systemInstructions = agentDef.systemPrompt + constraintsBlock;
-  
-  const userContent = composeAgentUserContent({
-    upstreamContext,
-    customUserContent,
-    userPromptText,
-    attempt,
-    validationError,
-  });
+  const systemInstructions =
+    agentName === 'Coder'
+      ? agentDef.systemPrompt
+      : agentDef.systemPrompt + constraintsBlock;
+
+  let userContent: string;
+  if (agentName === 'Coder' && targetFile) {
+    const blueprintText = await readVirtualFile(conversationId, 'blueprint.md');
+    let targetSection = '';
+    let dependencyInterfaces = '';
+
+    if (blueprintText) {
+      const parsedSections = parseBlueprintFiles(blueprintText);
+      const normalizedTarget = normalizeProjectPath(targetFile).toLowerCase();
+      const match = parsedSections.find(
+        (s) => normalizeProjectPath(s.file).toLowerCase() === normalizedTarget
+      );
+      if (match) {
+        targetSection = match.rawSection;
+        for (const dep of match.dependencies) {
+          const depContent = await readVirtualFile(conversationId, dep);
+          if (depContent) {
+            const iface = extractDependencyInterface(dep, depContent);
+            dependencyInterfaces += `${dep}:\n${iface}\n`;
+          }
+        }
+      }
+    }
+
+    if (!targetSection) {
+      targetSection = `### File: ${targetFile}\n- **Purpose**: Implementation of ${targetFile}\n- **Dependencies**: None\n- **Exports**: None`;
+    }
+
+    const coderContext = await buildCoderContext(conversationId, targetSection, dependencyInterfaces);
+    const retryPrefix =
+      attempt > 1
+        ? `[RETRY ${attempt}/3] Your previous implementation of ${targetFile} had errors:\n${
+            validationError || 'Fix all syntax, import, and logic errors.'
+          }\nPlease fix these issues and output the complete, corrected code.\n\n`
+        : '';
+
+    userContent = `${retryPrefix}TARGET FILE TO IMPLEMENT: ${targetFile}\nOutput ONLY the complete raw source code for "${targetFile}". Do NOT output markdown code fences or headers.\n\n${coderContext}${
+      customUserContent ? `\n\n${customUserContent}` : ''
+    }`;
+  } else {
+    userContent = composeAgentUserContent({
+      upstreamContext,
+      customUserContent,
+      userPromptText,
+      attempt,
+      validationError,
+    });
+  }
 
   let requiredArtifactNames: string[] = [];
   try {
@@ -1663,9 +1708,35 @@ export async function runOrchestrator(
         await verifyAndRepairWorkspace(
           conversationId,
           runId,
-          async (targetStage: string, customInput?: string) => {
+          async (targetStage: string, customInput?: string, targetFile?: string) => {
             if (targetStage === 'Debugger') {
               debuggerExecutedInRun = true;
+              // Check if an accepted Debugger execution already exists for this pipeline run
+              const existingExec = await prisma.stageExecution.findFirst({
+                where: {
+                  pipelineRunId: runId,
+                  stageName: 'Debugger',
+                  state: 'ACCEPTED',
+                },
+                orderBy: { attempt: 'desc' },
+              });
+              if (existingExec) {
+                const latestArtifact = await prisma.artifactVersion.findFirst({
+                  where: {
+                    pipelineRunId: runId,
+                    stageName: 'Debugger',
+                    state: 'ACCEPTED',
+                  },
+                  orderBy: { version: 'desc' },
+                });
+                if (latestArtifact) {
+                  return {
+                    status: 'ACCEPTED',
+                    stageExecution: existingExec,
+                    content: latestArtifact.content,
+                  };
+                }
+              }
             }
             const res = await executeContractStage({
               conversationId,
@@ -1677,6 +1748,7 @@ export async function runOrchestrator(
               leaseOwnerId,
               signal: executionSignal,
               customUserContent: customInput,
+              targetFile,
             });
             if (targetStage === 'Debugger') {
               await refreshCoderWorkspaceManifest(conversationId, runId, res.stageExecution.id);

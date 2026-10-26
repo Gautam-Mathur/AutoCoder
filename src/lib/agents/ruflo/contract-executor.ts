@@ -150,12 +150,16 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
           );
 
           const codeContent = agentResult?.content || '';
+          const isSetupFile = (authorized.setupManagedFiles || []).some(
+            (sf) => sf.toLowerCase() === tf.toLowerCase()
+          );
           await writeAuthorizedProjectFile({
             conversationId,
             pipelineRunId,
             stageExecutionId: stageExecution.id,
             filePath: tf,
             content: codeContent,
+            isSetupOperation: isSetupFile,
           });
         }
 

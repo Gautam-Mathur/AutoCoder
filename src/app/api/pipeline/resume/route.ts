@@ -24,6 +24,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const {
       conversationId,
+      stage,
       conflictDescription,
       resolvedConflictOption,
       action,
@@ -51,6 +52,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Conversation not found' }, { status: 404 });
     }
 
+    const activeRunId = conversation.pipelineRun?.id;
+
     const isApproveQualityGate = action === 'approve_quality_gate';
     if (isApproveQualityGate) {
       if (
@@ -65,7 +68,6 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const activeRunId = conversation.pipelineRun?.id;
       if (activeRunId) {
         await prisma.gateDecision.create({
           data: {
@@ -98,15 +100,30 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Advance stage to the next stage in sequence if current stage has completed or is a paused gate
-    let nextStage = conversation.currentStage;
-    const currentIdx = STAGES.indexOf(conversation.currentStage);
-    if (currentIdx >= 0 && currentIdx < STAGES.length - 1) {
-      const currentCompleted = conversation.history.some(
-        (h) => h.stage === conversation.currentStage && h.status === 'Completed'
-      );
-      if (currentCompleted || conversation.currentStage === 'Architect' || conversation.currentStage === 'Queen') {
-        nextStage = STAGES[currentIdx + 1];
+    // Determine stage to resume from (explicit stage from body or next stage based on StageExecution acceptance)
+    let nextStage = stage || conversation.currentStage;
+    if (!stage) {
+      const currentIdx = STAGES.indexOf(conversation.currentStage);
+      if (currentIdx >= 0 && currentIdx < STAGES.length - 1) {
+        let isStageAccepted = false;
+        if (activeRunId) {
+          const acceptedExec = await prisma.stageExecution.findFirst({
+            where: {
+              pipelineRunId: activeRunId,
+              stageName: conversation.currentStage,
+              state: 'ACCEPTED',
+            },
+          });
+          isStageAccepted = !!acceptedExec;
+        } else {
+          isStageAccepted = conversation.history.some(
+            (h) => h.stage === conversation.currentStage && h.status === 'Completed'
+          );
+        }
+
+        if (isStageAccepted || conversation.currentStage === 'Architect' || conversation.currentStage === 'Queen') {
+          nextStage = STAGES[currentIdx + 1];
+        }
       }
     }
 
@@ -118,6 +135,16 @@ export async function POST(request: NextRequest) {
         ...(isApproveQualityGate ? { qualityGateOverride: true } : {}),
       },
     });
+
+    if (activeRunId) {
+      await prisma.pipelineRun.update({
+        where: { id: activeRunId },
+        data: {
+          state: 'RUNNING',
+          currentStage: nextStage,
+        },
+      });
+    }
 
     // Derive prompt from stored original prompt, title or fallback
     const userPrompt = conversation.originalPrompt || conversation.title || 'Resume software development pipeline';
