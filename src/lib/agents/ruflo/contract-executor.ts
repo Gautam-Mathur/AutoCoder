@@ -102,6 +102,18 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
     payload: { attempt, inputArtifacts: resolvedInputs.artifactIds, stageExecutionId: stageExecution.id },
   });
 
+  const inputNames = Object.keys(resolvedInputs.inputs);
+  const totalInflowChars = Object.values(resolvedInputs.inputs).reduce((sum, content) => sum + content.length, 0);
+  const inflowSummary = inputNames.length > 0
+    ? `📥 Inflow Context: [${inputNames.join(', ')}] (${totalInflowChars.toLocaleString()} chars)`
+    : `📥 Inflow Context: Natural User Prompt (${userPromptText.length.toLocaleString()} chars)`;
+
+  onEvent({
+    type: 'AGENT_LOG',
+    agent: stageName,
+    message: inflowSummary,
+  });
+
   try {
     let candidateContent = '';
     let currentWorkspaceHash = await computeWorkspaceFingerprint(conversationId);
@@ -430,6 +442,12 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
 
     // Invalidate descendant artifacts since a new version was accepted
     await invalidateDescendants(conversationId, stageName, pipelineRunId);
+
+    onEvent({
+      type: 'AGENT_LOG',
+      agent: stageName,
+      message: `📤 Outflow Synthesized: ${acceptedArtifact.filePath} (${candidateContent.length.toLocaleString()} bytes, Contract: ${acceptedArtifact.contractName} v${acceptedArtifact.contractVersion})`,
+    });
 
     // Step 8.10 — Update StageExecution state to ACCEPTED
     const updatedStageExecution = await prisma.stageExecution.update({

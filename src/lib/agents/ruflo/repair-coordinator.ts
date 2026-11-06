@@ -533,12 +533,12 @@ export function extractRepairPlanFromDebuggerOutput(
   const failureIds = normalizedFailures.map((f) => f.id);
   const affectedFilesSet = new Set<string>();
 
-  // Extract file paths from Issues Addressed and Patches Applied
-  const textToScan = `${parsed.output?.issuesAddressed || ''}\n${parsed.output?.patchesApplied || ''}`;
+  // Extract file paths prioritizing Patches Applied section (avoiding noise in diagnostic explanations)
+  const patchTextToScan = `${parsed.output?.patchesApplied || ''}`;
 
-  // Match "- File: <path>", "**File: <path>**", "### File: <path>", "- Target: <path>", or "- Path: <path>"
-  const explicitMatches = textToScan.matchAll(
-    /(?:[-*#]+\s*)?(?:\*\*)?(?:File|Target|Path)\s*:\s*(?:\*\*)?\s*[`'"]?([^\s\r\n*`'"]+)/gi
+  // Match "- File: <path>", "**File: <path>**", "1. **<path>**", "### File: <path>", "- Target: <path>", or "- Path: <path>"
+  const explicitMatches = patchTextToScan.matchAll(
+    /(?:(?:[-*#]+|\d+\.)\s*)?(?:\*\*)?(?:File|Target|Path)?\s*:?\s*(?:\*\*)?\s*[`'"]?([a-zA-Z0-9_\-\.\/]+\.(?:tsx|ts|jsx|json|js|html|css|prisma|sql|md)\b)[`'"]?\*?\*?/gi
   );
   for (const match of explicitMatches) {
     const raw = match[1].replace(/[*`'"]/g, '').trim();
@@ -550,15 +550,43 @@ export function extractRepairPlanFromDebuggerOutput(
     }
   }
 
-  // Also match general project paths within the issues and patches sections only if no explicit matches found
+  // Also match general project paths within patchesApplied if no explicit matches found
   if (affectedFilesSet.size === 0) {
-    const pathTokens = textToScan.match(
-      /\b(?:src|app|pages|server|components|lib|utils|public|config|styles)[\/\w\-\[\].]+\.(?:tsx|ts|jsx|js|html|css|json|prisma|sql|md)\b/gi
+    const pathTokens = patchTextToScan.match(
+      /\b(?:(?:src|app|pages|server|components|lib|utils|public|config|styles)[\/\w\-\[\].]+\.(?:tsx|ts|jsx|json|js|html|css|prisma|sql|md)|(?:package\.json|tsconfig\.json|vite\.config\.ts|index\.html|README\.md))\b/gi
     ) || [];
     for (const token of pathTokens) {
       const norm = normalizeProjectPath(token);
       if (!norm.includes('node_modules') && !norm.endsWith('.d.ts')) {
         affectedFilesSet.add(norm);
+      }
+    }
+  }
+
+  // Fallback: if Patches Applied yielded no targets, scan Issues Addressed as last resort
+  if (affectedFilesSet.size === 0 && parsed.output?.issuesAddressed) {
+    const issueText = `${parsed.output.issuesAddressed}`;
+    const issueMatches = issueText.matchAll(
+      /(?:(?:[-*#]+|\d+\.)\s*)?(?:\*\*)?(?:File|Target|Path)?\s*:?\s*(?:\*\*)?\s*[`'"]?([a-zA-Z0-9_\-\.\/]+\.(?:tsx|ts|jsx|json|js|html|css|prisma|sql|md)\b)[`'"]?\*?\*?/gi
+    );
+    for (const match of issueMatches) {
+      const raw = match[1].replace(/[*`'"]/g, '').trim();
+      if (raw) {
+        const norm = normalizeProjectPath(raw);
+        if (!norm.includes('node_modules') && !norm.endsWith('.d.ts')) {
+          affectedFilesSet.add(norm);
+        }
+      }
+    }
+    if (affectedFilesSet.size === 0) {
+      const pathTokens = issueText.match(
+        /\b(?:(?:src|app|pages|server|components|lib|utils|public|config|styles)[\/\w\-\[\].]+\.(?:tsx|ts|jsx|json|js|html|css|prisma|sql|md)|(?:package\.json|tsconfig\.json|vite\.config\.ts|index\.html|README\.md))\b/gi
+      ) || [];
+      for (const token of pathTokens) {
+        const norm = normalizeProjectPath(token);
+        if (!norm.includes('node_modules') && !norm.endsWith('.d.ts')) {
+          affectedFilesSet.add(norm);
+        }
       }
     }
   }
@@ -618,11 +646,20 @@ export interface CoordinateRepairParams {
   budget?: RepairBudget;
 }
 
+export interface RepairHistoryRecord {
+  cycle: number;
+  beforeVersion: string;
+  targets: string[];
+  strategySummary: string;
+  failureCount: number;
+}
+
 /**
  * The Canonical Repair Coordinator owning Tester -> Debugger -> Coder -> Tester lifecycle.
  */
 export async function coordinateRepair(params: CoordinateRepairParams): Promise<void> {
   const { conversationId, pipelineRunId, executeStageFn, emit, maxCycles = 10 } = params;
+  const repairHistory: RepairHistoryRecord[] = [];
 
   for (let cycle = 1; cycle <= maxCycles; cycle++) {
     // 1. Run Tester
@@ -647,12 +684,23 @@ export async function coordinateRepair(params: CoordinateRepairParams): Promise<
 
     if (isPass) {
       emit({
+        type: 'AGENT_LOG',
+        agent: 'Tester',
+        message: `[REPAIR_VERIFIED] Workspace verification passed cleanly on cycle ${cycle}.`,
+      });
+      emit({
         type: 'AGENT_COMPLETE',
         agent: 'Tester',
         message: `Workspace verification passed cleanly on cycle ${cycle}.`,
       });
       return;
     }
+
+    emit({
+      type: 'AGENT_LOG',
+      agent: 'Tester',
+      message: `[REPAIR_RETRY] Workspace verification reported defects on cycle ${cycle}. Initiating surgical repair...`,
+    });
 
     if (cycle === maxCycles) {
       throw new Error(`Workspace verification failed after ${maxCycles} debug repair cycles.`);
@@ -669,14 +717,36 @@ export async function coordinateRepair(params: CoordinateRepairParams): Promise<
     });
 
     // 3. Execute Debugger to diagnose and plan repairs
+    const hasJsFailures = normalizedFailures.some((f) =>
+      f.affectedFiles.some((file) => file.endsWith('.js') || file.endsWith('.jsx'))
+    );
+    const jsGuidance = hasJsFailures
+      ? [
+          `### Language-Specific Rules for JavaScript`,
+          `Target files include JavaScript (.js/.jsx). TypeScript checkJs is active. Do NOT prescribe TypeScript type syntax ('as Type' or ': Type') as that causes TS8010 syntax error. Use runtime instanceof guards (e.g. 'if (form instanceof HTMLFormElement)'), document.querySelector('form'), or JSDoc type annotations.`,
+        ].join('\n')
+      : '';
+
+    const historyBlock = repairHistory.length > 0
+      ? [
+          `### Previous Repair Attempts (Most Recent First)`,
+          ...repairHistory.slice(-5).reverse().map((h) =>
+            `- Cycle ${h.cycle} (Version ${h.beforeVersion.slice(0, 8)}...): Targets=[${h.targets.join(', ')}]. Strategy: "${h.strategySummary}". Failures: ${h.failureCount}.`
+          ),
+          `Notice: If a previous strategy introduced syntax errors (such as TS8010/TS8011 in .js), do NOT prescribe it again. Use runtime instanceof guards or JSDoc.`,
+        ].join('\n')
+      : '';
+
     const debugContext = [
       `### Active Base Workspace Version`,
       beforeVersion,
       `### Normalized Failures`,
       ...normalizedFailures.map((f) => `- [${f.id}] (${f.affectedFiles.join(', ') || 'workspace'}): ${f.message}`),
+      jsGuidance,
+      historyBlock,
       `### Original Tester Output`,
       testerResult.content || '',
-    ].join('\n\n');
+    ].filter(Boolean).join('\n\n');
 
     const debugResult = await executeStageFn('Debugger', debugContext);
     const debugAccepted =
@@ -747,6 +817,27 @@ export async function coordinateRepair(params: CoordinateRepairParams): Promise<
       );
     }
 
+    emit({
+      type: 'AGENT_LOG',
+      agent: 'Debugger',
+      message: `[REPAIR_PLAN_VALIDATED] Repair plan validated for ${authorizedTargets.length} file(s) on revision ${beforeVersion.slice(0, 8)}.`,
+    });
+
+    const strategySummary = (plan.instructions || [])
+      .map((l: string) => l.trim().replace(/^[-*#\d.]+\s*/, ''))
+      .filter((l: string) => l.length > 0)
+      .slice(0, 2)
+      .join('; ')
+      .slice(0, 150) || 'Targeted surgical repair';
+
+    repairHistory.push({
+      cycle,
+      beforeVersion,
+      targets: authorizedTargets,
+      strategySummary,
+      failureCount: normalizedFailures.length,
+    });
+
     // 6. Invoke Coder only after canonical repair plan passed validation against active workspace revision & authorized set
     emit({
       type: 'AGENT_START',
@@ -764,7 +855,11 @@ export async function coordinateRepair(params: CoordinateRepairParams): Promise<
 
     for (const targetFile of authorizedTargets) {
       try {
-        await executeStageFn('Coder', coderRepairInstructions, targetFile);
+        let fileRepairInstructions = coderRepairInstructions;
+        if (targetFile.endsWith('.js') || targetFile.endsWith('.jsx')) {
+          fileRepairInstructions += `\n\nIMPORTANT LANGUAGE RULE FOR JAVASCRIPT (.js):\nOutput pure standard ECMAScript only. DO NOT use TypeScript 'as Type' type assertions or ': Type' annotations (they trigger TS8010 syntax error). For DOM properties (.value, .reset, .dataset), use runtime guards (e.g., if (el instanceof HTMLInputElement)), querySelector, or JSDoc.`;
+        }
+        await executeStageFn('Coder', fileRepairInstructions, targetFile);
       } catch (err: any) {
         if (err?.message?.includes('Unexpected stage Coder')) {
           break;
@@ -772,6 +867,12 @@ export async function coordinateRepair(params: CoordinateRepairParams): Promise<
         throw err;
       }
     }
+
+    emit({
+      type: 'AGENT_LOG',
+      agent: 'Coder',
+      message: `[REPAIR_COMMITTED] Applied and committed targeted repairs across ${authorizedTargets.join(', ')}.`,
+    });
 
     emit({
       type: 'AGENT_COMPLETE',

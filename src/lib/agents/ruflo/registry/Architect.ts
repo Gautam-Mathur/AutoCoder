@@ -156,7 +156,9 @@ For every file in Project Folder Structure:
 1. Classify the file as: implementation, framework, static asset, config, schema, or documentation.
 2. Every implementation (.ts, .tsx, .js, .html, .css) and framework (page.tsx, layout.tsx, route.ts) file MUST belong to exactly ONE module.
 3. NEVER assign the same file to two modules. Usage is NOT ownership! If multiple modules/components use TaskCard.tsx, assign TaskCard.tsx to exactly ONE module (e.g. Frontend Application). Shared usage does NOT create shared ownership.
-4. NEVER omit framework implementation files such as page.tsx, layout.tsx, route.ts, loading.tsx, error.tsx, or not-found.tsx.
+4. NEVER omit framework implementation files or root application shell files:
+   - In Next.js: page.tsx, layout.tsx, route.ts, loading.tsx, error.tsx, not-found.tsx.
+   - In Vite / React / SPA: index.html and root stylesheets (e.g. src/styles/global.css or style.css) are application shell files and MUST be assigned to an owning module (e.g. Frontend Application or App Shell). Do NOT omit index.html or global.css from module ownership!
 5. Static public assets (e.g. public/favicon.ico) and config/schema files (e.g. package.json, tsconfig.json) do not require module ownership. If assigned to a module, they must belong to at most ONE module.
 6. Every route handler (e.g. src/app/api/route.ts) MUST belong to an API/backend module.
 7. Owned Files must be exact file paths from Project Folder Structure, not concepts or component names.

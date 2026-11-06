@@ -14,7 +14,25 @@ import {
   loadAuthorizedFileSet,
 } from './vfs';
 import { extractEmbeddedWorkspaceHash } from './workspace-policy';
-import { StageName } from './contracts/versions';
+import { StageName, CONTRACT_VERSIONS } from './contracts/versions';
+
+export function getExpectedContractName(stageName: string): string {
+  const stage = stageName as StageName;
+  const versionInfo = CONTRACT_VERSIONS[stage];
+  if (!versionInfo) {
+    throw new Error(`Canonical Contract Error: Unknown stage "${stageName}" in contract registry.`);
+  }
+  return versionInfo.contractName;
+}
+
+export function getExpectedContractVersion(stageName: string): string {
+  const stage = stageName as StageName;
+  const versionInfo = CONTRACT_VERSIONS[stage];
+  if (!versionInfo) {
+    throw new Error(`Canonical Contract Error: Unknown stage "${stageName}" in contract registry.`);
+  }
+  return versionInfo.version;
+}
 
 export interface CommitArtifactParams {
   conversationId: string;
@@ -38,6 +56,22 @@ export async function commitAcceptedArtifact(params: CommitArtifactParams) {
     params.contractHash && params.contractHash !== contentHash
       ? params.contractHash
       : computeStageContractFingerprint(params.stage as StageName);
+
+  const stageName = params.stage as StageName;
+  const expectedContractName = getExpectedContractName(stageName);
+
+  if (params.contractName && params.contractName !== expectedContractName) {
+    throw new Error(
+      `Canonical Contract Conflict: Caller supplied contract name "${params.contractName}" for stage "${params.stage}", but canonical contract registry mandates "${expectedContractName}".`
+    );
+  }
+  const resolvedContractName = expectedContractName;
+
+  const expectedContractVersion = getExpectedContractVersion(stageName);
+  const resolvedContractVersion = params.contractVersion || expectedContractVersion;
+  const versionInfo = CONTRACT_VERSIONS[stageName];
+  const resolvedValidatorVersion = params.validatorVersion || versionInfo?.validatorVersion || '1.2.0';
+  const resolvedPromptVersion = params.promptVersion || versionInfo?.promptVersion || '1.2.0';
 
   const created = await prisma.$transaction(async (tx) => {
     const latest = await tx.artifactVersion.findFirst({
@@ -73,11 +107,11 @@ export async function commitAcceptedArtifact(params: CommitArtifactParams) {
         version,
         contentHash,
         content: params.content,
-        contractName: params.contractName,
-        contractVersion: params.contractVersion,
+        contractName: resolvedContractName,
+        contractVersion: resolvedContractVersion,
         contractHash: resolvedContractHash,
-        validatorVersion: params.validatorVersion,
-        promptVersion: params.promptVersion,
+        validatorVersion: resolvedValidatorVersion,
+        promptVersion: resolvedPromptVersion,
         parentArtifactIds: params.parentArtifactIds ? JSON.stringify(params.parentArtifactIds) : undefined,
         dependencyFingerprint: params.dependencyFingerprint,
         state: 'ACCEPTED',

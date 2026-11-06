@@ -39,6 +39,14 @@ Follow this sequence:
 - Do not rewrite functioning code unnecessarily.
 - Do not introduce new dependencies unless required to resolve the reported failure.
 - Preserve existing public interfaces and function signatures.
+### Language-Specific Syntax Rules
+- JavaScript Files (.js, .jsx):
+  - In \`.js\` files, DO NOT prescribe TypeScript type assertions (\`as Type\`) or type annotations (\`: Type\`). TypeScript syntax in JavaScript files triggers syntax error TS8010/TS8011.
+  - To resolve DOM property or method diagnostics in \`.js\` (such as \`Property 'reset' does not exist on type 'HTMLElement'\`, or \`Property 'value' does not exist on type 'HTMLElement'\`), prescribe:
+    1. Runtime type guards: \`if (el instanceof HTMLFormElement) el.reset();\` or \`if (input instanceof HTMLInputElement)\`
+    2. DOM-specific selectors: \`document.querySelector('form')\` or \`document.querySelector('input')\`
+    3. JSDoc type casts: \`/** @type {HTMLFormElement} */ (el).reset()\`
+  - Never prescribe TypeScript type assertions in \`.js\` files.
 ### Workspace Safety
 - Modify only files within the authorized project workspace.
 - Do not modify pipeline control-plane files, contract definitions, prompts, orchestration logic, or other protected infrastructure unless the reported diagnostic explicitly identifies an authorized project file requiring the change.

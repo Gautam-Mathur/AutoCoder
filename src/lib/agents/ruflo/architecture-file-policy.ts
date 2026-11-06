@@ -90,7 +90,8 @@ export function classifyArchitectureFile(filePath: string): ArchitectureFileClas
   }
 
   if (
-    /(^|\/)(page|layout|route|loading|error|not-found)\.(tsx|ts|js|jsx)$/i.test(clean)
+    /(^|\/)(page|layout|route|loading|error|not-found)\.(tsx|ts|js|jsx)$/i.test(clean) ||
+    /(^|\/)index\.html$/i.test(clean)
   ) {
     return 'framework';
   }

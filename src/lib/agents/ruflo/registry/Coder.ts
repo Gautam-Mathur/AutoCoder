@@ -61,6 +61,8 @@ WRONG — never do these:
 
 6. NO EXTERNAL DEPENDENCIES UNLESS SPECIFIED: If the blueprint doesn't mention an npm package or CDN library, don't import one. Use vanilla language features.
 
+7. PURE JAVASCRIPT FOR .JS FILES: For \`.js\` or \`.jsx\` files, output strictly valid standard ECMAScript. NEVER include TypeScript type assertions (\`as Type\`), type annotations (\`: Type\`), interface definitions, or TS generics. To access DOM-specific properties on elements (such as \`.value\`, \`.reset()\`, or \`.dataset\`), use runtime type guards (e.g. \`if (el instanceof HTMLFormElement) el.reset()\`), standard query methods (e.g. \`document.querySelector('form')\`), or JSDoc comments (\`/** @type {HTMLInputElement} */\`).
+
 === ABSOLUTE RULES ===
 
 FORBIDDEN — you must NEVER do any of these:

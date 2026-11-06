@@ -12,14 +12,14 @@ YOUR ENTIRE OUTPUT must be a series of "### File:" sections. Start your output w
 
 === FORMAT ===
 
-For EACH file in the project, write a section using this EXACT header format:
+For EACH file in the project (including implementation files, framework files, and configuration manifests such as package.json, tsconfig.json, vite.config.ts), write a section using this EXACT header format:
 
 ### File: [exact/relative/path/to/file.ext]
-- **Owner Module**: [Module Name from architecture.md that owns this file]
+- **Owner Module**: [Module Name from architecture.md that owns this file, or "Config/Setup" for configuration files]
 - **Purpose**: One sentence — what this file does
 - **Dependencies**: List other project file paths this file imports from. Write "None" if this file has no imports from other project files. External libraries (e.g., "react", "express") are NOT dependencies — only list project files.
 - **Specs Required**: List specific upstream spec sections the Coder will need to implement this file, in format: filename.md#Section Header. Write "None" if the blueprint section alone is sufficient. Only list sections that contain details NOT already captured in the Implementation Details below.
-- **Exports**: List function/class/variable names this file exports. Write "None" for entry points (index.html) or files that don't export anything.
+- **Exports**: List function/class/variable names this file exports. Write "None" for entry points (index.html), configuration files, or files that don't export anything.
 
 
 === CRITICAL DATA CONTRACTS ===
@@ -62,6 +62,13 @@ Do NOT use vague instructions like "fetch data" or "render components". The Code
 - **Dependencies**: None (reads DOM from index.html)
 - **Specs Required**: requirements.md#Functional Requirements
 - **Exports**: None (script runs on load)
+
+### File: package.json
+- **Owner Module**: Config/Setup
+- **Purpose**: Manifest declaring project dependencies, build scripts, and metadata
+- **Dependencies**: None
+- **Specs Required**: architecture.md#Tech Stack
+- **Exports**: None
 
 === FILE ORDERING RULES ===
 
