@@ -626,6 +626,14 @@ export async function executeStaticFrontendSmokeTest(
     if (reqPath === '/' || reqPath === '') reqPath = `/${entryFile}`;
 
     const cleanRel = reqPath.replace(/^\/+/, '');
+
+    // Automatically serve 204 No Content for browser-initiated favicon requests
+    if (cleanRel === 'favicon.ico') {
+      res.writeHead(204, { 'Content-Type': 'image/x-icon' });
+      res.end();
+      return;
+    }
+
     const candidatePath = path.resolve(realBase, cleanRel);
 
     if (!candidatePath.startsWith(realBase + path.sep) && candidatePath !== realBase) {
@@ -787,11 +795,15 @@ export async function executeStaticFrontendSmokeTest(
             }
           }
 
-          // Record real observed HTTP status for the main document
+          // Record real observed HTTP status for the main document and report real resource failures with exact URL
           if (data.method === 'Network.responseReceived') {
             const { response, type } = data.params;
             if (type === 'Document') {
               observedHttpStatus = response.status;
+            } else if (response.status >= 400 && !response.url?.endsWith('favicon.ico')) {
+              consoleErrors.push(
+                `Failed to load resource: ${response.url} responded with HTTP ${response.status} (${response.statusText || 'Not Found'})`
+              );
             }
           }
 
@@ -815,7 +827,10 @@ export async function executeStaticFrontendSmokeTest(
           }
 
           if (data.method === 'Log.entryAdded' && data.params.entry?.level === 'error') {
-            consoleErrors.push(data.params.entry.text);
+            const entryText = data.params.entry?.text || '';
+            if (!entryText.includes('favicon.ico')) {
+              consoleErrors.push(entryText);
+            }
           }
         } catch {}
       };

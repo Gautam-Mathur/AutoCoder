@@ -801,27 +801,33 @@ export function computeDiagnosticFingerprint(
 
 /**
  * Analyzes the repair trajectory with strict precedence:
- * 1. Oscillation Check (exact signature recurrence)
- * 2. Diminishing Returns Check (failure count not decreasing over 2 cycles)
+ * 1. True Oscillation Check (exact signature recurrence after an intervening state: A -> B -> A)
+ * 2. Diminishing Returns Check (failure count non-decreasing over 3 consecutive cycles)
  * 3. Budget Cap Check (cycle count threshold)
  */
 export function analyzeRepairTrajectory(
   history: DiagnosticFingerprint[],
   current: DiagnosticFingerprint,
-  maxAllowedCycles = 2
+  maxAllowedCycles = 10
 ): { shouldHalt: boolean; reason?: 'OSCILLATION_DETECTED' | 'DIMINISHING_RETURNS' | 'BUDGET_EXCEEDED' } {
-  // CHECK 1: Oscillation Check evaluated FIRST
-  for (const prev of history) {
-    if (prev.signatureHash === current.signatureHash) {
+  // CHECK 1: True Oscillation Check (recurrence after visiting a different state: A -> B -> A)
+  // Distance must be >= 2 (must not match the immediate predecessor, which is consecutive persistence)
+  for (let i = 0; i < history.length - 1; i++) {
+    if (history[i].signatureHash === current.signatureHash) {
       return { shouldHalt: true, reason: 'OSCILLATION_DETECTED' };
     }
   }
 
-  // CHECK 2: Diminishing returns (Unique failure count non-decreasing over 2 consecutive cycles)
-  if (history.length >= 2) {
+  // CHECK 2: Diminishing returns (Unique failure count non-decreasing over 3 consecutive cycles)
+  if (history.length >= 3) {
     const prev1 = history[history.length - 1];
     const prev2 = history[history.length - 2];
-    if (current.uniqueFailureCount >= prev1.uniqueFailureCount && prev1.uniqueFailureCount >= prev2.uniqueFailureCount) {
+    const prev3 = history[history.length - 3];
+    if (
+      current.uniqueFailureCount >= prev1.uniqueFailureCount &&
+      prev1.uniqueFailureCount >= prev2.uniqueFailureCount &&
+      prev2.uniqueFailureCount >= prev3.uniqueFailureCount
+    ) {
       return { shouldHalt: true, reason: 'DIMINISHING_RETURNS' };
     }
   }

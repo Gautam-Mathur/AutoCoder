@@ -247,6 +247,26 @@ describe('AutoCoder 24-Scenario Acceptance Test Matrix', () => {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
     });
+
+    it('Scenario 16: Clean page without favicon loads with 0 errors (favicon.ico returns 204)', async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'smoke-test-16-'));
+      try {
+        fs.writeFileSync(
+          path.join(tmpDir, 'index.html'),
+          `<!DOCTYPE html><html><head><title>Clean Page</title></head><body><h1>Hello World</h1></body></html>`
+        );
+        const res = await executeStaticFrontendSmokeTest({
+          conversationId: 'test-16',
+          projectDir: tmpDir,
+          observationWindowMs: 1000,
+        });
+        assert.equal(res.executed, true);
+        assert.equal(res.success, true);
+        assert.equal(res.error, undefined);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe('Security AST Guard Scenarios (18 - 22)', () => {
@@ -316,18 +336,26 @@ describe('AutoCoder 24-Scenario Acceptance Test Matrix', () => {
       assert.equal(isTsCheckEnabled(deepComment), false);
     });
 
-    it('Scenario 24: Identical diagnostics at cycle 1 and 2 -> Halt on Cycle 2 (OSCILLATION_DETECTED)', () => {
-      const failures = [
+    it('Scenario 24: True oscillation (A -> B -> A) halts, consecutive retry (A -> A) continues budget', () => {
+      const failuresA = [
         { file: 'app.js', message: 'Element not found', code: 'DOM_MISSING_ID' },
       ];
-      const cycle1 = computeDiagnosticFingerprint(1, failures);
-      const cycle2 = computeDiagnosticFingerprint(2, failures);
+      const failuresB = [
+        { file: 'app.js', message: 'Syntax error', code: 'SYNTAX_ERROR' },
+      ];
+      const cycle1 = computeDiagnosticFingerprint(1, failuresA);
+      const cycle2 = computeDiagnosticFingerprint(2, failuresB);
+      const cycle3Oscillating = computeDiagnosticFingerprint(3, failuresA);
+      const cycle2Consecutive = computeDiagnosticFingerprint(2, failuresA);
 
-      assert.equal(cycle1.signatureHash, cycle2.signatureHash);
+      // Consecutive retry (A -> A) must NOT halt on cycle 2 (preserves 10-cycle repair budget)
+      const resConsecutive = analyzeRepairTrajectory([cycle1], cycle2Consecutive, 10);
+      assert.equal(resConsecutive.shouldHalt, false);
 
-      const res = analyzeRepairTrajectory([cycle1], cycle2, 5);
-      assert.equal(res.shouldHalt, true);
-      assert.equal(res.reason, 'OSCILLATION_DETECTED');
+      // True oscillation (A -> B -> A) halts on cycle 3
+      const resOscillation = analyzeRepairTrajectory([cycle1, cycle2], cycle3Oscillating, 10);
+      assert.equal(resOscillation.shouldHalt, true);
+      assert.equal(resOscillation.reason, 'OSCILLATION_DETECTED');
     });
   });
 });
