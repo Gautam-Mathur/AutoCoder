@@ -126,7 +126,7 @@ function validatePlanner(content: string): AcceptanceResult {
 }
 
 
-function validateArchitect(content: string): AcceptanceResult {
+function validateArchitect(content: string, ctx?: StageAcceptanceContext): AcceptanceResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 
@@ -143,6 +143,25 @@ function validateArchitect(content: string): AcceptanceResult {
     errors.push('Architect Tech Stack section must define Frontend, Backend, Database, and ORM.');
   }
 
+  // In-Stage Contract Check: Validate candidate architecture against upstream requirements
+  if (ctx?.upstreamContext?.['requirements.md']) {
+    const reqContent = ctx.upstreamContext['requirements.md'];
+    const planContent = ctx.upstreamContext['plan.md'] || '';
+
+    const tempContract = extractProjectContract({
+      'plan.md': planContent,
+      'requirements.md': reqContent,
+      'architecture.md': content,
+    });
+
+    const validation = validateProjectContract(tempContract);
+    if (!validation.valid) {
+      for (const err of validation.errors) {
+        errors.push(`Architect Specification Contradiction: ${err}`);
+      }
+    }
+  }
+
   return { accepted: errors.length === 0, errors, warnings };
 }
 
@@ -150,50 +169,51 @@ function validateSystem(content: string, ctx?: StageAcceptanceContext): Acceptan
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  if (content.includes('### No Backend Required')) {
+  const isNoBackend = content.includes('### No Backend Required');
+
+  if (isNoBackend) {
     if (!/No backend, database, or API endpoints are needed/i.test(content) && !/frontend-only/i.test(content)) {
       warnings.push('No Backend Required section is brief.');
     }
-    return { accepted: true, errors: [], warnings };
-  }
-
-  const requiredHeadings = ['Database Design', 'Seed Data', 'API Endpoints'];
-
-  for (const s of requiredHeadings) {
-    const count = countHeading(content, `### ${s}`);
-    if (count === 0) {
-      errors.push(`System Contract Error: Missing required section "### ${s}".`);
-    } else if (count > 1) {
-      errors.push(`System Contract Error: Duplicate section "### ${s}".`);
+    // DO NOT RETURN EARLY! Proceed to validate consistency against upstream context!
+  } else {
+    const requiredHeadings = ['Database Design', 'Seed Data', 'API Endpoints'];
+    for (const s of requiredHeadings) {
+      const count = countHeading(content, `### ${s}`);
+      if (count === 0) {
+        errors.push(`System Contract Error: Missing required section "### ${s}".`);
+      } else if (count > 1) {
+        errors.push(`System Contract Error: Duplicate section "### ${s}".`);
+      }
     }
-  }
 
-  if (errors.length > 0) {
-    return { accepted: false, errors, warnings };
-  }
+    if (errors.length > 0) {
+      return { accepted: false, errors, warnings };
+    }
 
-  const dbDesign = extractRequiredSection(content, 'Database Design');
-  const apiEndpoints = extractRequiredSection(content, 'API Endpoints');
+    const dbDesign = extractRequiredSection(content, 'Database Design');
+    const apiEndpoints = extractRequiredSection(content, 'API Endpoints');
 
-  if (!dbDesign) errors.push('System Database Design section is empty.');
-  if (!apiEndpoints) errors.push('System API Endpoints section is empty.');
+    if (!dbDesign) errors.push('System Database Design section is empty.');
+    if (!apiEndpoints) errors.push('System API Endpoints section is empty.');
 
-  // Validate API Endpoint file paths against Architecture project files
-  if (ctx?.upstreamContext?.['architecture.md']) {
-    const parsedArch = parseArchitecture(ctx.upstreamContext['architecture.md']);
-    if (parsedArch.projectFiles.length > 0) {
-      const archFilesLower = new Set(parsedArch.projectFiles.map((f) => f.toLowerCase()));
-      const endpointPathTokens = apiEndpoints.match(/\b(?:src|app|pages|server|api)\/[\/\w\-\[\].]+\.(?:tsx|ts|jsx|js)\b/gi) || [];
-      for (const token of endpointPathTokens) {
-        const norm = normalizeProjectPath(token).toLowerCase();
-        if (!archFilesLower.has(norm)) {
-          errors.push(`System Contract Error: API endpoint path "${token}" is absent from architecture project files.`);
+    // Validate API Endpoint file paths against Architecture project files
+    if (ctx?.upstreamContext?.['architecture.md']) {
+      const parsedArch = parseArchitecture(ctx.upstreamContext['architecture.md']);
+      if (parsedArch.projectFiles.length > 0) {
+        const archFilesLower = new Set(parsedArch.projectFiles.map((f) => f.toLowerCase()));
+        const endpointPathTokens = apiEndpoints.match(/\b(?:src|app|pages|server|api)\/[\/\w\-\[\].]+\.(?:tsx|ts|jsx|js)\b/gi) || [];
+        for (const token of endpointPathTokens) {
+          const norm = normalizeProjectPath(token).toLowerCase();
+          if (!archFilesLower.has(norm)) {
+            errors.push(`System Contract Error: API endpoint path "${token}" is absent from architecture project files.`);
+          }
         }
       }
     }
   }
 
-  // Pre-acceptance Specification Consistency Checks (Workstream F / Section 9)
+  // Pre-acceptance Specification Consistency Checks
   if (ctx?.upstreamContext) {
     const planMd = ctx.upstreamContext['plan.md'] || '';
     const reqsMd = ctx.upstreamContext['requirements.md'] || '';
@@ -437,7 +457,7 @@ export async function validateStageCandidate(
     case 'Planner':
       return validatePlanner(content);
     case 'Architect':
-      return validateArchitect(content);
+      return validateArchitect(content, ctx);
     case 'System':
       return validateSystem(content, ctx);
     case 'Designer':

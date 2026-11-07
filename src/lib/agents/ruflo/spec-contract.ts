@@ -11,6 +11,7 @@ import {
 import { parseArchitecture } from './architecture-parser';
 import { requiresModuleOwnership } from './architecture-file-policy';
 import { isValidNextDynamicSegment } from './api-contract-validator';
+import { classifyAuthenticationScope } from './auth-scoping';
 
 export type { ApiEndpointContract, ModelContract, ProjectContract, ContractValidation, ContractEvidence, ImplementationBoundary };
 
@@ -143,7 +144,7 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
     database = 'sqlite';
   }
 
-  // 4. Detect Authentication Requirements & Evidence Collection
+  // 4. Detect Authentication Requirements & Evidence Collection with Semantic Scoping
   const evidence: ContractEvidence[] = [];
   const specMap: Record<string, string> = {
     'plan.md': plan,
@@ -154,17 +155,20 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
   };
 
   for (const [source, text] of Object.entries(specMap)) {
-    if (detectExplicitNoAuth(text)) {
+    if (!text.trim()) continue;
+    const scoped = classifyAuthenticationScope(text, source);
+    if (scoped.scope === 'NONE') {
       evidence.push({ source, field: 'authentication', value: 'none' });
-    }
-    if (detectExplicitAuthRequired(text)) {
+    } else if (scoped.scope === 'SERVER_AUTH_INFRASTRUCTURE') {
       evidence.push({ source, field: 'authentication', value: 'required' });
+    } else if (scoped.scope === 'CLIENT_MOCK_AUTH' || scoped.scope === 'AUTH_UI') {
+      evidence.push({ source, field: 'authentication', value: 'mock_or_ui' });
     }
   }
 
   const hasExplicitNoAuth = evidence.some((e) => e.field === 'authentication' && e.value === 'none');
-  const hasExplicitAuth = evidence.some((e) => e.field === 'authentication' && e.value === 'required');
-  const authRequired = hasExplicitAuth && !hasExplicitNoAuth;
+  const hasServerAuth = evidence.some((e) => e.field === 'authentication' && e.value === 'required');
+  const authRequired = hasServerAuth && !hasExplicitNoAuth;
 
   const mechanismMatch = combined.match(/auth\s*mechanism:\s*(.+)/i) || combined.match(/authentication:\s*(jwt|session|next-auth|clerk|oauth)/i);
   const mechanism = authRequired ? (mechanismMatch ? mechanismMatch[1].trim() : undefined) : undefined;
@@ -324,11 +328,16 @@ export function extractProjectContract(specs: Record<string, string>): ProjectCo
   const moduleSystem: 'ESM' | 'COMMONJS' =
     /import\s+.*from|export\s+/i.test(combined) || /ES6|ESM|module/i.test(combined) ? 'ESM' : 'COMMONJS';
 
+  const hasNoBackendDeclaration =
+    /###\s*No Backend Required/i.test(backend) ||
+    /\bNo backend, database, or API endpoints are needed\b/i.test(backend);
+
   const rawContract = {
     framework,
     language,
     orm,
     database,
+    hasNoBackendDeclaration,
     authentication: {
       required: authRequired,
       mechanism,
@@ -866,13 +875,15 @@ export function validateProjectContract(contract: ProjectContract): ContractVali
   // Contradiction Check 1: Authentication Contradictions across Artifacts
   const authEvidence = contract.authentication.evidence || [];
   const noAuthEvidence = authEvidence.filter((e) => e.field === 'authentication' && e.value === 'none');
-  const reqAuthEvidence = authEvidence.filter((e) => e.field === 'authentication' && e.value === 'required');
+  const serverAuthEvidence = authEvidence.filter((e) => e.field === 'authentication' && e.value === 'required');
 
-  if (noAuthEvidence.length > 0 && reqAuthEvidence.length > 0) {
+  // Only real server-side auth infrastructure contradicts an explicit declaration of no-auth.
+  // Mock auth and UI forms (mock_or_ui) do NOT conflict with no-auth on the backend.
+  if (noAuthEvidence.length > 0 && serverAuthEvidence.length > 0) {
     errors.push(
       `Authentication contradiction across specification artifacts. No-auth evidence: ${noAuthEvidence
         .map((e) => `${e.source}=${e.value}`)
-        .join(', ')} | Auth-required evidence: ${reqAuthEvidence.map((e) => `${e.source}=${e.value}`).join(', ')}`
+        .join(', ')} | Server-Auth required evidence: ${serverAuthEvidence.map((e) => `${e.source}=${e.value}`).join(', ')}`
     );
   }
 
@@ -931,6 +942,15 @@ export function validateProjectContract(contract: ProjectContract): ContractVali
     const invalidPages = contract.entryPoints.filter((e) => e.startsWith('pages/'));
     if (invalidPages.length > 0) {
       errors.push(`Routing Contradiction: Next.js App Router selected, but entry points list Pages Router routes: ${invalidPages.join(', ')}`);
+    }
+  }
+
+  // Contradiction Check 7: No Backend Required vs Database / Server Infrastructure Contradiction
+  if (contract.hasNoBackendDeclaration) {
+    if (contract.database !== 'none' || contract.orm !== 'none' || contract.authentication.required) {
+      errors.push(
+        `Specification Contradiction: backend_spec.md declares "No Backend Required", but project contract requires backend infrastructure (database=${contract.database}, orm=${contract.orm}, authRequired=${contract.authentication.required}).`
+      );
     }
   }
 

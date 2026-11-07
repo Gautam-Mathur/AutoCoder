@@ -33,6 +33,14 @@ import { getCanonicalStageOrder } from './contracts/stage-graph';
 import { CONTRACT_VERSIONS } from './contracts/versions';
 import { executeContractStage } from './contract-executor';
 import { evaluateFinalPipelineGate } from './final-gate';
+import crypto from 'crypto';
+import { arbitrateSpecificationContradiction } from './spec-arbitrator';
+import {
+  prepareReconciliationTransaction,
+  commitReconciliationTransaction,
+  abortReconciliationTransaction,
+  detectSpecificationOscillation,
+} from './spec-reconciliation-coordinator';
 import { verifyAndRepairWorkspace } from './verification-loop';
 import { appendPipelineEvent } from './pipeline-events';
 import { commitAcceptedArtifact, findReusableAcceptedArtifact, refreshCoderWorkspaceManifest, resolveAcceptedStageInputs } from './artifact-store';
@@ -2018,28 +2026,167 @@ export async function runOrchestrator(
       // Auto-flush VFS to physical disk after each stage completes
       await flushVfsToDisk(conversationId);
 
-      // Specification Contradiction Gate after System stage
+      // Specification Contradiction Reconciliation Gate after System stage
       if (stageName === 'System') {
-        const planMd = (await readVirtualFile(conversationId, 'plan.md')) || '';
-        const reqsMd = (await readVirtualFile(conversationId, 'requirements.md')) || '';
-        const archMd = (await readVirtualFile(conversationId, 'architecture.md')) || '';
-        const backendMd = (await readVirtualFile(conversationId, 'backend_spec.md')) || '';
+        let specReconciliationCycle = 0;
+        const MAX_SPEC_RECONCILIATION_CYCLES = 2;
+        const reconciliationHistory: Array<{ targetStage: string; selectedApproach: string; fingerprint: string }> = [];
 
-        const extractedContract = extractProjectContract({
-          'plan.md': planMd,
-          'requirements.md': reqsMd,
-          'architecture.md': archMd,
-          'backend_spec.md': backendMd,
-        });
+        while (specReconciliationCycle <= MAX_SPEC_RECONCILIATION_CYCLES) {
+          const planMd = (await readVirtualFile(conversationId, 'plan.md')) || '';
+          const reqsMd = (await readVirtualFile(conversationId, 'requirements.md')) || '';
+          const archMd = (await readVirtualFile(conversationId, 'architecture.md')) || '';
+          const backendMd = (await readVirtualFile(conversationId, 'backend_spec.md')) || '';
 
-        const contractValidation = validateProjectContract(extractedContract);
-        if (!contractValidation.valid) {
-          const specErr = `Specification Contradiction Gate Failed: ${contractValidation.errors.join('; ')}`;
+          const currentSpecs = {
+            'plan.md': planMd,
+            'requirements.md': reqsMd,
+            'architecture.md': archMd,
+            'backend_spec.md': backendMd,
+          };
+
+          const extractedContract = extractProjectContract(currentSpecs);
+          const contractValidation = validateProjectContract(extractedContract);
+
+          if (contractValidation.valid) {
+            if (specReconciliationCycle > 0) {
+              emit({
+                type: 'SPECIFICATION_RECONCILED',
+                agent: 'System',
+                message: `Specification contradiction successfully resolved on cycle ${specReconciliationCycle}.`,
+              });
+            }
+            break; // Contract is verified and consistent; proceed to Designer/Blueprinter/Coder
+          }
+
+          // Validation Failed: Increment Cycle and Check Budget
+          specReconciliationCycle++;
+          if (specReconciliationCycle > MAX_SPEC_RECONCILIATION_CYCLES) {
+            const fatalErr = `Specification Contradiction Gate Failed after ${MAX_SPEC_RECONCILIATION_CYCLES} reconciliation cycles: ${contractValidation.errors.join('; ')}`;
+            emit({ type: 'PIPELINE_ERROR', message: fatalErr });
+            throw new Error(fatalErr);
+          }
+
+          const fingerprint = crypto
+            .createHash('sha256')
+            .update(contractValidation.errors.sort().join('::'))
+            .digest('hex');
+
           emit({
-            type: 'PIPELINE_ERROR',
-            message: specErr,
+            type: 'SPECIFICATION_CONTRADICTION_DETECTED',
+            agent: 'System',
+            message: `Specification contradiction caught (Cycle ${specReconciliationCycle}/${MAX_SPEC_RECONCILIATION_CYCLES}). Initiating collective arbitration...`,
+            data: { errors: contractValidation.errors },
           });
-          throw new Error(specErr);
+
+          // Step 1: Arbitrate Strategy via Ollama within Deterministic Boundaries
+          const decision = await arbitrateSpecificationContradiction({
+            userPromptText: userPrompt,
+            specs: currentSpecs,
+            contract: extractedContract,
+            validationErrors: contractValidation.errors,
+            signal: executionSignal,
+          });
+
+          // Step 2: Anti-Oscillation Fail-Closed Guard
+          if (detectSpecificationOscillation(reconciliationHistory, { ...decision, fingerprint })) {
+            const oscErr = `Specification Reconciliation Aborted: Oscillation detected on cycle ${specReconciliationCycle}. System halted to prevent infinite loop.`;
+            emit({ type: 'PIPELINE_ERROR', message: oscErr });
+            throw new Error(oscErr);
+          }
+          reconciliationHistory.push({ ...decision, fingerprint });
+
+          // Step 3: Phase 1 (Prepare) — Snapshot VFS & Lock Transaction
+          const tx = await prepareReconciliationTransaction({
+            conversationId,
+            pipelineRunId: runId,
+            cycleNumber: specReconciliationCycle,
+            leaseOwnerId,
+            targetStage: decision.targetStage as StageName,
+            selectedApproach: decision.selectedApproach,
+            directive: decision.reconciliationDirective,
+            fingerprint,
+            validationErrors: contractValidation.errors,
+          });
+
+          // Step 4: Re-execute Target Stage (Orchestrator Drives Execution!)
+          emit({
+            type: 'SPECIFICATION_RECONCILING',
+            agent: decision.targetStage,
+            message: `Re-executing ${decision.targetStage} with reconciliation directive: ${decision.selectedApproach}`,
+            data: { directive: decision.reconciliationDirective },
+          });
+
+          try {
+            await executeContractStage({
+              conversationId,
+              pipelineRunId: runId,
+              stageName: decision.targetStage as StageName,
+              userPromptText: userPrompt,
+              onEvent: emit,
+              ledger,
+              leaseOwnerId,
+              signal: executionSignal,
+              customUserContent: decision.reconciliationDirective,
+            });
+
+            // If Architect was regenerated, System must also regenerate to consume new architecture
+            if (decision.targetStage === 'Architect') {
+              emit({
+                type: 'SPECIFICATION_RECONCILING',
+                agent: 'System',
+                message: 'Cascading regeneration: Re-executing System to align with updated architecture.md',
+              });
+              await executeContractStage({
+                conversationId,
+                pipelineRunId: runId,
+                stageName: 'System',
+                userPromptText: userPrompt,
+                onEvent: emit,
+                ledger,
+                leaseOwnerId,
+                signal: executionSignal,
+              });
+            }
+
+            // Step 5: Verify Contract Consistency Post-Regeneration
+            const postPlan = (await readVirtualFile(conversationId, 'plan.md')) || '';
+            const postReqs = (await readVirtualFile(conversationId, 'requirements.md')) || '';
+            const postArch = (await readVirtualFile(conversationId, 'architecture.md')) || '';
+            const postBackend = (await readVirtualFile(conversationId, 'backend_spec.md')) || '';
+
+            const postContract = extractProjectContract({
+              'plan.md': postPlan,
+              'requirements.md': postReqs,
+              'architecture.md': postArch,
+              'backend_spec.md': postBackend,
+            });
+
+            const postValidation = validateProjectContract(postContract);
+
+            if (postValidation.valid) {
+              // Phase 2 (Commit): Atomically publish accepted versions
+              await commitReconciliationTransaction(tx);
+              emit({
+                type: 'SPECIFICATION_RECONCILED',
+                agent: 'System',
+                message: `Specification contradiction successfully reconciled on cycle ${specReconciliationCycle}.`,
+              });
+              break; // Proceed to Designer
+            } else {
+              // Validation rejected: Rollback VFS to snapshot
+              await abortReconciliationTransaction(tx, postValidation.errors.join('; '));
+              if (specReconciliationCycle >= MAX_SPEC_RECONCILIATION_CYCLES) {
+                const fatalErr = `Specification Contradiction Gate Failed after ${MAX_SPEC_RECONCILIATION_CYCLES} reconciliation cycles: ${postValidation.errors.join('; ')}`;
+                emit({ type: 'PIPELINE_ERROR', message: fatalErr });
+                throw new Error(fatalErr);
+              }
+            }
+          } catch (err: any) {
+            // Execution exception: Rollback VFS to snapshot
+            await abortReconciliationTransaction(tx, err.message);
+            throw err;
+          }
         }
       }
 

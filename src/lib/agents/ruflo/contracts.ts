@@ -59,6 +59,7 @@ export interface ProjectContract {
   routing: {
     style: 'app' | 'pages' | 'static';
   };
+  hasNoBackendDeclaration?: boolean;
   moduleSystem?: 'ESM' | 'COMMONJS';
   entryPoints: string[];
   backendEntryPoints?: string[];

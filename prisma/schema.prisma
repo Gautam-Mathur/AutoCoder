@@ -44,6 +44,7 @@ model Conversation {
   pipelineEvents      PipelineEvent[]
   gateDecisions       GateDecision[]
   verificationRuns    VerificationRun[]
+  specificationReconciliations SpecificationReconciliation[]
 }
 
 model AgentOutput {
@@ -103,6 +104,7 @@ model PipelineRun {
   pipelineEvents PipelineEvent[]
   gateDecisions GateDecision[]
   verificationRuns VerificationRun[]
+  specificationReconciliations SpecificationReconciliation[]
 }
 
 model ExecutiveMemory {
@@ -589,6 +591,38 @@ model VerificationRun {
 
   @@index([conversationId, cycle])
   @@index([pipelineRunId, cycle])
+}
+
+// ====================================================
+// SPECIFICATION RECONCILIATION LIFECYCLE
+// ====================================================
+
+model SpecificationReconciliation {
+  id                       String   @id @default(uuid())
+  conversationId           String
+  pipelineRunId            String
+  cycleNumber              Int      // 1 or 2 (Max 2)
+  leaseOwnerId             String   // Enforces single-active-reconciliation ownership invariant
+  status                   String   // "PREPARED" | "REEXECUTING" | "REVALIDATING" | "RESOLVED" | "FAILED" | "ABORTED"
+
+  contradictionFingerprint String   // SHA256 of sorted validation errors + spec versions
+  validationErrors         String   // JSON stringified array of contract validation errors
+  sourceArtifactVersions   String   // JSON stringified map of { [filePath]: version }
+  
+  targetStage              String   // "Planner" | "Architect" | "System"
+  selectedApproach         String   // "ALIGN_TO_ARCHITECTURE" | "UPGRADE_ARCHITECTURE" | "REFINE_REQUIREMENTS"
+  directive                String   // The markdown reconciliation directive passed to the agent
+  invalidatedStages        String   // JSON stringified array of invalidated stage names
+
+  createdAt                DateTime @default(now())
+  completedAt              DateTime?
+
+  conversation             Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  pipelineRun              PipelineRun   @relation(fields: [pipelineRunId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, pipelineRunId])
+  @@index([pipelineRunId, cycleNumber])
+  @@unique([pipelineRunId, cycleNumber])
 }
 
 
