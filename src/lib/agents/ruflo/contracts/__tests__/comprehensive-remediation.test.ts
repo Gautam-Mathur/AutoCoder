@@ -20,6 +20,7 @@ import {
 import {
   computeAuthorizedFileSet,
   loadAuthorizedFileSet,
+  AuthorizedFileSet,
 } from '../../workspace-policy';
 import {
   assertAuthorizedToolMutation,
@@ -38,6 +39,8 @@ import {
   assertBudgetAvailable,
   CommitReceipt,
   RepairEvidence,
+  NormalizedFailure,
+  RepairPlan,
 } from '../../repair-coordinator';
 import {
   writeVirtualFile,

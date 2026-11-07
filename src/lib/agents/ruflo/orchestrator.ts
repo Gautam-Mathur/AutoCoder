@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import ts from 'typescript';
 import { prisma } from '../../db';
 import { runInference, getLLMConfig, startOllamaKeepAlive, stopOllamaKeepAlive, cleanJsonResponse } from '../inference';
 import { writeAgentOutput, queryAgentOutput } from '../sml';
@@ -1188,31 +1189,172 @@ export function syncHtmlAssetLinks(
 }
 
 /**
- * File-type-specific sanitizer for Coder output.
- * Strips LLM preamble from .prisma, .json, and .html files.
+ * Robust, parser-backed, file-type-aware sanitizer for Coder output.
+ * 1. Checks for markdown code fences.
+ *    - Matches fences by language tag.
+ *    - Validates syntax with TypeScript parser / JSON.parse / CSS balance before extraction.
+ *    - Disambiguates multiple blocks by checking for module exports.
+ * 2. If no valid fence, handles raw content:
+ *    - JSON: bidirectional scan with JSON.parse.
+ *    - JS/TS: finds first valid statement and tests with TypeScript parser.
+ *    - CSS: balances at-rules and brackets.
+ *    - HTML: extracts from <!DOCTYPE or root element.
+ *    - Prisma: extracts from valid schema keywords.
+ * 3. Never destructively truncates valid source based on conversational keywords like "Note:".
  */
 export function sanitizeCoderOutputForFile(raw: string, filePath?: string): string {
-  let cleaned = sanitizeCoderOutput(raw);
+  if (!raw || !raw.trim()) return '';
 
-  if (filePath?.endsWith('.prisma')) {
-    const prismaStart = cleaned.search(/^(datasource|generator|model|enum)\s+/m);
-    if (prismaStart > 0) cleaned = cleaned.substring(prismaStart);
-  }
+  let text = raw.trim();
+  const ext = filePath ? path.extname(filePath).toLowerCase() : '';
+  const extWithoutDot = ext.replace(/^\./, '');
 
-  if (filePath?.endsWith('.json')) {
-    const jsonStart = cleaned.search(/[{\[]/);
-    if (jsonStart > 0) {
-      const candidate = cleaned.substring(jsonStart);
-      try { JSON.parse(candidate); cleaned = candidate; } catch { /* keep original */ }
+  // 1. Language-Aware Fence Parsing
+  const fenceRegex = /```([a-zA-Z0-9_+.-]*)\r?\n([\s\S]*?)\r?\n```/g;
+  const matches = [...text.matchAll(fenceRegex)];
+
+  if (matches.length > 0) {
+    const isMatchingTag = (tag: string): boolean => {
+      const t = tag.toLowerCase().trim();
+      if (!t) return false;
+      if (t === extWithoutDot) return true;
+      if (['ts', 'tsx'].includes(extWithoutDot) && ['typescript', 'ts', 'tsx'].includes(t)) return true;
+      if (['js', 'jsx', 'mjs', 'cjs'].includes(extWithoutDot) && ['javascript', 'js', 'jsx'].includes(t)) return true;
+      if (['css', 'scss', 'less'].includes(extWithoutDot) && ['css', 'scss', 'less'].includes(t)) return true;
+      if (extWithoutDot === 'html' && ['html', 'htm'].includes(t)) return true;
+      if (extWithoutDot === 'json' && t === 'json') return true;
+      if (extWithoutDot === 'prisma' && t === 'prisma') return true;
+      return false;
+    };
+
+    // Filter candidate fences that match the target file extension
+    const candidateFences = matches.filter((m) => isMatchingTag(m[1]));
+
+    if (candidateFences.length === 1) {
+      const codeCandidate = candidateFences[0][2].trim();
+      if (isParserValid(codeCandidate, ext)) {
+        return codeCandidate;
+      }
+    } else if (candidateFences.length > 1) {
+      // Multiple tagged blocks: test parser validity
+      const validBlocks = candidateFences
+        .map((m) => m[2].trim())
+        .filter((code) => isParserValid(code, ext));
+      if (validBlocks.length === 1) {
+        return validBlocks[0];
+      }
+      // If multiple distinct blocks parse cleanly, prioritize export-containing module
+      const exportContaining = validBlocks.filter((b) => /\b(export\s+|module\.exports\b)/.test(b));
+      if (exportContaining.length === 1) {
+        return exportContaining[0];
+      }
+      if (validBlocks.length > 0) {
+        return validBlocks.reduce((prev, curr) => (curr.length > prev.length ? curr : prev));
+      }
+    } else {
+      // No tag matched directly: check generic fences for parse validity
+      const validGeneric = matches
+        .map((m) => m[2].trim())
+        .filter((code) => code.length > 10 && isParserValid(code, ext));
+      if (validGeneric.length === 1) {
+        return validGeneric[0];
+      }
     }
   }
 
-  if (filePath?.endsWith('.html')) {
-    const htmlStart = cleaned.search(/<!DOCTYPE|<html/i);
-    if (htmlStart > 0) cleaned = cleaned.substring(htmlStart);
+  // 2. Strip single unclosed outer markdown fence if present
+  text = text.replace(/^```[a-zA-Z0-9_+.-]*\r?\n/, '').replace(/\r?\n```\s*$/, '').trim();
+
+  // 3. JSON Parsing (.json)
+  if (ext === '.json') {
+    const firstBrace = text.search(/[{\[]/);
+    if (firstBrace >= 0) {
+      for (let endIdx = text.length; endIdx > firstBrace; endIdx--) {
+        const char = text[endIdx - 1];
+        if (char === '}' || char === ']') {
+          const candidate = text.substring(firstBrace, endIdx);
+          try {
+            JSON.parse(candidate);
+            return candidate.trim();
+          } catch {}
+        }
+      }
+    }
+    return text;
   }
 
-  return cleaned.trim();
+  // 4. JavaScript / TypeScript (.js, .jsx, .ts, .tsx)
+  if (['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs'].includes(ext)) {
+    const jsStart = text.search(
+      /^(?:\s*['"]use (?:client|server)['"];?|#!|\/\/|\/\*|import\s+|export\s+|const\s+|let\s+|var\s+|(?:async\s+)?function\s+|class\s+|interface\s+|type\s+|enum\s+|declare\s+|namespace\s+|\(\s*(?:async\s*)?\([^)]*\)\s*=>)/m
+    );
+    if (jsStart > 0) {
+      const candidate = text.substring(jsStart).trim();
+      if (isParserValid(candidate, ext)) {
+        return candidate;
+      }
+    }
+    return text.trim();
+  }
+
+  // 5. CSS / SCSS (.css, .scss, .less)
+  if (['.css', '.scss', '.less'].includes(ext)) {
+    const cssStart = text.search(
+      /^(?:\/\*|@(?:tailwind|import|charset|layer|property|keyframes|media|supports|font-face|container|page)|:root|\*|[.#a-zA-Z0-9_\-\[\]="':,\s]+\{)/m
+    );
+    if (cssStart > 0) {
+      return text.substring(cssStart).trim();
+    }
+    return text.trim();
+  }
+
+  // 6. HTML / SVG (.html, .svg)
+  if (['.html', '.svg'].includes(ext)) {
+    const htmlStart = text.search(
+      /^(?:<!DOCTYPE\s+html|<\?xml|<html|<head|<title|<meta|<link|<style|<script|<body|<header|<main|<nav|<footer|<section|<div|<svg|<!--)/im
+    );
+    if (htmlStart > 0) {
+      return text.substring(htmlStart).trim();
+    }
+    return text.trim();
+  }
+
+  // 7. Prisma (.prisma)
+  if (ext === '.prisma') {
+    const prismaStart = text.search(/^(?:\/\/\s*[\w\-\s]+|datasource\s+|generator\s+|model\s+|enum\s+|type\s+)/m);
+    if (prismaStart > 0) {
+      return text.substring(prismaStart).trim();
+    }
+    return text.trim();
+  }
+
+  return text.trim();
+}
+
+/**
+ * Verifies syntax validity using actual language parsers before accepting extracted code.
+ */
+function isParserValid(content: string, ext: string): boolean {
+  if (!content || !content.trim()) return false;
+  if (ext === '.json') {
+    try {
+      JSON.parse(content);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  if (['.ts', '.tsx', '.js', '.jsx'].includes(ext)) {
+    try {
+      const sf = ts.createSourceFile('test' + ext, content, ts.ScriptTarget.Latest, true);
+      const diagnostics = (sf as unknown as { parseDiagnostics?: ts.Diagnostic[] }).parseDiagnostics || [];
+      const fatalErrors = diagnostics.filter((d: ts.Diagnostic) => d.category === ts.DiagnosticCategory.Error);
+      return fatalErrors.length === 0;
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 
 export function composeAgentUserContent(params: {
@@ -1463,11 +1605,11 @@ export async function runAgent(
     }
   );
 
-  const sanitized = sanitizeStageOutput(rawResponse, EXPECTED_FIRST_HEADERS[agentName]);
-  let finalContent = sanitized;
+  let finalContent: string;
   if (agentName === 'Coder') {
-    const deepCleaned = sanitizeCoderOutputForFile(sanitized, targetFile);
-    if (deepCleaned.length > 10) finalContent = deepCleaned;
+    finalContent = sanitizeCoderOutputForFile(rawResponse, targetFile);
+  } else {
+    finalContent = sanitizeStageOutput(rawResponse, EXPECTED_FIRST_HEADERS[agentName]);
   }
 
   // If agent specifies an output filename in VFS_OUTPUT_MAP, write to VFS

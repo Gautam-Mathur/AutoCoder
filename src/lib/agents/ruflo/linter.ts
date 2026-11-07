@@ -1,5 +1,6 @@
 import * as ts from 'typescript';
 import { prisma } from '../../db';
+import { normalizeProjectPath } from './workspace-policy';
 
 export interface LintResult {
   success: boolean;
@@ -466,6 +467,157 @@ export function runPrismaSchemaCheck(content: string, filePath: string): LintRes
   };
 }
 
+export interface ModuleExports {
+  named: Set<string>;
+  hasDefault: boolean;
+}
+
+/**
+ * Recursively resolves all exported symbols from a module file, tracking re-export chains
+ * and preventing circular dependency infinite loops.
+ * Strictly enforces that export * from ... NEVER re-exports default exports.
+ */
+function resolveExportedSymbols(
+  targetFile: string,
+  fileMap: Map<string, string>,
+  compilerOptions: ts.CompilerOptions,
+  resolutionHost: ts.ModuleResolutionHost,
+  visited: Set<string> = new Set(),
+  errors?: LintResult['errors']
+): ModuleExports {
+  const normTarget = normalizeProjectPath(targetFile);
+  if (visited.has(normTarget)) {
+    return { named: new Set(), hasDefault: false };
+  }
+  visited.add(normTarget);
+
+  const content = fileMap.get(normTarget);
+  if (!content) {
+    return { named: new Set(), hasDefault: false };
+  }
+
+  const sourceFile = ts.createSourceFile(normTarget, content, ts.ScriptTarget.Latest, true);
+  const named = new Set<string>();
+  let hasDefault = false;
+
+  // Track locally declared symbols to verify `export { x }`
+  const localDeclarations = new Set<string>();
+  ts.forEachChild(sourceFile, (node) => {
+    if (ts.isFunctionDeclaration(node) && node.name) localDeclarations.add(node.name.text);
+    if (ts.isClassDeclaration(node) && node.name) localDeclarations.add(node.name.text);
+    if (ts.isTypeAliasDeclaration(node)) localDeclarations.add(node.name.text);
+    if (ts.isInterfaceDeclaration(node)) localDeclarations.add(node.name.text);
+    if (ts.isEnumDeclaration(node)) localDeclarations.add(node.name.text);
+    if (ts.isVariableStatement(node)) {
+      for (const d of node.declarationList.declarations) {
+        if (ts.isIdentifier(d.name)) localDeclarations.add(d.name.text);
+      }
+    }
+  });
+
+  ts.forEachChild(sourceFile, (node) => {
+    const modifiers = ts.canHaveModifiers(node) ? ts.getModifiers(node) : undefined;
+    const hasExportMod = modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
+    const hasDefaultMod = modifiers?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword) ?? false;
+
+    // 1. export default ...
+    if (hasExportMod && hasDefaultMod) {
+      hasDefault = true;
+    }
+
+    // 2. export const / function / class / interface / type x
+    if (hasExportMod) {
+      if (ts.isVariableStatement(node)) {
+        for (const decl of node.declarationList.declarations) {
+          if (ts.isIdentifier(decl.name)) named.add(decl.name.text);
+        }
+      } else if (
+        ts.isFunctionDeclaration(node) ||
+        ts.isClassDeclaration(node) ||
+        ts.isTypeAliasDeclaration(node) ||
+        ts.isInterfaceDeclaration(node) ||
+        ts.isEnumDeclaration(node)
+      ) {
+        if (node.name && ts.isIdentifier(node.name)) named.add(node.name.text);
+      }
+    }
+
+    // 3. export { a as b, default as d } without `from` (local export clause)
+    if (ts.isExportDeclaration(node) && !node.moduleSpecifier && node.exportClause && ts.isNamedExports(node.exportClause)) {
+      for (const el of node.exportClause.elements) {
+        const localName = (el.propertyName || el.name).text;
+        const exportedName = el.name.text;
+
+        // Verify local symbol exists
+        if (!localDeclarations.has(localName) && errors) {
+          const { line } = sourceFile.getLineAndCharacterOfPosition(el.getStart());
+          errors.push({
+            line: line + 1,
+            character: 1,
+            message: `[${normTarget}] Exported symbol "${localName}" is not declared in this file.`,
+            severity: 'error',
+          });
+        }
+
+        if (exportedName === 'default') {
+          hasDefault = true;
+        } else {
+          named.add(exportedName);
+        }
+      }
+    }
+
+    // 4. Re-exports: export { x } from './other' or export * from './other'
+    if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+      const subSpec = node.moduleSpecifier.text;
+      const subRes = ts.resolveModuleName(subSpec, normTarget, compilerOptions, resolutionHost);
+
+      if (subRes.resolvedModule && !subRes.resolvedModule.isExternalLibraryImport) {
+        const subFile = normalizeProjectPath(subRes.resolvedModule.resolvedFileName);
+        const subExports = resolveExportedSymbols(subFile, fileMap, compilerOptions, resolutionHost, visited, errors);
+
+        // 4a. export * as ns from './other'
+        if (node.exportClause && ts.isNamespaceExport(node.exportClause)) {
+          named.add(node.exportClause.name.text);
+        }
+        // 4b. export { a as b } from './other'
+        else if (node.exportClause && ts.isNamedExports(node.exportClause)) {
+          for (const el of node.exportClause.elements) {
+            const importedFromSub = (el.propertyName || el.name).text;
+            const exportedAs = el.name.text;
+
+            const isAvailable = importedFromSub === 'default' ? subExports.hasDefault : subExports.named.has(importedFromSub);
+            if (!isAvailable && errors) {
+              const { line } = sourceFile.getLineAndCharacterOfPosition(el.getStart());
+              errors.push({
+                line: line + 1,
+                character: 1,
+                message: `[${normTarget}] Cannot re-export "${importedFromSub}" from "${subSpec}" because it is not exported by the target.`,
+                severity: 'error',
+              });
+            }
+
+            if (exportedAs === 'default') {
+              hasDefault = true;
+            } else {
+              named.add(exportedAs);
+            }
+          }
+        }
+        // 4c. export * from './other'
+        // CRITICAL SPEC INVARIANT: export * NEVER re-exports default
+        else if (!node.exportClause) {
+          for (const n of subExports.named) {
+            named.add(n);
+          }
+        }
+      }
+    }
+  });
+
+  return { named, hasDefault };
+}
+
 /**
  * Cross-file import resolution check.
  * Validates that all relative imports resolve to existing files in the workspace
@@ -476,69 +628,120 @@ export function runCrossFileImportCheck(
 ): LintResult {
   const errors: LintResult['errors'] = [];
 
-  // Path normalizer that handles ../ traversal
-  function resolveImportPath(currentFile: string, importPath: string): string {
-    if (!importPath.startsWith('.')) return importPath;
-    const dir = currentFile.includes('/') ? currentFile.substring(0, currentFile.lastIndexOf('/')) : '';
-    const parts = (dir ? dir + '/' + importPath : importPath).split('/');
-    const normalized: string[] = [];
-    for (const part of parts) {
-      if (part === '..') normalized.pop();
-      else if (part !== '.' && part !== '') normalized.push(part);
-    }
-    return normalized.join('/');
+  let compilerOptions: ts.CompilerOptions = {
+    target: ts.ScriptTarget.ES2022,
+    module: ts.ModuleKind.CommonJS,
+    moduleResolution: ts.ModuleResolutionKind.Node10,
+    allowJs: true,
+    noEmit: true,
+  };
+
+  const tsconfigContent = fileMap.get('tsconfig.json');
+  if (tsconfigContent) {
+    try {
+      const parsedJson = ts.parseConfigFileTextToJson('tsconfig.json', tsconfigContent);
+      if (!parsedJson.error && parsedJson.config) {
+        const dummyHost: ts.ParseConfigHost = {
+          useCaseSensitiveFileNames: true,
+          readDirectory: () => [],
+          fileExists: (f) => fileMap.has(normalizeProjectPath(f)),
+          readFile: (f) => fileMap.get(normalizeProjectPath(f)),
+        };
+        const parsed = ts.parseJsonConfigFileContent(parsedJson.config, dummyHost, '.');
+        compilerOptions = { ...compilerOptions, ...parsed.options };
+      }
+    } catch {}
   }
 
+  const resolutionHost: ts.ModuleResolutionHost = {
+    fileExists: (fileName: string) => fileMap.has(normalizeProjectPath(fileName)),
+    readFile: (fileName: string) => fileMap.get(normalizeProjectPath(fileName)),
+    directoryExists: (dirName: string) => {
+      const norm = normalizeProjectPath(dirName);
+      for (const k of fileMap.keys()) {
+        if (k.startsWith(norm + '/')) return true;
+      }
+      return false;
+    },
+    getCurrentDirectory: () => '.',
+    getDirectories: () => [],
+  };
+
+  // 1. Inspect Exports Across Project Files (validating local export clauses & re-exports)
+  for (const [filePath] of fileMap.entries()) {
+    if (!/\.(js|ts|jsx|tsx)$/.test(filePath)) continue;
+    resolveExportedSymbols(filePath, fileMap, compilerOptions, resolutionHost, new Set(), errors);
+  }
+
+  // 2. Inspect Imports Across Project Files
   for (const [filePath, content] of fileMap.entries()) {
     if (!/\.(js|ts|jsx|tsx)$/.test(filePath)) continue;
 
-    const importMatches = [...content.matchAll(
-      /import\s+(?:\{([^}]+)\}|(\w+))\s+from\s+['"](\.[\w./-]+)['"]/g
-    )];
+    const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true);
 
-    for (const match of importMatches) {
-      const namedImports = match[1]?.split(',').map(s => s.trim().split(/\s+as\s+/)[0].trim()).filter(Boolean) || [];
-      const importPath = match[3];
-      const resolvedBase = resolveImportPath(filePath, importPath);
+    ts.forEachChild(sourceFile, (node) => {
+      if (!ts.isImportDeclaration(node)) return;
+      if (!node.moduleSpecifier || !ts.isStringLiteral(node.moduleSpecifier)) return;
 
-      // Try common extensions
-      const extensions = ['', '.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.js'];
-      let targetContent: string | undefined;
+      const specifier = node.moduleSpecifier.text;
 
-      for (const ext of extensions) {
-        const candidate = resolvedBase + ext;
-        if (fileMap.has(candidate)) {
-          targetContent = fileMap.get(candidate);
-          break;
-        }
+      // Skip Node built-ins
+      if (specifier.startsWith('node:')) return;
+
+      const resolution = ts.resolveModuleName(specifier, filePath, compilerOptions, resolutionHost);
+
+      // If resolved to external library (node_modules), skip local workspace check
+      if (resolution.resolvedModule?.isExternalLibraryImport) return;
+
+      // Skip standard 3P packages when not resolved to workspace
+      if (!specifier.startsWith('.') && !specifier.startsWith('/') && !specifier.startsWith('@/')) {
+        const isPathMapped = compilerOptions.paths && Object.keys(compilerOptions.paths).some((p) => specifier.startsWith(p.replace(/\*$/, '')));
+        if (!isPathMapped) return;
       }
 
-      if (!targetContent) {
-        const lineNum = content.substring(0, match.index).split('\n').length;
+      const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+
+      if (!resolution.resolvedModule) {
         errors.push({
-          line: lineNum, character: 1,
-          message: `[${filePath}] Import "${importPath}" resolves to a file that does not exist in the workspace.`,
+          line: line + 1,
+          character: 1,
+          message: `[${filePath}] Import "${specifier}" resolves to a file that does not exist in the workspace.`,
           severity: 'error',
         });
-        continue;
+        return;
       }
 
-      // Verify named imports exist as exports
-      for (const namedImport of namedImports) {
-        const exportPatterns = [
-          new RegExp(`export\\s+(?:async\\s+)?(?:function|const|class|let|var|type|interface|enum)\\s+${namedImport}\\b`),
-          new RegExp(`export\\s*\\{[^}]*\\b${namedImport}\\b[^}]*\\}`),
-        ];
-        if (!exportPatterns.some(p => p.test(targetContent!))) {
-          const lineNum = content.substring(0, match.index).split('\n').length;
+      const resolvedFile = normalizeProjectPath(resolution.resolvedModule.resolvedFileName);
+      if (resolvedFile.endsWith('.css') || resolvedFile.endsWith('.json')) return;
+
+      const exports = resolveExportedSymbols(resolvedFile, fileMap, compilerOptions, resolutionHost, new Set(), errors);
+
+      if (node.importClause) {
+        // Default import: import Foo from './mod'
+        if (node.importClause.name && !exports.hasDefault) {
           errors.push({
-            line: lineNum, character: 1,
-            message: `[${filePath}] Named import "${namedImport}" is not exported from resolved target.`,
+            line: line + 1,
+            character: 1,
+            message: `[${filePath}] Module "${specifier}" does not have a default export.`,
             severity: 'error',
           });
         }
+        // Named imports: import { a, b as c } from './mod'
+        if (node.importClause.namedBindings && ts.isNamedImports(node.importClause.namedBindings)) {
+          for (const el of node.importClause.namedBindings.elements) {
+            const importedName = (el.propertyName || el.name).text;
+            if (!exports.named.has(importedName)) {
+              errors.push({
+                line: line + 1,
+                character: 1,
+                message: `[${filePath}] Named import "${importedName}" is not exported from "${specifier}".`,
+                severity: 'error',
+              });
+            }
+          }
+        }
       }
-    }
+    });
   }
 
   return {

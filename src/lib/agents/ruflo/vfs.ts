@@ -9,6 +9,7 @@ import {
   AuthorizedFileSet,
   computeFileSetHash,
   loadAuthorizedFileSet,
+  normalizeProjectPath,
 } from './workspace-policy';
 
 export { loadAuthorizedFileSet };

@@ -2,7 +2,7 @@ import { countHeading, extractRequiredSection } from '../markdown-sections';
 import { CONTRACT_VERSIONS } from '../versions';
 
 export interface TesterOutput {
-  result: 'PASS' | 'FAIL';
+  result: 'PASS' | 'FAIL' | 'INCOMPLETE';
   summary: string;
   tests: string;
   failures: string;
@@ -18,7 +18,7 @@ export const TESTER_SCHEMA = {
   requiredFields: ['result', 'summary', 'tests', 'failures', 'workspaceHash'],
   mandatoryInvariants: [
     'Tester must render accurate summary from test verification run',
-    'Tester result must be PASS for final release gate and routes FAIL to Debugger in verification loop',
+    'Tester result must be PASS for final release gate, routes FAIL to Debugger in verification loop, and returns INCOMPLETE when mandatory execution checks cannot be run',
     'Tester report must include valid Workspace Hash matching current project state',
   ],
 } as const;
@@ -45,8 +45,8 @@ export function parseTesterOutput(content: string): { output: TesterOutput | nul
   }
 
   const resultText = (extractRequiredSection(content, 'Result') || '').trim().toUpperCase();
-  if (resultText !== 'PASS' && resultText !== 'FAIL') {
-    errors.push(`Tester Contract Error: Invalid Result token "${resultText}". Must be PASS or FAIL.`);
+  if (resultText !== 'PASS' && resultText !== 'FAIL' && resultText !== 'INCOMPLETE') {
+    errors.push(`Tester Contract Error: Invalid Result token "${resultText}". Must be PASS, FAIL, or INCOMPLETE.`);
   }
 
   const hashText = (extractRequiredSection(content, 'Workspace Hash') || '').trim();

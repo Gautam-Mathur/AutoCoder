@@ -14,40 +14,187 @@ export interface ProjectValidationResult {
   warnings: ProjectValidationError[];
 }
 
+const COMPLETE_REACT_HOOKS = new Set([
+  'useState',
+  'useEffect',
+  'useContext',
+  'useReducer',
+  'useCallback',
+  'useMemo',
+  'useRef',
+  'useLayoutEffect',
+  'useTransition',
+  'useId',
+  'useDeferredValue',
+  'useImperativeHandle',
+  'useSyncExternalStore',
+  'useInsertionEffect',
+  'useOptimistic',
+  'useActionState',
+]);
+
+/**
+ * Ascends the AST parent chain from a call node to check whether an identifier is declared
+ * in any enclosing lexical scope (block statement, function declaration, parameters, arrow, etc.).
+ */
+function isIdentifierDeclaredInLexicalScope(node: ts.Node, name: string): boolean {
+  let curr: ts.Node | undefined = node.parent;
+
+  while (curr) {
+    // 1. Function / Method / Arrow parameters
+    if (
+      ts.isFunctionDeclaration(curr) ||
+      ts.isFunctionExpression(curr) ||
+      ts.isArrowFunction(curr) ||
+      ts.isMethodDeclaration(curr)
+    ) {
+      for (const param of curr.parameters) {
+        if (ts.isIdentifier(param.name) && param.name.text === name) {
+          return true;
+        }
+      }
+    }
+
+    // 2. Block / SourceFile statement declarations
+    if (ts.isBlock(curr) || ts.isSourceFile(curr)) {
+      for (const stmt of curr.statements) {
+        if (ts.isVariableStatement(stmt)) {
+          for (const decl of stmt.declarationList.declarations) {
+            if (ts.isIdentifier(decl.name) && decl.name.text === name) {
+              return true;
+            }
+          }
+        }
+        if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.name.text === name) {
+          return true;
+        }
+        if (ts.isClassDeclaration(stmt) && stmt.name && stmt.name.text === name) {
+          return true;
+        }
+      }
+    }
+
+    // 3. Catch clause variable
+    if (ts.isCatchClause(curr) && curr.variableDeclaration) {
+      if (ts.isIdentifier(curr.variableDeclaration.name) && curr.variableDeclaration.name.text === name) {
+        return true;
+      }
+    }
+
+    curr = curr.parent;
+  }
+
+  return false;
+}
+
+/**
+ * AST-based lexical scope-aware validation of React hook imports and call expressions.
+ * Accurately accepts:
+ * - import { useState } from 'react';
+ * - import React, { useState } from 'react';
+ * - import * as React from 'react'; React.useState();
+ * - import { useState as useMyState } from 'react';
+ * - Local variables or functions shadowing hook names in their enclosing scope.
+ * Correctly rejects:
+ * - Unimported React.useState()
+ * - Unimported direct hook calls not shadowed in lexical scope.
+ */
 export function validateReactHookImports(
   file: string,
   content: string,
   errors: ProjectValidationError[]
 ): void {
-  const hooks = [
-    'useState',
-    'useEffect',
-    'useContext',
-    'useReducer',
-    'useCallback',
-    'useMemo',
-    'useRef',
-    'useLayoutEffect',
-    'useTransition',
-  ];
+  const isReactFile = file.endsWith('.tsx') || file.endsWith('.jsx') || /from\s*['"]react['"]/.test(content);
+  if (!isReactFile) return;
 
-  for (const hook of hooks) {
-    if (!new RegExp(`\\b${hook}\\s*\\(`).test(content)) {
-      continue;
+  const sourceFile = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true);
+
+  const importedHooks = new Set<string>();
+  let reactNamespaceIdent: string | null = null;
+  let reactDefaultIdent: string | null = null;
+
+  // 1. Pass 1: Collect React Imports
+  function collectImports(node: ts.Node) {
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) && node.moduleSpecifier.text === 'react') {
+      const clause = node.importClause;
+      if (clause) {
+        if (clause.name) {
+          reactDefaultIdent = clause.name.text;
+        }
+        if (clause.namedBindings) {
+          if (ts.isNamespaceImport(clause.namedBindings)) {
+            reactNamespaceIdent = clause.namedBindings.name.text;
+          }
+          if (ts.isNamedImports(clause.namedBindings)) {
+            for (const el of clause.namedBindings.elements) {
+              const originalHook = (el.propertyName || el.name).text;
+              if (COMPLETE_REACT_HOOKS.has(originalHook)) {
+                importedHooks.add(el.name.text);
+              }
+            }
+          }
+        }
+      }
     }
-
-    const imported = new RegExp(
-      `import\\s*\\{[^}]*\\b${hook}\\b[^}]*\\}\\s*from\\s*['"]react['"]`
-    ).test(content);
-
-    if (!imported) {
-      errors.push({
-        file,
-        line: 1,
-        message: `React hook "${hook}" is used but is not explicitly imported from "react".`,
-      });
-    }
+    ts.forEachChild(node, collectImports);
   }
+
+  collectImports(sourceFile);
+
+  // 2. Pass 2: Traverse Call Expressions with Lexical Scope Checking
+  function visitCalls(node: ts.Node) {
+    if (ts.isCallExpression(node)) {
+      const expr = node.expression;
+
+      // Direct call: useState(...)
+      if (ts.isIdentifier(expr) && COMPLETE_REACT_HOOKS.has(expr.text)) {
+        const isShadowedLocally = isIdentifierDeclaredInLexicalScope(node, expr.text);
+        if (!isShadowedLocally && !importedHooks.has(expr.text)) {
+          const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+          errors.push({
+            file,
+            line: line + 1,
+            message: `React hook "${expr.text}" is used but is not explicitly imported from "react".`,
+          });
+        }
+      }
+
+      // Member call: React.useState(...) or R.useEffect(...)
+      if (ts.isPropertyAccessExpression(expr) && ts.isIdentifier(expr.expression) && ts.isIdentifier(expr.name)) {
+        const callerName = expr.expression.text;
+        const methodName = expr.name.text;
+
+        if (COMPLETE_REACT_HOOKS.has(methodName)) {
+          const isCallerShadowed = isIdentifierDeclaredInLexicalScope(node, callerName);
+          const isLegitimateReactImport =
+            !isCallerShadowed &&
+            ((reactNamespaceIdent !== null && callerName === reactNamespaceIdent) ||
+             (reactDefaultIdent !== null && callerName === reactDefaultIdent));
+
+          if (!isLegitimateReactImport) {
+            const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+            if (callerName === 'React') {
+              errors.push({
+                file,
+                line: line + 1,
+                message: `React hook "${methodName}" called on "React", but "React" was not imported from "react".`,
+              });
+            } else {
+              errors.push({
+                file,
+                line: line + 1,
+                message: `React hook "${methodName}" called on unknown object "${callerName}". Expected valid React import.`,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    ts.forEachChild(node, visitCalls);
+  }
+
+  visitCalls(sourceFile);
 }
 
 function getProjectCompilerOptions(

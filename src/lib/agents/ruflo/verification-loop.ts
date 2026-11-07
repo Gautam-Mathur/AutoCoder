@@ -3,6 +3,13 @@ import { createContentHash } from './contracts/fingerprints';
 import { runLinter, runCrossFileImportCheck } from './linter';
 import { validateGeneratedProject } from './project-validator';
 import { isControlPlaneArtifact, normalizeProjectPath } from './workspace-policy';
+import { validatePackageDependencies } from './dependency-validator';
+import { validateApiContracts } from './api-contract-validator';
+import { validateFrameworkBoundaries } from './framework-validator';
+import { validatePrismaUsage } from './prisma-validator';
+import { extractProjectContract } from './spec-contract';
+import { executeProjectBuild, executeProjectRuntimeSmokeTest } from './runtime-validator';
+import { readVirtualFile, flushVfsToDisk } from './vfs';
 
 const MAX_DEBUG_CYCLES = 10;
 
@@ -12,12 +19,31 @@ export interface VerificationFailure {
   code?: string;
 }
 
+export interface ValidatorDiagnostic {
+  name: string;
+  applicable: boolean;
+  executed: boolean;
+  status: 'PASS' | 'FAIL' | 'NOT_APPLICABLE' | 'NOT_EXECUTED';
+  errors: string[];
+  warnings: string[];
+}
+
+export interface VerificationTelemetry {
+  staticStatus: 'PASS' | 'FAIL' | 'NOT_EXECUTED';
+  buildStatus: 'PASS' | 'FAIL' | 'NOT_APPLICABLE' | 'NOT_EXECUTED';
+  runtimeStatus: 'PASS' | 'FAIL' | 'NOT_APPLICABLE' | 'NOT_EXECUTED';
+  overallStatus: 'PASS' | 'FAIL' | 'INCOMPLETE';
+  validators: ValidatorDiagnostic[];
+  notes: string[];
+}
+
 export interface VerificationResult {
   runId: string;
   cycle: number;
   workspaceFingerprint: string;
   success: boolean;
   failures: VerificationFailure[];
+  telemetry?: VerificationTelemetry;
 }
 
 export async function computeWorkspaceFingerprint(conversationId: string): Promise<string> {
@@ -38,58 +64,387 @@ export async function computeWorkspaceFingerprint(conversationId: string): Promi
   );
 }
 
+export function detectProjectFramework(
+  files: Record<string, string>,
+  declaredFramework?: string
+): 'NEXT_APP_ROUTER' | 'NEXT_PAGES_ROUTER' | 'VITE_SPA' | 'REACT_WEBPACK_SPA' | 'STATIC_HTML' {
+  if (
+    declaredFramework &&
+    ['NEXT_APP_ROUTER', 'NEXT_PAGES_ROUTER', 'VITE_SPA', 'REACT_WEBPACK_SPA', 'STATIC_HTML'].includes(
+      declaredFramework
+    )
+  ) {
+    return declaredFramework as any;
+  }
+  const filePaths = Object.keys(files).map((f) => f.replace(/\\/g, '/').replace(/^\.\//, ''));
+  if (filePaths.some((f) => f.startsWith('app/') || f.startsWith('src/app/'))) return 'NEXT_APP_ROUTER';
+  if (filePaths.some((f) => f.startsWith('pages/') || f.startsWith('src/pages/'))) return 'NEXT_PAGES_ROUTER';
+  if (filePaths.some((f) => f.includes('vite.config'))) return 'VITE_SPA';
+  if (files['package.json'] && files['package.json'].includes('webpack')) return 'REACT_WEBPACK_SPA';
+  return 'STATIC_HTML';
+}
+
 export async function runFullWorkspaceTester(
   conversationId: string,
   cycle: number
-): Promise<VerificationResult> {
+): Promise<VerificationResult & { telemetry: VerificationTelemetry }> {
   const fingerprint = await computeWorkspaceFingerprint(conversationId);
   const failures: VerificationFailure[] = [];
+  const notes: string[] = [];
+  const validatorReports: ValidatorDiagnostic[] = [];
 
-  try {
-    const virtualFiles = await prisma.virtualFile.findMany({
-      where: { conversationId },
-    });
+  const virtualFiles = await prisma.virtualFile.findMany({
+    where: { conversationId },
+  });
 
-    const projectFiles = virtualFiles.filter(
-      (vf) => !isControlPlaneArtifact(normalizeProjectPath(vf.filePath))
-    );
+  const projectFiles = virtualFiles.filter(
+    (vf) => !isControlPlaneArtifact(normalizeProjectPath(vf.filePath))
+  );
 
-    const fileMap = new Map<string, string>();
-    for (const vf of projectFiles) {
-      fileMap.set(normalizeProjectPath(vf.filePath), vf.content);
-    }
+  const fileMap = new Map<string, string>();
+  const fileObj: Record<string, string> = {};
+  for (const vf of projectFiles) {
+    const norm = normalizeProjectPath(vf.filePath);
+    fileMap.set(norm, vf.content);
+    fileObj[norm] = vf.content;
+  }
 
-    // 1. Run Linter on project files
-    for (const vf of projectFiles) {
-      const norm = normalizeProjectPath(vf.filePath);
+  // 1. File-level Linter & Syntax Checks
+  for (const vf of projectFiles) {
+    const norm = normalizeProjectPath(vf.filePath);
+    try {
       const linterResult = await runLinter(conversationId, norm);
       if (!linterResult.success) {
         for (const err of linterResult.errors) {
           failures.push({ file: norm, message: err.message });
         }
       }
+    } catch (e: any) {
+      failures.push({ file: norm, message: `Linter execution failed: ${e?.message || e}` });
     }
+  }
 
-    // 2. Cross file import check
-    const importResult = runCrossFileImportCheck(fileMap);
-    if (!importResult.success) {
-      for (const err of importResult.errors) {
+  // 2. TypeScript-backed Cross-File Import / Export Validation
+  try {
+    const importCheck = runCrossFileImportCheck(fileMap);
+    if (!importCheck.success) {
+      for (const err of importCheck.errors) {
         failures.push({ file: 'imports', message: err.message });
       }
     }
+  } catch (e: any) {
+    failures.push({ file: 'imports', message: `Import validation exception: ${e?.message || e}` });
+  }
 
-    // 3. Project validation
+  // 3. Project Structure & AST-based Hook Validation
+  try {
     const projectVal = await validateGeneratedProject(conversationId);
     if (!projectVal.success) {
       for (const err of projectVal.errors) {
         failures.push({ file: err.file || 'project', message: err.message });
       }
     }
-  } catch (err: any) {
-    failures.push({ file: 'tester', message: err.message });
+  } catch (e: any) {
+    failures.push({ file: 'project', message: `Project validation exception: ${e?.message || e}` });
   }
 
-  const success = failures.length === 0;
+  // 4. Semantic Dependency Validation (Exact Signature Match: vfsFiles, packageJsonContent)
+  const packageJsonContent = fileObj['package.json'];
+  if (packageJsonContent) {
+    try {
+      const depVal = validatePackageDependencies(fileObj, packageJsonContent);
+      if (!depVal.valid) {
+        for (const missing of depVal.missingPackages) {
+          failures.push({
+            file: 'package.json',
+            message: `Package "${missing}" is imported in code but missing from dependencies in package.json.`,
+          });
+        }
+      }
+      validatorReports.push({
+        name: 'Dependency Validation',
+        applicable: true,
+        executed: true,
+        status: depVal.valid ? 'PASS' : 'FAIL',
+        errors: depVal.missingPackages.map((p) => `Missing package "${p}"`),
+        warnings: depVal.warnings,
+      });
+    } catch (e: any) {
+      failures.push({ file: 'package.json', message: `Dependency validation exception: ${e?.message || e}` });
+      validatorReports.push({
+        name: 'Dependency Validation',
+        applicable: true,
+        executed: false,
+        status: 'FAIL',
+        errors: [e?.message || String(e)],
+        warnings: [],
+      });
+    }
+  } else {
+    validatorReports.push({
+      name: 'Dependency Validation',
+      applicable: false,
+      executed: false,
+      status: 'NOT_APPLICABLE',
+      errors: [],
+      warnings: [],
+    });
+  }
+
+  // 5. Semantic Framework Boundaries (Exact Signature Match: vfsFiles, detectedFramework)
+  try {
+    const detectedFw = detectProjectFramework(fileObj);
+    const fwVal = validateFrameworkBoundaries(fileObj, detectedFw);
+    if (!fwVal.valid) {
+      for (const err of fwVal.errors) {
+        failures.push({ file: err.file, message: err.message });
+      }
+    }
+    validatorReports.push({
+      name: 'Framework Boundaries',
+      applicable: true,
+      executed: true,
+      status: fwVal.valid ? 'PASS' : 'FAIL',
+      errors: fwVal.errors.map((e) => e.message),
+      warnings: fwVal.warnings.map((w) => w.message),
+    });
+  } catch (e: any) {
+    failures.push({ file: 'framework', message: `Framework validation exception: ${e?.message || e}` });
+    validatorReports.push({
+      name: 'Framework Boundaries',
+      applicable: true,
+      executed: false,
+      status: 'FAIL',
+      errors: [e?.message || String(e)],
+      warnings: [],
+    });
+  }
+
+  // 6. Semantic Prisma Database Validation (Exact Signature Match: vfsFiles, schemaContent)
+  const schemaContent = fileObj['prisma/schema.prisma'];
+  const hasPrismaQuery = Object.values(fileObj).some((c) => /prisma\.[A-Za-z0-9_]+\./.test(c));
+  if (schemaContent || hasPrismaQuery) {
+    try {
+      const prismaVal = validatePrismaUsage(fileObj, schemaContent || '');
+      if (!prismaVal.valid) {
+        for (const err of prismaVal.errors) {
+          failures.push({ file: err.file, message: err.message });
+        }
+      }
+      validatorReports.push({
+        name: 'Prisma Validation',
+        applicable: true,
+        executed: true,
+        status: prismaVal.valid ? 'PASS' : 'FAIL',
+        errors: prismaVal.errors.map((e) => e.message),
+        warnings: prismaVal.warnings.map((w) => w.message),
+      });
+    } catch (e: any) {
+      failures.push({ file: 'prisma', message: `Prisma validation exception: ${e?.message || e}` });
+      validatorReports.push({
+        name: 'Prisma Validation',
+        applicable: true,
+        executed: false,
+        status: 'FAIL',
+        errors: [e?.message || String(e)],
+        warnings: [],
+      });
+    }
+  } else {
+    validatorReports.push({
+      name: 'Prisma Validation',
+      applicable: false,
+      executed: false,
+      status: 'NOT_APPLICABLE',
+      errors: [],
+      warnings: [],
+    });
+  }
+
+  // 7. Semantic API Contract Validation (Exact Signature Match: ProjectContract, vfsFiles)
+  const backendSpec = await readVirtualFile(conversationId, 'backend_spec.md');
+  const archSpec = await readVirtualFile(conversationId, 'architecture.md');
+  if (backendSpec) {
+    try {
+      const extractedContract = extractProjectContract({
+        'backend_spec.md': backendSpec,
+        'architecture.md': archSpec || '',
+      });
+      if (extractedContract.apiEndpoints && extractedContract.apiEndpoints.length > 0) {
+        const apiVal = validateApiContracts(extractedContract, fileObj);
+        if (!apiVal.valid) {
+          for (const err of apiVal.errors) {
+            failures.push({
+              file: err.file || 'api',
+              message: `API Contract Violation for ${err.method} ${err.endpoint}: ${err.message}`,
+            });
+          }
+        }
+        validatorReports.push({
+          name: 'API Contract Validation',
+          applicable: true,
+          executed: true,
+          status: apiVal.valid ? 'PASS' : 'FAIL',
+          errors: apiVal.errors.map((e) => e.message),
+          warnings: apiVal.warnings.map((w) => w.message),
+        });
+      } else {
+        validatorReports.push({
+          name: 'API Contract Validation',
+          applicable: false,
+          executed: false,
+          status: 'NOT_APPLICABLE',
+          errors: [],
+          warnings: [],
+        });
+      }
+    } catch (e: any) {
+      failures.push({ file: 'api', message: `API contract validation exception: ${e?.message || e}` });
+      validatorReports.push({
+        name: 'API Contract Validation',
+        applicable: true,
+        executed: false,
+        status: 'FAIL',
+        errors: [e?.message || String(e)],
+        warnings: [],
+      });
+    }
+  } else {
+    validatorReports.push({
+      name: 'API Contract Validation',
+      applicable: false,
+      executed: false,
+      status: 'NOT_APPLICABLE',
+      errors: [],
+      warnings: [],
+    });
+  }
+
+  const staticStatus: 'PASS' | 'FAIL' = failures.length === 0 ? 'PASS' : 'FAIL';
+
+  // 8. Physical Execution Verification Pipeline
+  let isBuildApplicable = false;
+  let isRuntimeApplicable = false;
+
+  if (packageJsonContent) {
+    try {
+      const parsedPkg = JSON.parse(packageJsonContent);
+      isBuildApplicable = Boolean(parsedPkg.scripts?.build);
+      isRuntimeApplicable =
+        Boolean(
+          parsedPkg.scripts?.start ||
+          parsedPkg.scripts?.dev ||
+          parsedPkg.scripts?.serve ||
+          parsedPkg.scripts?.preview
+        ) ||
+        Boolean(fileObj['server.js'] || fileObj['src/server.ts'] || fileObj['server/index.js']);
+    } catch {}
+  }
+
+  let buildStatus: 'PASS' | 'FAIL' | 'NOT_APPLICABLE' | 'NOT_EXECUTED' = isBuildApplicable
+    ? 'NOT_EXECUTED'
+    : 'NOT_APPLICABLE';
+  let runtimeStatus: 'PASS' | 'FAIL' | 'NOT_APPLICABLE' | 'NOT_EXECUTED' = isRuntimeApplicable
+    ? 'NOT_EXECUTED'
+    : 'NOT_APPLICABLE';
+
+  // Hydrate physical disk before running execution commands
+  if (isBuildApplicable || isRuntimeApplicable) {
+    await flushVfsToDisk(conversationId);
+  }
+
+  // 8a. Execute Production Build
+  if (isBuildApplicable) {
+    const buildRes = await executeProjectBuild(conversationId);
+    if (buildRes.executed) {
+      if (buildRes.success) {
+        buildStatus = 'PASS';
+        notes.push(`Production build verified successfully via "${buildRes.command}".`);
+      } else {
+        buildStatus = 'FAIL';
+        failures.push({
+          file: 'build',
+          message: `Production build command "${buildRes.command}" failed (exit code ${buildRes.exitCode}): ${
+            buildRes.stderr.slice(0, 300) || buildRes.stdout.slice(0, 300)
+          }`,
+        });
+      }
+    } else {
+      buildStatus = 'NOT_EXECUTED';
+      notes.push(`Build was applicable but could not be executed: ${buildRes.error}`);
+    }
+  }
+
+  // 8b. Execute Runtime Smoke Test
+  if (isRuntimeApplicable) {
+    if (buildStatus === 'FAIL') {
+      runtimeStatus = 'FAIL';
+      failures.push({
+        file: 'runtime',
+        message: 'Runtime smoke test skipped because production build failed.',
+      });
+    } else if (buildStatus === 'PASS' || !isBuildApplicable) {
+      const routesToProbe = ['/'];
+      if (backendSpec) {
+        const contract = extractProjectContract({ 'backend_spec.md': backendSpec });
+        for (const ep of contract.apiEndpoints || []) {
+          if (ep.method.toUpperCase() === 'GET') {
+            routesToProbe.push(ep.path);
+          }
+        }
+      }
+
+      const runtimeRes = await executeProjectRuntimeSmokeTest(conversationId, routesToProbe);
+      if (runtimeRes.executed) {
+        if (runtimeRes.success) {
+          runtimeStatus = 'PASS';
+          notes.push(`Runtime HTTP smoke test passed across ${runtimeRes.probedRoutes.length} route(s).`);
+        } else {
+          runtimeStatus = 'FAIL';
+          const failingRoutes = runtimeRes.probedRoutes.filter((r) => !r.ok);
+          failures.push({
+            file: 'runtime',
+            message: `Runtime smoke test failed: ${
+              failingRoutes.map((r) => `${r.route} returned HTTP ${r.status}`).join(', ') || runtimeRes.error
+            }`,
+          });
+        }
+      } else {
+        runtimeStatus = 'NOT_EXECUTED';
+        notes.push(`Runtime smoke test was applicable but could not be executed: ${runtimeRes.error}`);
+      }
+    } else {
+      runtimeStatus = 'NOT_EXECUTED';
+    }
+  }
+
+  // 8c. Strict Mandatory Conjunction & Overall Status Determination:
+  // - PASS: static passed AND all applicable execution checks passed cleanly.
+  // - FAIL: any static or execution check failed.
+  // - INCOMPLETE: required build or runtime execution stages could not be executed.
+  let overallStatus: 'PASS' | 'FAIL' | 'INCOMPLETE';
+
+  if (staticStatus === 'FAIL' || buildStatus === 'FAIL' || runtimeStatus === 'FAIL') {
+    overallStatus = 'FAIL';
+  } else if (
+    (isBuildApplicable && buildStatus === 'NOT_EXECUTED') ||
+    (isRuntimeApplicable && runtimeStatus === 'NOT_EXECUTED')
+  ) {
+    overallStatus = 'INCOMPLETE';
+    notes.push('Mandatory build or runtime execution could not be verified in this environment.');
+  } else if (
+    staticStatus === 'PASS' &&
+    (!isBuildApplicable || buildStatus === 'PASS') &&
+    (!isRuntimeApplicable || runtimeStatus === 'PASS')
+  ) {
+    overallStatus = 'PASS';
+  } else {
+    overallStatus = 'INCOMPLETE';
+  }
+
+  // CRITICAL INVARIANT: Overall success is true IF AND ONLY IF overallStatus is strictly 'PASS'.
+  // Under NO circumstances can an INCOMPLETE or unexecuted verification result in success: true.
+  const success = overallStatus === 'PASS';
 
   return {
     runId: `run-${Date.now()}-${cycle}`,
@@ -97,6 +452,14 @@ export async function runFullWorkspaceTester(
     workspaceFingerprint: fingerprint,
     success,
     failures,
+    telemetry: {
+      staticStatus,
+      buildStatus,
+      runtimeStatus,
+      overallStatus,
+      validators: validatorReports,
+      notes,
+    },
   };
 }
 
@@ -116,30 +479,50 @@ export async function runDeterministicTesterReport(params: {
       stageExecutionId,
       cycle: testResult.cycle,
       workspaceHash: testResult.workspaceFingerprint,
-      success: testResult.success,
+      success: testResult.success, // false on INCOMPLETE or FAIL; true ONLY on PASS
       failuresJson: JSON.stringify(testResult.failures),
       warningsJson: JSON.stringify([]),
     },
   });
 
-  const failuresList = testResult.success
+  const failuresList = testResult.failures.length === 0
     ? 'None'
     : testResult.failures.map((f) => `- [${f.file}] ${f.message}`).join('\n');
+
+  // Exact Result token output: PASS | FAIL | INCOMPLETE
+  const resultToken: 'PASS' | 'FAIL' | 'INCOMPLETE' = testResult.telemetry.overallStatus;
 
   const content = `# Test Report
 
 ### Result
-${testResult.success ? 'PASS' : 'FAIL'}
+${resultToken}
 
 ### Summary
-Verification run ${runRecord.id} completed on cycle ${testResult.cycle}. Workspace fingerprint ${testResult.workspaceFingerprint}. ${
-    testResult.success ? 'All automated verification checks passed cleanly.' : `Found ${testResult.failures.length} error(s).`
+Verification run ${runRecord.id} completed on cycle ${testResult.cycle} with status ${testResult.telemetry.overallStatus}. Workspace fingerprint ${testResult.workspaceFingerprint}. ${
+    testResult.telemetry.overallStatus === 'PASS'
+      ? 'All applicable static, semantic, and execution verification checks passed cleanly.'
+      : testResult.telemetry.overallStatus === 'INCOMPLETE'
+      ? 'Mandatory execution checks (build or runtime) could not be executed. Overall status is INCOMPLETE.'
+      : `Found ${testResult.failures.length} error(s).`
   }
 
+### Verification Levels
+- Static Analysis: ${testResult.telemetry.staticStatus}
+- Build Execution: ${testResult.telemetry.buildStatus}
+- Runtime Smoke Test: ${testResult.telemetry.runtimeStatus}
+- Overall Result: ${testResult.telemetry.overallStatus}
+${testResult.telemetry.notes.map((n) => `> Note: ${n}`).join('\n')}
+
+### Semantic Validators
+${testResult.telemetry.validators.map((v) => `- ${v.name}: ${v.status}`).join('\n')}
+
 ### Tests
-- Project File Linter: ${testResult.failures.some((f) => f.file !== 'imports' && f.file !== 'project' && f.file !== 'tester') ? 'FAIL' : 'PASS'}
-- Cross-File Import Analysis: ${testResult.failures.some((f) => f.file === 'imports') ? 'FAIL' : 'PASS'}
-- Full Project Structural Validation: ${testResult.failures.some((f) => f.file === 'project') ? 'FAIL' : 'PASS'}
+- Project File Linter: ${testResult.failures.some((f) => !['imports', 'project', 'package.json', 'build', 'runtime'].includes(f.file)) ? 'FAIL' : 'PASS'}
+- Cross-File Imports: ${testResult.failures.some((f) => f.file === 'imports') ? 'FAIL' : 'PASS'}
+- Project Structure: ${testResult.failures.some((f) => f.file === 'project') ? 'FAIL' : 'PASS'}
+- Dependency Validation: ${testResult.failures.some((f) => f.file === 'package.json') ? 'FAIL' : 'PASS'}
+- Production Build: ${testResult.telemetry.buildStatus}
+- Runtime Smoke Test: ${testResult.telemetry.runtimeStatus}
 
 ### Failures
 ${failuresList}

@@ -336,6 +336,10 @@ function validateTester(content: string, ctx?: StageAcceptanceContext): Acceptan
     warnings.push('Tester reported FAIL; workspace verification loop will route to Debugger for repair.');
   }
 
+  if (output.result === 'INCOMPLETE') {
+    warnings.push('Tester reported INCOMPLETE; mandatory verification stages could not be executed.');
+  }
+
   if (ctx?.evidence?.currentWorkspaceHash && output.workspaceHash !== ctx.evidence.currentWorkspaceHash) {
     extraErrors.push(
       `Tester Contract Error: Stale workspace hash in test report. Expected "${ctx.evidence.currentWorkspaceHash}", got "${output.workspaceHash}".`
