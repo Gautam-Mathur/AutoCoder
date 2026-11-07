@@ -31,8 +31,10 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "css-what": "^8.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
+    "parse5": "^8.1.0",
     "prisma": "^7.8.0",
     "tailwindcss": "^4",
     "typescript": "^5"

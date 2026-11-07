@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import ts from 'typescript';
 
 export interface SecurityFinding {
   file: string;
@@ -545,6 +546,165 @@ export function stripStringsFromCode(code: string): string {
     .replace(/`(?:[^`\\]|\\.)*`/g, '``');
 }
 
+export interface UnguardedDomAccess {
+  file: string;
+  line: number;
+  expression: string;
+  targetObject: string;
+  reason: string;
+}
+
+/**
+ * Asserts that a node is an exact Identifier matching targetName,
+ * ensuring it is NOT a property on an unrelated decoy object (e.g., decoy.cake).
+ */
+export function isExactTargetIdentifier(node: ts.Node, targetName: string): boolean {
+  if (ts.isIdentifier(node) && node.text === targetName) {
+    if (ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) {
+      return false; // Property name on a parent object (e.g. decoy.cake)
+    }
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Determines condition polarity relative to the exact target variable.
+ */
+export function evaluateConditionPolarity(
+  condNode: ts.Expression,
+  targetName: string,
+  sourceFile: ts.SourceFile
+): 'POSITIVE' | 'NEGATIVE' | 'UNKNOWN' {
+  if (isExactTargetIdentifier(condNode, targetName)) {
+    return 'POSITIVE';
+  }
+
+  if (ts.isPrefixUnaryExpression(condNode) && condNode.operator === ts.SyntaxKind.ExclamationToken) {
+    if (isExactTargetIdentifier(condNode.operand, targetName)) {
+      return 'NEGATIVE';
+    }
+  }
+
+  if (ts.isBinaryExpression(condNode)) {
+    const op = condNode.operatorToken.kind;
+    const isLeftTarget = isExactTargetIdentifier(condNode.left, targetName);
+    const isRightTarget = isExactTargetIdentifier(condNode.right, targetName);
+    const rightText = condNode.right.getText(sourceFile);
+    const leftText = condNode.left.getText(sourceFile);
+
+    if (op === ts.SyntaxKind.InstanceOfKeyword && isLeftTarget) return 'POSITIVE';
+
+    if (op === ts.SyntaxKind.ExclamationEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken) {
+      if (
+        (isLeftTarget && (rightText === 'null' || rightText === 'undefined')) ||
+        (isRightTarget && (leftText === 'null' || leftText === 'undefined'))
+      ) {
+        return 'POSITIVE';
+      }
+    }
+
+    if (op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsToken) {
+      if (
+        (isLeftTarget && (rightText === 'null' || rightText === 'undefined')) ||
+        (isRightTarget && (leftText === 'null' || leftText === 'undefined'))
+      ) {
+        return 'NEGATIVE';
+      }
+    }
+  }
+
+  return 'UNKNOWN';
+}
+
+/**
+ * Validates whether a property access node is safely guarded against null/undefined.
+ */
+export function isNodeGuardedAgainstNull(
+  node: ts.PropertyAccessExpression,
+  targetName: string,
+  sourceFile: ts.SourceFile
+): boolean {
+  if (node.questionDotToken) {
+    return true;
+  }
+
+  let current: ts.Node | undefined = node.parent;
+
+  while (current && current !== sourceFile) {
+    if (ts.isBinaryExpression(current) && current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
+      if (isExactTargetIdentifier(current.left, targetName) && current.right.pos <= node.pos) {
+        return true;
+      }
+    }
+
+    if (ts.isIfStatement(current)) {
+      const polarity = evaluateConditionPolarity(current.expression, targetName, sourceFile);
+      const inThen = current.thenStatement.pos <= node.pos && node.end <= current.thenStatement.end;
+      const inElse = current.elseStatement && current.elseStatement.pos <= node.pos && node.end <= current.elseStatement.end;
+
+      if (polarity === 'POSITIVE') {
+        if (inThen) return true;
+        if (inElse) return false;
+      } else if (polarity === 'NEGATIVE') {
+        if (inThen) return false; // Naked access inside if (!cake) or if (cake === null)
+        if (inElse) return true;
+      }
+    }
+
+    current = current.parent;
+  }
+
+  return false;
+}
+
+/**
+ * Scans JavaScript and TypeScript source files for unguarded DOM property dereferences.
+ */
+export function scanUnguardedDomDereferences(
+  files: Record<string, string>
+): { hasViolations: boolean; violations: UnguardedDomAccess[] } {
+  const violations: UnguardedDomAccess[] = [];
+
+  for (const [filePath, content] of Object.entries(files)) {
+    if (!/\.(js|ts)$/.test(filePath)) continue;
+
+    const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.ES2022, true);
+
+    function visit(node: ts.Node) {
+      if (ts.isPropertyAccessExpression(node)) {
+        const prop = node.name.text;
+        if (['style', 'innerHTML', 'textContent', 'value'].includes(prop)) {
+          const targetObj = node.expression.getText(sourceFile);
+
+          if (!['this', 'event', 'e', 'window', 'document'].includes(targetObj)) {
+            const isGuarded = isNodeGuardedAgainstNull(node, targetObj, sourceFile);
+
+            if (!isGuarded) {
+              const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+              violations.push({
+                file: filePath,
+                line: line + 1,
+                expression: node.getText(sourceFile),
+                targetObject: targetObj,
+                reason: `Unguarded dereference of '${prop}' on '${targetObj}' without positive null check or instanceof guard.`,
+              });
+            }
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    visit(sourceFile);
+  }
+
+  return {
+    hasViolations: violations.length > 0,
+    violations,
+  };
+}
+
 /**
  * Deterministic security verification gate checking for hardcoded secrets, SQL injection, unsafe eval, and client secret leaks.
  * Uses stateless (non-global) regexes and lexical comment/string filtering.
@@ -698,6 +858,18 @@ export function validateSecurityGate(
         }
       }
     }
+  }
+
+  // 5. AST-based check for Unguarded DOM Dereferences (Exact identifier & branch polarity)
+  const domScan = scanUnguardedDomDereferences(vfsFiles);
+  for (const v of domScan.violations) {
+    blocking.push({
+      file: v.file,
+      line: v.line,
+      severity: 'BLOCKING',
+      ruleId: 'UNGUARDED_DOM_DEREFERENCE',
+      message: `Security Hard Block: ${v.reason} (Expression: "${v.expression}")`,
+    });
   }
 
   return {

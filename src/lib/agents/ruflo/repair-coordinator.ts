@@ -1,3 +1,5 @@
+import { createHash } from 'crypto';
+import path from 'path';
 import { prisma } from '../../db';
 import { createContentHash } from './contracts/fingerprints';
 import {
@@ -12,6 +14,8 @@ import {
 } from './workspace-policy';
 import { CheckStatus } from './security-gate';
 import { parseDebuggerOutput } from './contracts/schemas/debugger';
+import { readVirtualFile, listVirtualFiles } from './vfs';
+import { parseHtmlDocument } from './dom-contract-validator';
 
 export type FailureId = string;
 export type WorkspaceVersion = string;
@@ -654,12 +658,189 @@ export interface RepairHistoryRecord {
   failureCount: number;
 }
 
+export interface CanonicalRepairContext {
+  targetFile: string;
+  inflowFiles: Array<{ path: string; content: string; role: string }>;
+  domContractSnippet?: string;
+  priorRepairDiff?: string;
+}
+
+/**
+ * Resolves source dependencies strictly via canonical POSIX paths and verified template references.
+ * Zero file-count heuristics or suffix-matching fallbacks.
+ */
+export async function resolveCanonicalRepairContext(
+  conversationId: string,
+  targetFile: string,
+  priorDiff?: string
+): Promise<CanonicalRepairContext> {
+  const allVirtualFiles = await listVirtualFiles(conversationId);
+  const fileContents = new Map<string, string>();
+
+  for (const filePath of allVirtualFiles) {
+    const content = await readVirtualFile(conversationId, filePath);
+    if (content) fileContents.set(path.posix.normalize(filePath), content);
+  }
+
+  const normalizedTarget = path.posix.normalize(targetFile);
+  const inflowFiles: Array<{ path: string; content: string; role: string }> = [];
+
+  const isScript = /\.(js|jsx|ts|tsx)$/.test(normalizedTarget);
+  const isHtml = normalizedTarget.endsWith('.html');
+
+  // Case 1: Target is a Script (e.g., /shop/script.js)
+  if (isScript) {
+    for (const [filePath, content] of fileContents) {
+      if (filePath.endsWith('.html')) {
+        const doc = parseHtmlDocument(filePath, content);
+
+        // Strict canonical path match: script must be in doc.linkedScripts
+        const isReferencedInDoc = doc.linkedScripts.includes(normalizedTarget);
+
+        if (isReferencedInDoc) {
+          inflowFiles.push({
+            path: filePath,
+            content,
+            role: 'HOST_HTML_TEMPLATE: Defines the DOM elements, IDs, and classes queried by this script.',
+          });
+
+          // Inflow ONLY stylesheets explicitly linked by this specific host template
+          for (const cssPath of doc.linkedStylesheets) {
+            const cssContent = fileContents.get(cssPath);
+            if (cssContent) {
+              inflowFiles.push({
+                path: cssPath,
+                content: cssContent,
+                role: 'LINKED_STYLESHEET: Declares style classes and visual animations for the host template.',
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Case 2: Target is an HTML Document (e.g., index.html)
+  if (isHtml) {
+    const htmlContent = fileContents.get(normalizedTarget);
+    if (htmlContent) {
+      const doc = parseHtmlDocument(normalizedTarget, htmlContent);
+
+      for (const scriptPath of doc.linkedScripts) {
+        const scriptContent = fileContents.get(scriptPath);
+        if (scriptContent) {
+          inflowFiles.push({
+            path: scriptPath,
+            content: scriptContent,
+            role: 'LINKED_SCRIPT: Script logic executed by this HTML template.',
+          });
+        }
+      }
+
+      for (const cssPath of doc.linkedStylesheets) {
+        const cssContent = fileContents.get(cssPath);
+        if (cssContent) {
+          inflowFiles.push({
+            path: cssPath,
+            content: cssContent,
+            role: 'LINKED_STYLESHEET: Stylesheet applied to this HTML template.',
+          });
+        }
+      }
+    }
+  }
+
+  // Extract compact authoritative DOM contract if host HTML is in context
+  let domContractSnippet = '';
+  const hostHtml = inflowFiles.find((f) => f.path.endsWith('.html'));
+  if (hostHtml) {
+    const doc = parseHtmlDocument(hostHtml.path, hostHtml.content);
+    domContractSnippet = [
+      `### AUTHORITATIVE DOM CONTRACT (${hostHtml.path})`,
+      `- Declared Element IDs: ${[...doc.ids].join(', ') || 'none'}`,
+      `- Declared CSS Classes: ${[...doc.classes].join(', ') || 'none'}`,
+      `CRITICAL INSTRUCTION: Every getElementById() and querySelector() MUST strictly match the declared IDs/classes above. Never query unlisted identifiers.`,
+    ].join('\n');
+  }
+
+  return {
+    targetFile: normalizedTarget,
+    inflowFiles,
+    domContractSnippet,
+    priorRepairDiff: priorDiff || undefined,
+  };
+}
+
+export interface DiagnosticFingerprint {
+  cycle: number;
+  uniqueFailureCount: number;
+  signatureHash: string;
+  signatures: Set<string>;
+}
+
+function createNormalizedFailureSignature(failure: VerificationFailure): string {
+  const normMsg = failure.message.replace(/\s+/g, ' ').trim().slice(0, 80);
+  return `${failure.file}:${failure.code || 'NO_CODE'}:${normMsg}`;
+}
+
+export function computeDiagnosticFingerprint(
+  cycle: number,
+  failures: VerificationFailure[]
+): DiagnosticFingerprint {
+  const signatures = new Set(failures.map(createNormalizedFailureSignature));
+  const sorted = [...signatures].sort().join('|');
+  const signatureHash = createHash('sha256').update(sorted).digest('hex').slice(0, 16);
+
+  return {
+    cycle,
+    uniqueFailureCount: signatures.size,
+    signatureHash,
+    signatures,
+  };
+}
+
+/**
+ * Analyzes the repair trajectory with strict precedence:
+ * 1. Oscillation Check (exact signature recurrence)
+ * 2. Diminishing Returns Check (failure count not decreasing over 2 cycles)
+ * 3. Budget Cap Check (cycle count threshold)
+ */
+export function analyzeRepairTrajectory(
+  history: DiagnosticFingerprint[],
+  current: DiagnosticFingerprint,
+  maxAllowedCycles = 2
+): { shouldHalt: boolean; reason?: 'OSCILLATION_DETECTED' | 'DIMINISHING_RETURNS' | 'BUDGET_EXCEEDED' } {
+  // CHECK 1: Oscillation Check evaluated FIRST
+  for (const prev of history) {
+    if (prev.signatureHash === current.signatureHash) {
+      return { shouldHalt: true, reason: 'OSCILLATION_DETECTED' };
+    }
+  }
+
+  // CHECK 2: Diminishing returns (Unique failure count non-decreasing over 2 consecutive cycles)
+  if (history.length >= 2) {
+    const prev1 = history[history.length - 1];
+    const prev2 = history[history.length - 2];
+    if (current.uniqueFailureCount >= prev1.uniqueFailureCount && prev1.uniqueFailureCount >= prev2.uniqueFailureCount) {
+      return { shouldHalt: true, reason: 'DIMINISHING_RETURNS' };
+    }
+  }
+
+  // CHECK 3: Budget cap threshold
+  if (current.cycle >= maxAllowedCycles) {
+    return { shouldHalt: true, reason: 'BUDGET_EXCEEDED' };
+  }
+
+  return { shouldHalt: false };
+}
+
 /**
  * The Canonical Repair Coordinator owning Tester -> Debugger -> Coder -> Tester lifecycle.
  */
 export async function coordinateRepair(params: CoordinateRepairParams): Promise<void> {
   const { conversationId, pipelineRunId, executeStageFn, emit, maxCycles = 10 } = params;
   const repairHistory: RepairHistoryRecord[] = [];
+  const diagnosticHistory: DiagnosticFingerprint[] = [];
 
   for (let cycle = 1; cycle <= maxCycles; cycle++) {
     // 1. Run Tester
@@ -702,13 +883,29 @@ export async function coordinateRepair(params: CoordinateRepairParams): Promise<
       message: `[REPAIR_RETRY] Workspace verification reported defects on cycle ${cycle}. Initiating surgical repair...`,
     });
 
-    if (cycle === maxCycles) {
-      throw new Error(`Workspace verification failed after ${maxCycles} debug repair cycles.`);
-    }
-
     // 2. Normalize failures and capture active workspace revision
     const normalizedFailures = normalizeFailures(testerResult.content || '');
     const beforeVersion = await computeWorkspaceFingerprint(conversationId);
+
+    // Evaluate trajectory (Oscillation -> Diminishing Returns -> Budget Cap)
+    const currentFingerprint = computeDiagnosticFingerprint(
+      cycle,
+      normalizedFailures.map((f) => ({
+        file: f.affectedFiles[0] || 'workspace',
+        message: f.message,
+        code: f.id,
+      }))
+    );
+    const trajectory = analyzeRepairTrajectory(diagnosticHistory, currentFingerprint, maxCycles);
+    if (trajectory.shouldHalt) {
+      emit({
+        type: 'AGENT_FAIL',
+        agent: 'Debugger',
+        message: `Repair loop halted: ${trajectory.reason}.`,
+      });
+      throw new Error(`Workspace verification failed after ${cycle} debug repair cycles (${trajectory.reason}).`);
+    }
+    diagnosticHistory.push(currentFingerprint);
 
     emit({
       type: 'AGENT_START',
@@ -856,6 +1053,20 @@ export async function coordinateRepair(params: CoordinateRepairParams): Promise<
     for (const targetFile of authorizedTargets) {
       try {
         let fileRepairInstructions = coderRepairInstructions;
+        try {
+          const repairContext = await resolveCanonicalRepairContext(conversationId, targetFile);
+          if (repairContext.domContractSnippet) {
+            fileRepairInstructions += `\n\n${repairContext.domContractSnippet}`;
+          }
+          if (repairContext.inflowFiles.length > 0) {
+            fileRepairInstructions +=
+              `\n\n### Linked Context Files:\n` +
+              repairContext.inflowFiles
+                .map((f) => `#### ${f.path} (${f.role})\n\`\`\`\n${f.content}\n\`\`\``)
+                .join('\n\n');
+          }
+        } catch {}
+
         if (targetFile.endsWith('.js') || targetFile.endsWith('.jsx')) {
           fileRepairInstructions += `\n\nIMPORTANT LANGUAGE RULE FOR JAVASCRIPT (.js):\nOutput pure standard ECMAScript only. DO NOT use TypeScript 'as Type' type assertions or ': Type' annotations (they trigger TS8010 syntax error). For DOM properties (.value, .reset, .dataset), use runtime guards (e.g., if (el instanceof HTMLInputElement)), querySelector, or JSDoc.`;
         }

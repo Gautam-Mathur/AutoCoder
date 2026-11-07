@@ -1,3 +1,4 @@
+import path from 'path';
 import { prisma } from '../../db';
 import { createContentHash } from './contracts/fingerprints';
 import { runLinter, runCrossFileImportCheck } from './linter';
@@ -8,7 +9,8 @@ import { validateApiContracts } from './api-contract-validator';
 import { validateFrameworkBoundaries } from './framework-validator';
 import { validatePrismaUsage } from './prisma-validator';
 import { extractProjectContract } from './spec-contract';
-import { executeProjectBuild, executeProjectRuntimeSmokeTest } from './runtime-validator';
+import { executeProjectBuild, executeProjectRuntimeSmokeTest, executeStaticFrontendSmokeTest } from './runtime-validator';
+import { validateDomContracts } from './dom-contract-validator';
 import { readVirtualFile, flushVfsToDisk } from './vfs';
 
 const MAX_DEBUG_CYCLES = 10;
@@ -320,11 +322,51 @@ export async function runFullWorkspaceTester(
     });
   }
 
+  // 7b. Semantic DOM Contract Validation (parse5 & css-what AST validation)
+  try {
+    const domResult = validateDomContracts(fileObj);
+    if (domResult.status !== 'NOT_APPLICABLE') {
+      if (domResult.status === 'FAIL') {
+        for (const f of domResult.failures) {
+          failures.push(f);
+        }
+      }
+      validatorReports.push({
+        name: 'DOM Contract Validation',
+        applicable: true,
+        executed: true,
+        status: domResult.status === 'FAIL' ? 'FAIL' : domResult.status === 'INCOMPLETE' ? 'NOT_EXECUTED' : 'PASS',
+        errors: domResult.failures.map((f) => f.message),
+        warnings: domResult.details,
+      });
+    } else {
+      validatorReports.push({
+        name: 'DOM Contract Validation',
+        applicable: false,
+        executed: false,
+        status: 'NOT_APPLICABLE',
+        errors: [],
+        warnings: [],
+      });
+    }
+  } catch (e: any) {
+    failures.push({ file: 'dom', message: `DOM contract validation exception: ${e?.message || e}` });
+    validatorReports.push({
+      name: 'DOM Contract Validation',
+      applicable: true,
+      executed: false,
+      status: 'FAIL',
+      errors: [e?.message || String(e)],
+      warnings: [],
+    });
+  }
+
   const staticStatus: 'PASS' | 'FAIL' = failures.length === 0 ? 'PASS' : 'FAIL';
 
   // 8. Physical Execution Verification Pipeline
   let isBuildApplicable = false;
   let isRuntimeApplicable = false;
+  let isStaticFrontend = false;
 
   if (packageJsonContent) {
     try {
@@ -339,6 +381,12 @@ export async function runFullWorkspaceTester(
         ) ||
         Boolean(fileObj['server.js'] || fileObj['src/server.ts'] || fileObj['server/index.js']);
     } catch {}
+  }
+
+  // If there is an index.html and no backend server scripts, this is a static frontend project
+  if (!isRuntimeApplicable && Boolean(fileObj['index.html'])) {
+    isRuntimeApplicable = true;
+    isStaticFrontend = true;
   }
 
   let buildStatus: 'PASS' | 'FAIL' | 'NOT_APPLICABLE' | 'NOT_EXECUTED' = isBuildApplicable
@@ -384,34 +432,58 @@ export async function runFullWorkspaceTester(
         message: 'Runtime smoke test skipped because production build failed.',
       });
     } else if (buildStatus === 'PASS' || !isBuildApplicable) {
-      const routesToProbe = ['/'];
-      if (backendSpec) {
-        const contract = extractProjectContract({ 'backend_spec.md': backendSpec });
-        for (const ep of contract.apiEndpoints || []) {
-          if (ep.method.toUpperCase() === 'GET') {
-            routesToProbe.push(ep.path);
+      if (isStaticFrontend) {
+        const projectDir = path.join(process.cwd(), 'projects', conversationId);
+        const staticRes = await executeStaticFrontendSmokeTest({
+          conversationId,
+          projectDir,
+          entryFile: 'index.html',
+        });
+        if (staticRes.executed) {
+          if (staticRes.success) {
+            runtimeStatus = 'PASS';
+            notes.push(`Headless Chrome static frontend smoke test passed cleanly (${staticRes.logs}).`);
+          } else {
+            runtimeStatus = 'FAIL';
+            failures.push({
+              file: 'runtime',
+              message: staticRes.error || 'Static frontend runtime smoke test failed.',
+            });
           }
-        }
-      }
-
-      const runtimeRes = await executeProjectRuntimeSmokeTest(conversationId, routesToProbe);
-      if (runtimeRes.executed) {
-        if (runtimeRes.success) {
-          runtimeStatus = 'PASS';
-          notes.push(`Runtime HTTP smoke test passed across ${runtimeRes.probedRoutes.length} route(s).`);
         } else {
-          runtimeStatus = 'FAIL';
-          const failingRoutes = runtimeRes.probedRoutes.filter((r) => !r.ok);
-          failures.push({
-            file: 'runtime',
-            message: `Runtime smoke test failed: ${
-              failingRoutes.map((r) => `${r.route} returned HTTP ${r.status}`).join(', ') || runtimeRes.error
-            }`,
-          });
+          runtimeStatus = 'NOT_EXECUTED';
+          notes.push(`Static frontend smoke test was applicable but could not be executed: ${staticRes.error}`);
         }
       } else {
-        runtimeStatus = 'NOT_EXECUTED';
-        notes.push(`Runtime smoke test was applicable but could not be executed: ${runtimeRes.error}`);
+        const routesToProbe = ['/'];
+        if (backendSpec) {
+          const contract = extractProjectContract({ 'backend_spec.md': backendSpec });
+          for (const ep of contract.apiEndpoints || []) {
+            if (ep.method.toUpperCase() === 'GET') {
+              routesToProbe.push(ep.path);
+            }
+          }
+        }
+
+        const runtimeRes = await executeProjectRuntimeSmokeTest(conversationId, routesToProbe);
+        if (runtimeRes.executed) {
+          if (runtimeRes.success) {
+            runtimeStatus = 'PASS';
+            notes.push(`Runtime HTTP smoke test passed across ${runtimeRes.probedRoutes.length} route(s).`);
+          } else {
+            runtimeStatus = 'FAIL';
+            const failingRoutes = runtimeRes.probedRoutes.filter((r) => !r.ok);
+            failures.push({
+              file: 'runtime',
+              message: `Runtime smoke test failed: ${
+                failingRoutes.map((r) => `${r.route} returned HTTP ${r.status}`).join(', ') || runtimeRes.error
+              }`,
+            });
+          }
+        } else {
+          runtimeStatus = 'NOT_EXECUTED';
+          notes.push(`Runtime smoke test was applicable but could not be executed: ${runtimeRes.error}`);
+        }
       }
     } else {
       runtimeStatus = 'NOT_EXECUTED';

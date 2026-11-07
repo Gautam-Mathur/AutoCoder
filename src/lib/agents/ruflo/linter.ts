@@ -13,6 +13,33 @@ export interface LintResult {
   summary: string;
 }
 
+export const STANDARD_DOM_PROPERTIES = new Set([
+  'value',
+  'style',
+  'dataset',
+  'checked',
+  'disabled',
+  'target',
+  'src',
+  'href',
+  'textContent',
+  'innerHTML',
+  'innerText',
+  'children',
+  'parentElement',
+  'classList',
+  'id',
+  'className',
+  'offsetWidth',
+  'offsetHeight',
+]);
+
+// Top-of-file check to avoid being triggered by comments or string literals deeper in the file
+export function isTsCheckEnabled(content: string): boolean {
+  const topLines = content.split('\n').slice(0, 5).join('\n');
+  return /\/\/\s*@ts-check|\/\*\s*@ts-check\s*\*\//.test(topLines);
+}
+
 /**
  * Runs the TypeScript compiler on a file from the virtual workspace.
  * Pre-loads all workspace files in the conversation into memory to support synchronous module resolution.
@@ -61,6 +88,7 @@ export async function runLinter(
   }
 
   const isJsOrJsx = filePath.endsWith('.js') || filePath.endsWith('.jsx');
+  const hasTsCheck = isTsCheckEnabled(content);
 
   const cwd = process.cwd().replace(/\\/g, '/');
 
@@ -157,11 +185,39 @@ export async function runLinter(
       const { line, character } = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
       const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n');
 
-      // For JS/JSX files, ignore external missing npm module errors, but retain broken local import errors (./, ../, @/)
-      if (isJsOrJsx) {
+      // SURGICAL FILTER FOR VANILLA JAVASCRIPT:
+      if (isJsOrJsx && !hasTsCheck) {
+        if (diagnostic.code === 2339) {
+          const propMatch = message.match(/Property '([^']+)' does not exist on type '([^']+)'/);
+          if (propMatch) {
+            const propName = propMatch[1];
+            const typeName = propMatch[2];
+            const isDomGenericType = ['EventTarget', 'Element', 'HTMLElement', 'Node'].includes(typeName);
+
+            // Suppress ONLY standard DOM properties on generic DOM types
+            if (isDomGenericType && STANDARD_DOM_PROPERTIES.has(propName)) {
+              return;
+            }
+          }
+        }
+
+        // External npm module resolution: flag missing package unless declared in package.json
         if (diagnostic.code === 2307 || diagnostic.code === 7016) {
           const isLocalImport = /['"](\.|\/|@\/)/i.test(message);
-          if (!isLocalImport) return;
+          if (!isLocalImport) {
+            const pkgJson = getVirtualContent('package.json');
+            if (pkgJson) {
+              try {
+                const parsed = JSON.parse(pkgJson.content);
+                const depName = message.match(/['"]([^'"]+)['"]/)?.[1];
+                if (depName && (parsed.dependencies?.[depName] || parsed.devDependencies?.[depName])) {
+                  return; // Declared in package.json
+                }
+              } catch {}
+            }
+          } else {
+            // Local import error is never suppressed
+          }
         } else if (diagnostic.code === 1479 || diagnostic.code === 2304 || diagnostic.code === 2552) {
           return;
         }

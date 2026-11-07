@@ -1,5 +1,7 @@
+import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import { ApiEndpointContract, ProjectContract } from './contracts';
@@ -572,4 +574,296 @@ export async function probeGeneratedProjectRoutes(
     probedRoutes,
     errors,
   };
+}
+
+export interface StaticSmokeTestOptions {
+  conversationId: string;
+  projectDir: string;
+  observationWindowMs?: number; // Default 2500ms
+  entryFile?: string;          // Default 'index.html'
+}
+
+/**
+ * Sandboxed headless Chrome CDP smoke test with bulletproof Fetch-origin allowlisting
+ * and observed HTTP response status capture.
+ */
+export async function executeStaticFrontendSmokeTest(
+  options: StaticSmokeTestOptions
+): Promise<RuntimeExecutionResult> {
+  const {
+    projectDir,
+    observationWindowMs = 2500,
+    entryFile = 'index.html',
+  } = options;
+
+  const safeBaseDir = path.resolve(projectDir);
+  const realBase = fs.existsSync(safeBaseDir) ? fs.realpathSync(safeBaseDir) : safeBaseDir;
+  const targetHtmlPath = path.resolve(realBase, entryFile);
+
+  if (!targetHtmlPath.startsWith(realBase + path.sep) && targetHtmlPath !== realBase) {
+    return {
+      executed: false,
+      success: false,
+      probedRoutes: [],
+      logs: '',
+      error: `Forbidden: Entry file ${entryFile} escapes project boundary.`,
+    };
+  }
+
+  if (!fs.existsSync(targetHtmlPath)) {
+    return {
+      executed: false,
+      success: false,
+      probedRoutes: [],
+      logs: '',
+      error: `Entry file ${entryFile} not found in project directory.`,
+    };
+  }
+
+  // 1. Confined Ephemeral HTTP Server
+  const staticServer = http.createServer((req, res) => {
+    let reqPath = req.url?.split('?')[0] || '/';
+    if (reqPath === '/' || reqPath === '') reqPath = `/${entryFile}`;
+
+    const cleanRel = reqPath.replace(/^\/+/, '');
+    const candidatePath = path.resolve(realBase, cleanRel);
+
+    if (!candidatePath.startsWith(realBase + path.sep) && candidatePath !== realBase) {
+      res.writeHead(403);
+      res.end('Forbidden: Traversal detected');
+      return;
+    }
+
+    try {
+      if (!fs.existsSync(candidatePath)) {
+        res.writeHead(404);
+        res.end('Not Found');
+        return;
+      }
+      const realTarget = fs.realpathSync(candidatePath);
+      if (!realTarget.startsWith(realBase + path.sep) && realTarget !== realBase) {
+        res.writeHead(403);
+        res.end('Forbidden: Symlink escape detected');
+        return;
+      }
+
+      if (fs.statSync(realTarget).isDirectory()) {
+        res.writeHead(403);
+        res.end('Forbidden');
+        return;
+      }
+
+      const ext = path.extname(realTarget);
+      const mimeTypes: Record<string, string> = {
+        '.html': 'text/html',
+        '.css': 'text/css',
+        '.js': 'application/javascript',
+        '.json': 'application/json',
+        '.png': 'image/png',
+        '.svg': 'image/svg+xml',
+      };
+
+      res.writeHead(200, {
+        'Content-Type': mimeTypes[ext] || 'text/plain',
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'no-store',
+      });
+      fs.createReadStream(realTarget).pipe(res);
+    } catch {
+      res.writeHead(500);
+      res.end('Internal Server Error');
+    }
+  });
+
+  await new Promise<void>((resolve) => staticServer.listen(0, '127.0.0.1', () => resolve()));
+  const staticPort = (staticServer.address() as { port: number }).port;
+  const allowedOrigin = `http://127.0.0.1:${staticPort}`;
+
+  // 2. Ephemeral User Profile & Chrome Process Spawn
+  const tmpUserDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'autocoder-chrome-'));
+  const chromeProcess = spawn('google-chrome', [
+    '--headless=new',
+    '--remote-debugging-port=0',
+    `--user-data-dir=${tmpUserDataDir}`,
+    '--disable-gpu',
+    '--disable-dev-shm-usage',
+    '--disable-extensions',
+    '--disable-background-networking',
+    '--disable-sync',
+    '--disable-default-apps',
+    '--mute-audio',
+  ], {
+    detached: true,
+  });
+
+  let cdpWsUrl = '';
+  const uncaughtExceptions: Array<{ text: string; url?: string; line?: number }> = [];
+  const consoleErrors: string[] = [];
+  let observedHttpStatus: number | null = null;
+
+  let isProcessExited = false;
+  let processExitCode: number | null = null;
+  chromeProcess.on('exit', (code) => {
+    isProcessExited = true;
+    processExitCode = code;
+  });
+
+  try {
+    cdpWsUrl = await new Promise<string>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Headless Chrome startup timed out after 5000ms.')), 5000);
+      let stderrBuffer = '';
+      chromeProcess.stderr?.on('data', (chunk) => {
+        stderrBuffer += chunk.toString();
+        const match = stderrBuffer.match(/DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9-]+)/);
+        if (match) {
+          clearTimeout(timeout);
+          resolve(match[1]);
+        }
+      });
+      chromeProcess.on('error', (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+
+    const cdpHttpPort = cdpWsUrl.match(/127\.0\.0\.1:(\d+)/)?.[1];
+    const newTabRes = await fetch(`http://127.0.0.1:${cdpHttpPort}/json/new`, { method: 'PUT' });
+    const tabData = await newTabRes.json();
+    const tabWsUrl = tabData.webSocketDebuggerUrl;
+
+    // 3. Deterministic Lifecycle State Machine via WebSocket
+    await new Promise<void>((resolve, reject) => {
+      const ws = new WebSocket(tabWsUrl);
+      let msgId = 1;
+      let loadEventFired = false;
+      let observationTimer: NodeJS.Timeout | null = null;
+
+      const send = (method: string, params = {}) => {
+        const id = msgId++;
+        ws.send(JSON.stringify({ id, method, params }));
+        return id;
+      };
+
+      const failTimeout = setTimeout(() => {
+        ws.close();
+        if (!loadEventFired) {
+          reject(new Error('Page.loadEventFired timed out after 6000ms. Navigation failed or hung.'));
+        } else {
+          resolve();
+        }
+      }, 10000);
+
+      ws.onopen = async () => {
+        send('Runtime.enable');
+        send('Page.enable');
+        send('Log.enable');
+        send('Network.enable');
+
+        // NETWORK ISOLATION: Intercept ALL requests and enforce strict origin allowlisting
+        send('Fetch.enable', { patterns: [{ urlPattern: '*' }] });
+
+        // Explicit Page Navigation
+        const targetUrl = `${allowedOrigin}/${entryFile}`;
+        send('Page.navigate', { url: targetUrl });
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data as string);
+
+          // Handle Fetch request pause for origin allowlisting
+          if (data.method === 'Fetch.requestPaused') {
+            const { requestId, request } = data.params;
+            try {
+              const reqUrl = new URL(request.url);
+              // Allow requests ONLY matching the ephemeral local static server origin
+              if (reqUrl.origin === allowedOrigin) {
+                send('Fetch.continueRequest', { requestId });
+              } else {
+                send('Fetch.failRequest', { requestId, errorReason: 'AccessDenied' });
+              }
+            } catch {
+              send('Fetch.failRequest', { requestId, errorReason: 'AccessDenied' });
+            }
+          }
+
+          // Record real observed HTTP status for the main document
+          if (data.method === 'Network.responseReceived') {
+            const { response, type } = data.params;
+            if (type === 'Document') {
+              observedHttpStatus = response.status;
+            }
+          }
+
+          if (data.method === 'Page.loadEventFired') {
+            loadEventFired = true;
+            // ONLY start observation window after page has completely loaded
+            observationTimer = setTimeout(() => {
+              clearTimeout(failTimeout);
+              ws.close();
+              resolve();
+            }, observationWindowMs);
+          }
+
+          if (data.method === 'Runtime.exceptionThrown') {
+            const details = data.params.exceptionDetails;
+            uncaughtExceptions.push({
+              text: details.exception?.description || details.text || 'Uncaught Exception',
+              url: details.url,
+              line: details.lineNumber,
+            });
+          }
+
+          if (data.method === 'Log.entryAdded' && data.params.entry?.level === 'error') {
+            consoleErrors.push(data.params.entry.text);
+          }
+        } catch {}
+      };
+
+      ws.onerror = (err) => {
+        clearTimeout(failTimeout);
+        if (observationTimer) clearTimeout(observationTimer);
+        reject(err);
+      };
+    });
+
+    if (isProcessExited && processExitCode !== 0) {
+      return {
+        executed: true,
+        success: false,
+        probedRoutes: [],
+        logs: '',
+        error: `Browser process crashed unexpectedly with exit code ${processExitCode}.`,
+      };
+    }
+
+    const finalStatus = observedHttpStatus || 200;
+    const httpSuccess = finalStatus >= 200 && finalStatus < 400;
+    const noExceptions = uncaughtExceptions.length === 0 && consoleErrors.length === 0;
+    const success = httpSuccess && noExceptions;
+
+    const failures = uncaughtExceptions
+      .map((e) => `${e.text}${e.url ? ` at ${e.url}:${e.line}` : ''}`)
+      .concat(consoleErrors);
+
+    if (!httpSuccess) {
+      failures.unshift(`Main document navigation returned HTTP ${finalStatus}.`);
+    }
+
+    return {
+      executed: true,
+      success,
+      probedRoutes: [{ route: `/${entryFile}`, status: finalStatus, ok: success }],
+      logs: `Browser smoke test observed for ${observationWindowMs}ms after Page.loadEventFired. Observed HTTP: ${finalStatus}. Exceptions: ${uncaughtExceptions.length}, Console errors: ${consoleErrors.length}.`,
+      error: success ? undefined : `Runtime Smoke Test Failed:\n${failures.join('\n')}`,
+    };
+  } finally {
+    try {
+      if (chromeProcess.pid) process.kill(-chromeProcess.pid, 'SIGKILL');
+    } catch {}
+    await new Promise<void>((resolve) => staticServer.close(() => resolve()));
+    try {
+      fs.rmSync(tmpUserDataDir, { recursive: true, force: true });
+    } catch {}
+  }
 }
