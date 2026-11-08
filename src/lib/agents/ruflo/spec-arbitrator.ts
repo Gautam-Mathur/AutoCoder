@@ -1,5 +1,4 @@
-import { runInference } from '../inference';
-import { cleanJsonResponse } from '../sml';
+import { runInference, cleanJsonResponse } from '../inference';
 import { ProjectContract } from './contracts';
 import { determineBackendTopology, BackendTopologyDecision } from './backend-topology';
 
