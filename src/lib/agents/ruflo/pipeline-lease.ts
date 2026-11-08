@@ -41,7 +41,9 @@ export async function acquirePipelineLease(
       run.leaseOwner === null ||
       leaseExpired ||
       run.state === 'QUEUED' ||
-      run.state === 'PAUSED';
+      run.state === 'PAUSED' ||
+      run.state === 'FAILED' ||
+      run.state === 'COMPLETED';
 
     if (!available) return false;
 

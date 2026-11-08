@@ -17,27 +17,31 @@ export default function TopAppBar() {
   const { activeId, ollamaConnected, ollamaModels, activeModel, setActiveModel, addLog, currentStage, pipelineStatus } = useApp();
   const [resuming, setResuming] = useState(false);
 
-  const handleApprove = async () => {
+  const handleResumeOrRetry = async () => {
     if (!activeId) return;
     setResuming(true);
     addLog({
       type: 'GATE_CLICK',
-      message: 'User approved architecture. Resuming pipeline...',
+      message: `Resuming pipeline compilation from stage ${currentStage}...`,
     });
 
     try {
       const res = await fetch('/api/pipeline/resume', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conversationId: activeId }),
+        body: JSON.stringify({
+          conversationId: activeId,
+          ...(pipelineStatus === 'Paused' && currentStage === 'Architect' ? { action: 'approve_quality_gate' } : {}),
+        }),
       });
 
       if (res.ok) {
+        const data = await res.json();
         addLog({
           type: 'GATE_RESUME',
-          message: 'Pipeline resumed successfully! Transitioning to System stage.',
+          message: `Pipeline resumed successfully! Transitioning to ${data.nextStage || 'next stage'}.`,
         });
-        window.dispatchEvent(new CustomEvent('pipeline-resumed', { detail: { id: activeId } }));
+        window.dispatchEvent(new CustomEvent('pipeline-resumed', { detail: { id: activeId, nextStage: data.nextStage } }));
       } else {
         const data = await res.json();
         addLog({
@@ -120,7 +124,7 @@ export default function TopAppBar() {
               <Power className="w-3.5 h-3.5 text-red-500" /> Halt Pipeline
             </button>
             <button
-              onClick={handleApprove}
+              onClick={handleResumeOrRetry}
               disabled={resuming}
               className="bg-emerald-ship text-white px-4 py-1.5 rounded text-xs font-bold shadow-[0_0_8px_rgba(16,185,129,0.3)] hover:bg-emerald-500/90 transition-colors flex items-center gap-1 disabled:opacity-50"
             >
@@ -130,6 +134,23 @@ export default function TopAppBar() {
                 <Play className="w-3.5 h-3.5 fill-white" />
               )}
               Approve &amp; Generate
+            </button>
+          </div>
+        )}
+
+        {activeId && (pipelineStatus === 'Failed' || (pipelineStatus === 'Paused' && currentStage !== 'Architect')) && (
+          <div className="flex gap-2 border-l border-slate-700 pl-4">
+            <button
+              onClick={handleResumeOrRetry}
+              disabled={resuming}
+              className="bg-electric-indigo text-white px-4 py-1.5 rounded text-xs font-bold shadow-[0_0_8px_rgba(99,102,241,0.4)] hover:bg-indigo-500 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+            >
+              {resuming ? (
+                <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <Play className="w-3.5 h-3.5 fill-white" />
+              )}
+              Resume Pipeline
             </button>
           </div>
         )}

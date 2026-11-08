@@ -574,85 +574,117 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
       payload.format = 'json';
     }
 
-    let res: any;
-    try {
-      res = await undiciFetch(`${host}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        cache: 'no-store',
-        body: JSON.stringify(payload),
-        signal: combinedSignal,
-        ...(longTimeoutDispatcher ? { dispatcher: longTimeoutDispatcher } : {} as any),
-      });
-    } catch (fetchErr: any) {
-      if (fetchErr.message?.includes('fetch failed')) {
-        console.warn('[Inference] Transient fetch error, retrying Ollama request in 1.5s...');
-        await new Promise(r => setTimeout(r, 1500));
-        res = await undiciFetch(`${host}/api/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          cache: 'no-store',
-          body: JSON.stringify(payload),
-          signal: combinedSignal,
-          ...(longTimeoutDispatcher ? { dispatcher: longTimeoutDispatcher } : {} as any),
-        });
-      } else {
-        throw fetchErr;
-      }
-    }
+    const isSocketError = (e: any) => {
+      const msg = (e?.message || '').toLowerCase();
+      const code = (e?.code || '').toLowerCase();
+      const causeMsg = (e?.cause?.message || '').toLowerCase();
+      return (
+        msg.includes('terminated') ||
+        msg.includes('other side closed') ||
+        msg.includes('und_err_socket') ||
+        msg.includes('fetch failed') ||
+        msg.includes('socket hung up') ||
+        msg.includes('econnreset') ||
+        causeMsg.includes('terminated') ||
+        causeMsg.includes('other side closed') ||
+        causeMsg.includes('und_err_socket') ||
+        code === 'und_err_socket' ||
+        code === 'econnreset'
+      );
+    };
 
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`Ollama inference failed: ${res.statusText} - ${errText}`);
-    }
+    let attempt = 0;
+    const maxAttempts = 3;
 
-    const reader = res.body?.getReader();
-    const decoder = new TextDecoder();
-    let accumulatedContent = '';
-
-    if (reader) {
+    while (attempt < maxAttempts) {
+      attempt++;
       try {
-        let buffer = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          // Save the last line if it is incomplete
-          buffer = lines.pop() || '';
-          
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              const parsed = JSON.parse(line);
-              const content = parsed.message?.content || '';
-              accumulatedContent += content;
-              if (options.onChunk && content) {
-                options.onChunk(content);
-              }
-            } catch (e) {
-              // Ignore partial JSON errors
-            }
+        let res: any;
+        try {
+          res = await undiciFetch(`${host}/api/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            cache: 'no-store',
+            body: JSON.stringify(payload),
+            signal: combinedSignal,
+            ...(longTimeoutDispatcher ? { dispatcher: longTimeoutDispatcher } : {} as any),
+          });
+        } catch (fetchErr: any) {
+          if (attempt < maxAttempts && isSocketError(fetchErr)) {
+            console.warn(`[Inference] Transient fetch error on attempt ${attempt}/${maxAttempts}, retrying in 2s...`);
+            await new Promise(r => setTimeout(r, 2000));
+            continue;
           }
+          throw fetchErr;
         }
-        // Parse any remaining buffer content
-        if (buffer.trim()) {
+
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`Ollama inference failed: ${res.statusText} - ${errText}`);
+        }
+
+        const reader = res.body?.getReader();
+        const decoder = new TextDecoder();
+        let accumulatedContent = '';
+
+        if (reader) {
           try {
-            const parsed = JSON.parse(buffer);
-            const content = parsed.message?.content || '';
-            accumulatedContent += content;
-            if (options.onChunk && content) {
-              options.onChunk(content);
+            let buffer = '';
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n');
+              // Save the last line if it is incomplete
+              buffer = lines.pop() || '';
+              
+              for (const line of lines) {
+                if (!line.trim()) continue;
+                try {
+                  const parsed = JSON.parse(line);
+                  const content = parsed.message?.content || '';
+                  accumulatedContent += content;
+                  if (options.onChunk && content) {
+                    options.onChunk(content);
+                  }
+                } catch (e) {
+                  // Ignore partial JSON errors
+                }
+              }
             }
-          } catch (e) {}
+            // Parse any remaining buffer content
+            if (buffer.trim()) {
+              try {
+                const parsed = JSON.parse(buffer);
+                const content = parsed.message?.content || '';
+                accumulatedContent += content;
+                if (options.onChunk && content) {
+                  options.onChunk(content);
+                }
+              } catch (e) {}
+            }
+          } finally {
+            reader.releaseLock();
+          }
+          result = accumulatedContent;
+        } else {
+          const data = (await res.json()) as any;
+          result = data.message.content;
         }
-      } finally {
-        reader.releaseLock();
+
+        // Successfully received and parsed full response
+        break;
+      } catch (streamErr: any) {
+        if (combinedSignal?.aborted) {
+          throw streamErr;
+        }
+        if (attempt < maxAttempts && isSocketError(streamErr)) {
+          console.warn(`[Inference] Mid-stream socket drop (${streamErr.message}) on attempt ${attempt}/${maxAttempts}. Reconnecting in 3s...`);
+          await new Promise(r => setTimeout(r, 3000));
+          continue;
+        }
+        throw streamErr;
       }
-      result = accumulatedContent;
-    } else {
-      const data = (await res.json()) as any;
-      result = data.message.content;
     }
   } else if (config.provider === 'openai') {
     if (!config.openaiApiKey) {

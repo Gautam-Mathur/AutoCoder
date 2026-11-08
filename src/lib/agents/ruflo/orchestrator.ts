@@ -85,11 +85,24 @@ const INFRA_ERROR_SIGNATURES = [
   'ollama is not running',
   'connect econnrefused',
   'enotfound',
+  'terminated',
+  'other side closed',
+  'und_err_socket',
+  'fetch failed',
+  'socket hung up',
+  'econnreset',
 ] as const;
 
 function isInfrastructureError(err: any): boolean {
   const msg = (err?.message || '').toLowerCase();
-  return INFRA_ERROR_SIGNATURES.some(sig => msg.includes(sig));
+  const code = (err?.code || '').toLowerCase();
+  const causeMsg = (err?.cause?.message || '').toLowerCase();
+  return (
+    INFRA_ERROR_SIGNATURES.some(sig => msg.includes(sig) || causeMsg.includes(sig)) ||
+    code === 'und_err_socket' ||
+    code === 'econnreset' ||
+    code === 'econnrefused'
+  );
 }
 
 async function handleInfrastructurePause(
@@ -99,19 +112,27 @@ async function handleInfrastructurePause(
 ): Promise<void> {
   onEvent({
     type: 'PIPELINE_ERROR',
-    message: `⚠️ INFRASTRUCTURE FAILURE: LLM provider unreachable.\n` +
+    message: `⚠️ INFRASTRUCTURE INTERRUPTION: LLM host connection interrupted.\n` +
              `Error: ${errorMessage}\n` +
-             `Pipeline paused. Please start Ollama and click Resume to retry.`,
+             `Pipeline paused. All progress saved. Click Resume Pipeline to continue.`,
   });
   await prisma.conversation.update({
     where: { id: conversationId },
     data: { status: 'Paused' },
   });
+  await prisma.pipelineRun.updateMany({
+    where: { conversationId },
+    data: {
+      state: 'PAUSED',
+      leaseOwner: null,
+      leaseExpiresAt: null,
+    },
+  });
   await writeHistoryLog(
     conversationId,
     'System',
     'Failed',
-    `Pipeline paused due to infrastructure failure: ${errorMessage}`
+    `Pipeline paused due to infrastructure interruption: ${errorMessage}`
   );
 }
 
@@ -1881,6 +1902,19 @@ export async function runOrchestrator(
 
     for (const stageName of executionStages) {
       if (executionSignal.aborted) throw new Error('Pipeline compilation aborted by user.');
+
+      // Update currentStage in database so state and UI remain 100% in sync
+      await prisma.conversation.update({
+        where: { id: conversationId },
+        data: { currentStage: stageName },
+      }).catch(() => {});
+
+      if (runId) {
+        await prisma.pipelineRun.update({
+          where: { id: runId },
+          data: { currentStage: stageName },
+        }).catch(() => {});
+      }
 
       // Assert lease before stage execution
       await assertPipelineLease(conversationId, leaseOwnerId);

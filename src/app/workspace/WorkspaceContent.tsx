@@ -761,14 +761,59 @@ export default function WorkspaceContent() {
     };
   };
 
+  const [isRetrying, setIsRetrying] = useState(false);
+
   // Listen to resume events from top bar
   useEffect(() => {
-    const handleResume = () => {
+    const handleResume = (e: any) => {
+      setPipelineStatus('Active');
+      if (e?.detail?.nextStage) {
+        setCurrentStage(e.detail.nextStage);
+      }
       handleStartPipeline(true);
     };
-    window.addEventListener('pipeline-resumed', handleResume);
-    return () => window.removeEventListener('pipeline-resumed', handleResume);
+    window.addEventListener('pipeline-resumed', handleResume as EventListener);
+    return () => window.removeEventListener('pipeline-resumed', handleResume as EventListener);
   }, [conversationId, promptText]);
+
+  const handleRetryFailedPipeline = async () => {
+    if (!conversationId) return;
+    setIsRetrying(true);
+    addLog({
+      type: 'SYSTEM',
+      message: `Resuming pipeline compilation from stage ${currentStage}...`,
+    });
+
+    try {
+      const res = await fetch('/api/pipeline/resume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversationId }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setPipelineStatus('Active');
+        if (data.nextStage) {
+          setCurrentStage(data.nextStage);
+        }
+        handleStartPipeline(true);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        addLog({
+          type: 'PIPELINE_ERROR',
+          message: `Failed to resume pipeline: ${err.error || 'Server error'}`,
+        });
+      }
+    } catch (e: any) {
+      addLog({
+        type: 'PIPELINE_ERROR',
+        message: `Failed to resume pipeline: ${e.message}`,
+      });
+    } finally {
+      setIsRetrying(false);
+    }
+  };
 
   // Handle Clarification Submit
   const handleClarificationSubmit = async () => {
@@ -1526,13 +1571,19 @@ export default function WorkspaceContent() {
               placeholder="Send prompt or refine instructions..."
             />
             <button
-              onClick={() => handleStartPipeline(false)}
-              disabled={pipelineStatus === 'Active' || !promptText.trim()}
+              onClick={() => {
+                if (pipelineStatus === 'Failed') {
+                  handleRetryFailedPipeline();
+                } else {
+                  handleStartPipeline(false);
+                }
+              }}
+              disabled={pipelineStatus === 'Active' || (!promptText.trim() && pipelineStatus !== 'Failed')}
               className="bg-electric-indigo text-white px-4 rounded flex flex-col justify-center items-center gap-1 hover:bg-indigo-500 transition-colors shadow-[0_0_8px_rgba(99,102,241,0.4)] disabled:opacity-50"
-              title="Run Pipeline"
+              title={pipelineStatus === 'Failed' ? 'Resume Pipeline' : 'Run Pipeline'}
             >
               <Play className="w-4 h-4 fill-white" />
-              <span className="text-[9px] font-bold">RUN</span>
+              <span className="text-[9px] font-bold">{pipelineStatus === 'Failed' ? 'RESUME' : 'RUN'}</span>
             </button>
           </div>
         </div>
@@ -2128,6 +2179,49 @@ export default function WorkspaceContent() {
                   className="px-3 py-1.5 bg-electric-indigo text-white rounded text-xs font-bold shadow-[0_0_12px_rgba(99,102,241,0.4)] hover:bg-indigo-400 transition-colors flex items-center gap-1.5"
                 >
                   Approve &amp; Generate
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Failed / Interrupted Pipeline Recovery Card */}
+        {(pipelineStatus === 'Failed' || (pipelineStatus === 'Paused' && currentStage !== 'Architect')) && (
+          <div className="absolute inset-x-0 bottom-36 z-50 flex justify-center px-4 pointer-events-none">
+            <div className="glass-panel w-full max-w-lg p-5 rounded-xl border border-red-500/40 bg-slate-950/90 shadow-[0_0_30px_rgba(239,68,68,0.25)] flex flex-col gap-3 pointer-events-auto animate-slide-up">
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-red-500/20 border border-red-500/30 flex items-center justify-center">
+                    <AlertTriangle className="w-4 h-4 text-red-400" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-on-surface text-sm">Pipeline Execution Interrupted</h4>
+                    <p className="text-[11px] text-slate-400">Current stage: <span className="font-mono text-electric-indigo font-bold">{currentStage}</span></p>
+                  </div>
+                </div>
+                <span className="px-2 py-0.5 bg-red-500/20 text-red-400 border border-red-500/30 rounded text-[9px] font-bold font-mono uppercase">Interrupted</span>
+              </div>
+              <p className="text-xs text-slate-300">
+                All previously verified stage specifications and workspace artifacts are safely preserved in the VFS. You can resume pipeline compilation directly from where it stopped.
+              </p>
+              <div className="flex justify-end gap-2 mt-1">
+                <button
+                  onClick={() => router.push('/')}
+                  className="px-3 py-1.5 border border-slate-700 rounded text-xs font-bold text-slate-400 hover:bg-slate-800 transition-colors"
+                >
+                  Exit to Home
+                </button>
+                <button
+                  onClick={handleRetryFailedPipeline}
+                  disabled={isRetrying}
+                  className="px-4 py-1.5 bg-electric-indigo text-white rounded text-xs font-bold shadow-[0_0_12px_rgba(99,102,241,0.4)] hover:bg-indigo-400 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {isRetrying ? (
+                    <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <Play className="w-3.5 h-3.5 fill-white" />
+                  )}
+                  Resume Pipeline
                 </button>
               </div>
             </div>

@@ -127,11 +127,12 @@ export async function GET(request: NextRequest) {
         where: { id: conversationId },
       });
 
+      const isResume = searchParams.get('resume') === 'true';
+
       if (
         conversation &&
         conversation.status !== 'Completed' &&
-        conversation.status !== 'Failed' &&
-        conversation.status !== 'Cancelled'
+        (conversation.status === 'Active' || (conversation.status !== 'Failed' && conversation.status !== 'Cancelled') || isResume)
       ) {
         if (userPrompt && (!conversation.originalPrompt || userPrompt.length > conversation.originalPrompt.length)) {
           await prisma.conversation.update({

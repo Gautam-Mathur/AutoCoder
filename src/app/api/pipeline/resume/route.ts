@@ -101,28 +101,40 @@ export async function POST(request: NextRequest) {
     }
 
     // Determine stage to resume from (explicit stage from body or next stage based on StageExecution acceptance)
-    let nextStage = stage || conversation.currentStage;
-    if (!stage) {
-      const currentIdx = STAGES.indexOf(conversation.currentStage);
-      if (currentIdx >= 0 && currentIdx < STAGES.length - 1) {
-        let isStageAccepted = false;
-        if (activeRunId) {
-          const acceptedExec = await prisma.stageExecution.findFirst({
-            where: {
-              pipelineRunId: activeRunId,
-              stageName: conversation.currentStage,
-              state: 'ACCEPTED',
-            },
-          });
-          isStageAccepted = !!acceptedExec;
+    let nextStage = stage;
+    if (!nextStage) {
+      if (activeRunId) {
+        const acceptedStages = await prisma.stageExecution.findMany({
+          where: {
+            pipelineRunId: activeRunId,
+            state: 'ACCEPTED',
+          },
+          select: { stageName: true },
+        });
+        const acceptedSet = new Set(acceptedStages.map((s) => s.stageName));
+
+        // If approving quality gate after Architect, advance to next stage (System)
+        if (isApproveQualityGate && acceptedSet.has('Architect')) {
+          const archIdx = STAGES.indexOf('Architect');
+          nextStage = STAGES[archIdx + 1] || 'System';
         } else {
-          isStageAccepted = conversation.history.some(
+          // Find the first stage in canonical order that is not yet ACCEPTED
+          const firstUnaccepted = STAGES.find((s) => !acceptedSet.has(s));
+          nextStage = firstUnaccepted || STAGES[STAGES.length - 1];
+        }
+      } else {
+        const currentIdx = STAGES.indexOf(conversation.currentStage);
+        if (currentIdx >= 0 && currentIdx < STAGES.length - 1) {
+          const isStageAccepted = conversation.history.some(
             (h) => h.stage === conversation.currentStage && h.status === 'Completed'
           );
-        }
-
-        if (isStageAccepted || conversation.currentStage === 'Architect' || conversation.currentStage === 'Queen') {
-          nextStage = STAGES[currentIdx + 1];
+          if (isStageAccepted || conversation.currentStage === 'Architect' || conversation.currentStage === 'Queen') {
+            nextStage = STAGES[currentIdx + 1];
+          } else {
+            nextStage = conversation.currentStage;
+          }
+        } else {
+          nextStage = conversation.currentStage || 'Queen';
         }
       }
     }
@@ -142,6 +154,8 @@ export async function POST(request: NextRequest) {
         data: {
           state: 'RUNNING',
           currentStage: nextStage,
+          leaseOwner: null,
+          leaseExpiresAt: null,
         },
       });
     }
