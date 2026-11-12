@@ -31,12 +31,40 @@ if (process.env.NODE_ENV !== 'production' && typeof window === 'undefined') {
   globalForAgent.ollamaAgent = longTimeoutDispatcher;
 }
 
-interface Message {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, any>;
+  rawArguments?: string;
+  parseError?: string;
 }
 
-interface InferenceOptions {
+export interface Message {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  tool_calls?: Array<{
+    id?: string;
+    type?: 'function';
+    function: {
+      name: string;
+      arguments: Record<string, any> | string;
+    };
+  }>;
+  tool_call_id?: string;
+  name?: string;
+}
+
+export interface LLMConfig {
+  provider: string;
+  ollamaHost: string;
+  ollamaModel: string;
+  openaiApiKey: string;
+  openaiModel: string;
+  anthropicApiKey: string;
+  anthropicModel: string;
+}
+
+export interface InferenceOptions {
   model?: string;
   temperature?: number;
   format?: 'json' | 'text';
@@ -44,6 +72,18 @@ interface InferenceOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   onChunk?: (text: string) => void;
+  tools?: any[];
+  fetchImpl?: (input: any, init?: any) => Promise<any>;
+  configOverride?: Partial<LLMConfig>;
+}
+
+export interface InferenceTurnResult {
+  content: string;
+  toolCalls: ToolCall[];
+  provider: string;
+  model: string;
+  durationMs: number;
+  finishReason?: string;
 }
 
 import fs from 'fs';
@@ -147,10 +187,200 @@ export function cleanJsonResponse(text: string): string {
   return cleaned.trim();
 }
 
+function parseToolArguments(raw: unknown): {
+  parsed: Record<string, any>;
+  rawArguments?: string;
+  parseError?: string;
+} {
+  if (raw === undefined || raw === null || raw === '') {
+    return { parsed: {} };
+  }
+  if (typeof raw === 'object' && !Array.isArray(raw)) {
+    return { parsed: raw as Record<string, any> };
+  }
+  if (typeof raw === 'string') {
+    try {
+      const val = JSON.parse(raw);
+      if (val && typeof val === 'object' && !Array.isArray(val)) {
+        return { parsed: val, rawArguments: raw };
+      }
+      return {
+        parsed: {},
+        rawArguments: raw,
+        parseError: 'Tool arguments JSON did not decode to an object.',
+      };
+    } catch (err: any) {
+      return {
+        parsed: {},
+        rawArguments: raw,
+        parseError: `Invalid JSON arguments: ${err?.message || err}`,
+      };
+    }
+  }
+  return {
+    parsed: {},
+    parseError: `Unsupported tool arguments type: ${typeof raw}`,
+  };
+}
+
+function normalizeProviderToolCalls(
+  rawToolCalls: any[],
+  startIdx: number = 0
+): ToolCall[] {
+  const out: ToolCall[] = [];
+  let idx = startIdx;
+  for (const tc of rawToolCalls) {
+    if (!tc) continue;
+    const fn = tc.function || tc;
+    const name = typeof fn?.name === 'string' ? fn.name.trim() : '';
+    if (!name) continue;
+    const { parsed, rawArguments, parseError } = parseToolArguments(
+      fn?.arguments ?? tc.input ?? tc.arguments
+    );
+    out.push({
+      id: typeof tc.id === 'string' && tc.id.trim() ? tc.id : `call_${idx}`,
+      name,
+      arguments: parsed,
+      ...(rawArguments !== undefined ? { rawArguments } : {}),
+      ...(parseError ? { parseError } : {}),
+    });
+    idx++;
+  }
+  return out;
+}
+
+function formatMessagesForOllama(messages: Message[]): any[] {
+  return messages.map((m) => {
+    if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0) {
+      return {
+        role: 'assistant',
+        content: m.content || '',
+        tool_calls: m.tool_calls.map((tc) => ({
+          ...(tc.id ? { id: tc.id } : {}),
+          type: 'function',
+          function: {
+            name: tc.function.name,
+            arguments:
+              typeof tc.function.arguments === 'string'
+                ? parseToolArguments(tc.function.arguments).parsed
+                : tc.function.arguments || {},
+          },
+        })),
+      };
+    }
+    if (m.role === 'tool') {
+      return {
+        role: 'tool',
+        content: m.content || '',
+        ...(m.name ? { tool_name: m.name } : {}),
+      };
+    }
+    return { role: m.role, content: m.content || '' };
+  });
+}
+
+function formatMessagesForOpenAI(messages: Message[]): any[] {
+  return messages.map((m) => {
+    if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0) {
+      return {
+        role: 'assistant',
+        content: m.content || null,
+        tool_calls: m.tool_calls.map((tc, idx) => ({
+          id: tc.id || `call_${idx}`,
+          type: 'function',
+          function: {
+            name: tc.function.name,
+            arguments:
+              typeof tc.function.arguments === 'string'
+                ? tc.function.arguments
+                : JSON.stringify(tc.function.arguments || {}),
+          },
+        })),
+      };
+    }
+    if (m.role === 'tool') {
+      return {
+        role: 'tool',
+        tool_call_id: m.tool_call_id || 'call_0',
+        ...(m.name ? { name: m.name } : {}),
+        content: m.content || '',
+      };
+    }
+    return { role: m.role, content: m.content || '' };
+  });
+}
+
+function formatMessagesForAnthropic(messages: Message[]): any[] {
+  const formatted: any[] = [];
+  const nonSystem = messages.filter((m) => m.role !== 'system');
+
+  for (const m of nonSystem) {
+    if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0) {
+      const blocks: any[] = [];
+      if (m.content && m.content.trim()) {
+        blocks.push({ type: 'text', text: m.content });
+      }
+      m.tool_calls.forEach((tc, idx) => {
+        const inputObj =
+          typeof tc.function.arguments === 'string'
+            ? parseToolArguments(tc.function.arguments).parsed
+            : tc.function.arguments || {};
+        blocks.push({
+          type: 'tool_use',
+          id: tc.id || `toolu_${idx}`,
+          name: tc.function.name,
+          input: inputObj,
+        });
+      });
+      formatted.push({ role: 'assistant', content: blocks });
+    } else if (m.role === 'tool') {
+      const resultBlock = {
+        type: 'tool_result',
+        tool_use_id: m.tool_call_id || 'toolu_0',
+        content: m.content || '',
+      };
+      const prev = formatted[formatted.length - 1];
+      if (prev && prev.role === 'user' && Array.isArray(prev.content)) {
+        prev.content.push(resultBlock);
+      } else {
+        formatted.push({ role: 'user', content: [resultBlock] });
+      }
+    } else {
+      formatted.push({
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        content: m.content || '',
+      });
+    }
+  }
+
+  return formatted;
+}
+
+function convertToolsForAnthropic(tools: any[]): any[] {
+  return tools.map((t) => {
+    if (t?.type === 'function' && t?.function) {
+      return {
+        name: t.function.name,
+        description: t.function.description || '',
+        input_schema: t.function.parameters || { type: 'object', properties: {}, required: [] },
+      };
+    }
+    return t;
+  });
+}
+
 export async function runInference(
   messages: Message[],
   options: InferenceOptions = {}
 ): Promise<string> {
+  const turn = await runInferenceTurn(messages, options);
+  return turn.content;
+}
+
+export async function runInferenceTurn(
+  messages: Message[],
+  options: InferenceOptions = {}
+): Promise<InferenceTurnResult> {
   // Ensure loopback bypasses any system environment proxies
   delete process.env.HTTP_PROXY;
   delete process.env.http_proxy;
@@ -159,10 +389,19 @@ export async function runInference(
   process.env.no_proxy = '*';
   process.env.NO_PROXY = '*';
 
+  const mockWrap = (content: string): InferenceTurnResult => ({
+    content,
+    toolCalls: [],
+    provider: 'mock',
+    model: 'mock',
+    durationMs: 0,
+    finishReason: 'stop',
+  });
+
   if (process.env.MOCK_INFERENCE === 'true') {
     const sysPrompt = messages.find(m => m.role === 'system')?.content || '';
     if (sysPrompt.includes('You are the Queen Agent')) {
-      return JSON.stringify({
+      return mockWrap(JSON.stringify({
         contextType: "canonical",
         mvpId: "MVP-001",
         projectName: "Todo App",
@@ -187,10 +426,10 @@ export async function runInference(
           security: "Audit vulnerabilities",
           refiner: "Refine output"
         }
-      });
+      }));
     }
     if (sysPrompt.includes('You are the Planner Agent')) {
-      return JSON.stringify({
+      return mockWrap(JSON.stringify({
         contextType: "canonical",
         projectName: "Todo App",
         mvpReference: "MVP-001",
@@ -231,10 +470,10 @@ export async function runInference(
           debugger: "Fix index errors",
           security: "Sanitize inputs"
         }
-      });
+      }));
     }
     if (sysPrompt.includes('You are the Architect Agent')) {
-      return JSON.stringify({
+      return mockWrap(JSON.stringify({
         contextType: "canonical",
         projectName: "Todo App",
         mvpReference: "MVP-001",
@@ -275,10 +514,10 @@ export async function runInference(
           codingConvention: "standard",
           importConvention: "absolute"
         }
-      });
+      }));
     }
     if (sysPrompt.includes('You are the System Agent')) {
-      return JSON.stringify({
+      return mockWrap(JSON.stringify({
         contextType: "canonical",
         projectName: "Todo App",
         mvpReference: "MVP-001",
@@ -334,10 +573,10 @@ export async function runInference(
           errorHandling: [],
           securityPolicies: []
         }
-      });
+      }));
     }
     if (sysPrompt.includes('You are the Designer Agent')) {
-      return JSON.stringify({
+      return mockWrap(JSON.stringify({
         contextType: "canonical",
         projectName: "Todo App",
         mvpReference: "MVP-001",
@@ -392,10 +631,10 @@ export async function runInference(
           errorStates: [],
           loadingStates: []
         }
-      });
+      }));
     }
     if (sysPrompt.includes('Blueprinter in a strict')) {
-      return JSON.stringify({
+      return mockWrap(JSON.stringify({
         blueprints: [
           {
             file: "src/pages/TodoPage.tsx",
@@ -410,10 +649,10 @@ export async function runInference(
             acceptanceCriteria: []
           }
         ]
-      });
+      }));
     }
     if (sysPrompt.includes('You are the Coder Agent')) {
-      return JSON.stringify({
+      return mockWrap(JSON.stringify({
         contextType: "canonical",
         projectName: "Todo App",
         mvpReference: "MVP-001",
@@ -435,10 +674,10 @@ export async function runInference(
           warnings: [],
           status: "Success"
         }
-      });
+      }));
     }
     if (sysPrompt.includes('You are the Tester Agent')) {
-      return JSON.stringify({
+      return mockWrap(JSON.stringify({
         contextType: "canonical",
         projectName: "Todo App",
         mvpReference: "MVP-001",
@@ -467,10 +706,10 @@ export async function runInference(
           warnings: [],
           status: "Success"
         }
-      });
+      }));
     }
     if (sysPrompt.includes('You are the Debugger Agent')) {
-      return JSON.stringify({
+      return mockWrap(JSON.stringify({
         contextType: "canonical",
         projectName: "Todo App",
         mvpReference: "MVP-001",
@@ -484,10 +723,10 @@ export async function runInference(
           warnings: [],
           status: "Success"
         }
-      });
+      }));
     }
     if (sysPrompt.includes('You are the Security Agent')) {
-      return JSON.stringify({
+      return mockWrap(JSON.stringify({
         contextType: "canonical",
         projectName: "Todo App",
         mvpReference: "MVP-001",
@@ -503,13 +742,13 @@ export async function runInference(
           warnings: [],
           status: "Success"
         }
-      });
+      }));
     }
     if (sysPrompt.includes('Reviewer agent in a')) {
-      return JSON.stringify({
+      return mockWrap(JSON.stringify({
         qualityScore: 95,
         annotations: []
-      });
+      }));
     }
     throw new Error(`UAT Mock Inference: unknown agent prompt matching: ${sysPrompt.slice(0, 100)}`);
   }
@@ -524,9 +763,23 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
   return controller.signal;
 }
 
-  const config = await getLLMConfig();
+  const baseConfig = options.configOverride?.provider && options.fetchImpl
+    ? {
+        provider: options.configOverride.provider,
+        ollamaHost: options.configOverride.ollamaHost || 'http://127.0.0.1:11434',
+        ollamaModel: options.configOverride.ollamaModel || 'llama3:8b-instruct',
+        openaiApiKey: options.configOverride.openaiApiKey || '',
+        openaiModel: options.configOverride.openaiModel || 'gpt-4o-mini',
+        anthropicApiKey: options.configOverride.anthropicApiKey || '',
+        anthropicModel: options.configOverride.anthropicModel || 'claude-3-5-sonnet-20241022',
+      }
+    : { ...(await getLLMConfig()), ...(options.configOverride || {}) };
+
+  const config = baseConfig;
   const temp = options.temperature ?? 0.2;
-  const isJson = options.format === 'json';
+  const hasTools = Array.isArray(options.tools) && options.tools.length > 0;
+  // Never force strict JSON output mode alongside tool definitions (Ollama conflicts format:'json' + tools)
+  const isJson = options.format === 'json' && !hasTools;
 
   // Combine client abort signal with timeout signal (400 hours / 1,440,000s)
   const startTime = Date.now();
@@ -543,22 +796,36 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
   const combinedSignal: AbortSignal = options.signal ? combineAbortSignals(options.signal, timeoutSignal) : timeoutSignal;
 
   let result = '';
+  let toolCalls: ToolCall[] = [];
+  let finishReason: string | undefined;
+  const ollamaFetchFn = options.fetchImpl || undiciFetch;
+  const remoteFetchFn = options.fetchImpl || fetch;
 
   if (config.provider === 'ollama') {
     const host = config.ollamaHost;
-    const isAlive = await checkOllamaConnection(host);
-    if (!isAlive) {
-      throw new Error(`Ollama is not running at ${host}. Please start Ollama before executing.`);
+    if (!options.fetchImpl) {
+      const isAlive = await checkOllamaConnection(host);
+      if (!isAlive) {
+        throw new Error(`Ollama is not running at ${host}. Please start Ollama before executing.`);
+      }
     }
 
+    const formattedMessages = formatMessagesForOllama(messages);
     const payload: any = {
       model: config.ollamaModel,
-      messages: messages,
+      messages: formattedMessages,
       keep_alive: -1, // Force Ollama to keep model loaded in VRAM permanently during pipeline run!
       options: {
         temperature: temp,
         num_ctx: (() => {
-          const promptChars = messages.reduce((sum, m) => sum + (m.content || '').length, 0);
+          const promptChars =
+            messages.reduce(
+              (sum, m) =>
+                sum +
+                (m.content || '').length +
+                (m.tool_calls ? JSON.stringify(m.tool_calls).length : 0),
+              0
+            ) + (hasTools ? JSON.stringify(options.tools).length : 0);
           const needed = Math.ceil(promptChars / 4) + (options.maxTokens || 4096) + 512;
           return Math.min(131072, Math.max(32768, needed));
         })(),
@@ -570,14 +837,17 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
       payload.options.num_predict = options.maxTokens;
     }
 
-    if (isJson) {
+    if (hasTools) {
+      payload.tools = options.tools;
+    } else if (isJson) {
       payload.format = 'json';
     }
 
     const isSocketError = (e: any) => {
-      const msg = (e?.message || '').toLowerCase();
-      const code = (e?.code || '').toLowerCase();
-      const causeMsg = (e?.cause?.message || '').toLowerCase();
+      if (combinedSignal?.aborted) return false;
+      const msg = String(e?.message || '').toLowerCase();
+      const code = String(e?.code ?? '').toLowerCase();
+      const causeMsg = String(e?.cause?.message || '').toLowerCase();
       return (
         msg.includes('terminated') ||
         msg.includes('other side closed') ||
@@ -601,13 +871,13 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
       try {
         let res: any;
         try {
-          res = await undiciFetch(`${host}/api/chat`, {
+          res = await ollamaFetchFn(`${host}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             cache: 'no-store',
             body: JSON.stringify(payload),
             signal: combinedSignal,
-            ...(longTimeoutDispatcher ? { dispatcher: longTimeoutDispatcher } : {} as any),
+            ...(!options.fetchImpl && longTimeoutDispatcher ? { dispatcher: longTimeoutDispatcher } : {} as any),
           });
         } catch (fetchErr: any) {
           if (attempt < maxAttempts && isSocketError(fetchErr)) {
@@ -626,6 +896,25 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
         const reader = res.body?.getReader();
         const decoder = new TextDecoder();
         let accumulatedContent = '';
+        const accumulatedToolCalls: ToolCall[] = [];
+
+        const processOllamaLine = (parsed: any) => {
+          const content = parsed.message?.content || '';
+          if (content) {
+            accumulatedContent += content;
+            if (options.onChunk) {
+              options.onChunk(content);
+            }
+          }
+          if (Array.isArray(parsed.message?.tool_calls) && parsed.message.tool_calls.length > 0) {
+            accumulatedToolCalls.push(
+              ...normalizeProviderToolCalls(parsed.message.tool_calls, accumulatedToolCalls.length)
+            );
+          }
+          if (parsed.done_reason) {
+            finishReason = parsed.done_reason;
+          }
+        };
 
         if (reader) {
           try {
@@ -641,12 +930,7 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
               for (const line of lines) {
                 if (!line.trim()) continue;
                 try {
-                  const parsed = JSON.parse(line);
-                  const content = parsed.message?.content || '';
-                  accumulatedContent += content;
-                  if (options.onChunk && content) {
-                    options.onChunk(content);
-                  }
+                  processOllamaLine(JSON.parse(line));
                 } catch (e) {
                   // Ignore partial JSON errors
                 }
@@ -655,21 +939,21 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
             // Parse any remaining buffer content
             if (buffer.trim()) {
               try {
-                const parsed = JSON.parse(buffer);
-                const content = parsed.message?.content || '';
-                accumulatedContent += content;
-                if (options.onChunk && content) {
-                  options.onChunk(content);
-                }
+                processOllamaLine(JSON.parse(buffer));
               } catch (e) {}
             }
           } finally {
             reader.releaseLock();
           }
           result = accumulatedContent;
+          toolCalls = accumulatedToolCalls;
         } else {
           const data = (await res.json()) as any;
-          result = data.message.content;
+          result = data.message?.content || '';
+          if (Array.isArray(data.message?.tool_calls)) {
+            toolCalls = normalizeProviderToolCalls(data.message.tool_calls, 0);
+          }
+          finishReason = data.done_reason;
         }
 
         // Successfully received and parsed full response
@@ -693,7 +977,7 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
 
     const payload: any = {
       model: config.openaiModel,
-      messages: messages,
+      messages: formatMessagesForOpenAI(messages),
       temperature: temp,
     };
 
@@ -701,11 +985,13 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
       payload.max_tokens = options.maxTokens;
     }
 
-    if (isJson) {
+    if (hasTools) {
+      payload.tools = options.tools;
+    } else if (isJson) {
       payload.response_format = { type: 'json_object' };
     }
 
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    const res = await remoteFetchFn('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -721,7 +1007,16 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
     }
 
     const data = await res.json();
-    result = data.choices[0].message.content;
+    const choice = data.choices?.[0];
+    const msg = choice?.message || {};
+    result = typeof msg.content === 'string' ? msg.content : '';
+    if (options.onChunk && result) {
+      options.onChunk(result);
+    }
+    if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+      toolCalls = normalizeProviderToolCalls(msg.tool_calls, 0);
+    }
+    finishReason = choice?.finish_reason;
   } else if (config.provider === 'anthropic') {
     if (!config.anthropicApiKey) {
       throw new Error('Anthropic API Key is not configured.');
@@ -729,14 +1024,11 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
 
     // Split system prompt from messages for Anthropic
     const systemMessage = messages.find((m) => m.role === 'system');
-    const userMessages = messages.filter((m) => m.role !== 'system');
+    const anthropicMessages = formatMessagesForAnthropic(messages);
 
     const payload: any = {
       model: config.anthropicModel,
-      messages: userMessages.map((m) => ({
-        role: m.role === 'assistant' ? 'assistant' : 'user',
-        content: m.content,
-      })),
+      messages: anthropicMessages,
       max_tokens: options.maxTokens ?? 4096,
       temperature: temp,
     };
@@ -745,7 +1037,11 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
       payload.system = systemMessage.content;
     }
 
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    if (hasTools) {
+      payload.tools = convertToolsForAnthropic(options.tools!);
+    }
+
+    const res = await remoteFetchFn('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -762,7 +1058,30 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
     }
 
     const data = await res.json();
-    result = data.content[0].text;
+    const blocks = Array.isArray(data.content) ? data.content : [];
+    const textParts: string[] = [];
+    const toolBlocks: any[] = [];
+    for (const block of blocks) {
+      if (block?.type === 'text' && typeof block.text === 'string') {
+        textParts.push(block.text);
+      } else if (block?.type === 'tool_use') {
+        toolBlocks.push({
+          id: block.id,
+          function: {
+            name: block.name,
+            arguments: block.input || {},
+          },
+        });
+      }
+    }
+    result = textParts.join('');
+    if (options.onChunk && result) {
+      options.onChunk(result);
+    }
+    if (toolBlocks.length > 0) {
+      toolCalls = normalizeProviderToolCalls(toolBlocks, 0);
+    }
+    finishReason = data.stop_reason;
   } else {
     throw new Error(`Unsupported LLM provider: ${config.provider}`);
   }
@@ -775,10 +1094,18 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
     resolvedModel,
     durationMs,
     outputLength: result.length,
+    toolCallCount: toolCalls.length,
     timestamp: new Date().toISOString(),
   }));
 
-  return result;
+  return {
+    content: result,
+    toolCalls,
+    provider: config.provider,
+    model: resolvedModel,
+    durationMs,
+    finishReason,
+  };
 }
 
 let ollamaHeartbeatTimer: NodeJS.Timeout | null = null;
@@ -798,6 +1125,9 @@ export function startOllamaKeepAlive(host: string = 'http://127.0.0.1:11434') {
       // Ignore transient ping errors
     }
   }, 10000);
+  if (typeof (ollamaHeartbeatTimer as any).unref === 'function') {
+    (ollamaHeartbeatTimer as any).unref();
+  }
 }
 
 export function stopOllamaKeepAlive() {

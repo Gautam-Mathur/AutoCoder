@@ -21,6 +21,8 @@ import { parseSecurityOutput } from './contracts/schemas/security';
 import { parseReviewerOutput } from './contracts/schemas/reviewer';
 import { parseDebuggerOutput } from './contracts/schemas/debugger';
 import { WorkspaceManifest } from './contracts/schemas/coder';
+import { validateSecurityGate } from './security-gate';
+import * as parse5 from 'parse5';
 
 export { extractRequiredSection };
 
@@ -394,6 +396,38 @@ function validateDebugger(content: string, ctx?: StageAcceptanceContext): Accept
   return { accepted: extraErrors.length === 0, errors: extraErrors, warnings: [] };
 }
 
+function extractExternalResourceUrls(workspaceFiles: Record<string, string>): string[] {
+  const urls: string[] = [];
+  const isExternal = (u: string) =>
+    /^(?:https?:)?\/\//i.test(u) && !/^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?(?:\/|$)/i.test(u);
+
+  for (const [filePath, fileContent] of Object.entries(workspaceFiles)) {
+    if (/\.(html|htm)$/i.test(filePath)) {
+      try {
+        const ast = parse5.parse(fileContent);
+        const walk = (node: any) => {
+          if (node.tagName && Array.isArray(node.attrs)) {
+            const tag = node.tagName.toLowerCase();
+            if (tag === 'script' || tag === 'link') {
+              const attrName = tag === 'script' ? 'src' : 'href';
+              const attr = node.attrs.find((a: any) => a.name?.toLowerCase() === attrName);
+              const val = attr?.value?.trim() || '';
+              if (val && isExternal(val)) {
+                urls.push(val);
+              }
+            }
+          }
+          if (Array.isArray(node.childNodes)) {
+            for (const child of node.childNodes) walk(child);
+          }
+        };
+        walk(ast);
+      } catch {}
+    }
+  }
+  return [...new Set(urls)];
+}
+
 function validateSecurity(content: string, ctx?: StageAcceptanceContext): AcceptanceResult {
   const { output, errors } = parseSecurityOutput(content);
   if (!output || errors.length > 0) {
@@ -406,6 +440,75 @@ function validateSecurity(content: string, ctx?: StageAcceptanceContext): Accept
     extraErrors.push(
       `Security Contract Error: Stale workspace hash in security report. Expected "${ctx.evidence.currentWorkspaceHash}", got "${output.workspaceHash}".`
     );
+  }
+
+  // Deterministic evidence cross-check whenever workspace source files are supplied
+  if (ctx?.evidence?.workspaceFiles) {
+    const rawFiles = ctx.evidence.workspaceFiles;
+    const vfsMap: Record<string, string> = {};
+    const entries = rawFiles instanceof Map ? Array.from(rawFiles.entries()) : Object.entries(rawFiles);
+    for (const [rawPath, fileContent] of entries) {
+      const cleanPath = normalizeProjectPath(rawPath);
+      if (!isControlPlaneArtifact(cleanPath)) {
+        vfsMap[cleanPath] = fileContent || '';
+      }
+    }
+
+    const gateRes = validateSecurityGate(vfsMap);
+    if (gateRes.blocking.length > 0) {
+      if (output.status === 'SECURE' || output.status === 'SECURE_WITH_WARNINGS') {
+        extraErrors.push(
+          `Security Evidence Error: Report claims "${output.status}", but deterministic workspace scan detected ${gateRes.blocking.length} blocking issue(s): ${gateRes.blocking
+            .slice(0, 3)
+            .map((b) => `${b.ruleId} in ${b.file}:${b.line}`)
+            .join('; ')}.`
+        );
+      }
+      if (output.securityScore >= 80) {
+        extraErrors.push(
+          `Security Evidence Error: Security score (${output.securityScore}) must be below 80 when deterministic blocking security findings exist.`
+        );
+      }
+
+      const hasDomFinding = gateRes.blocking.some((b) => b.ruleId === 'UNGUARDED_DOM_DEREFERENCE');
+      if (
+        hasDomFinding &&
+        /\b(?:all\s+dom\s+(?:elements?|queries?|references?)\s+(?:are|were)\s+(?:properly\s+)?(?:null[- ]?checked|guarded)|no\s+unguarded\s+dom\s+dereferences?)\b/i.test(
+          content
+        )
+      ) {
+        extraErrors.push(
+          'Security Evidence Error: Report falsely claims all DOM dereferences are guarded despite deterministic UNGUARDED_DOM_DEREFERENCE finding(s).'
+        );
+      }
+    }
+
+    const externalUrls = extractExternalResourceUrls(vfsMap);
+    if (
+      externalUrls.length > 0 &&
+      /\b(?:no|zero|without)\s+(?:external|third[- ]party)\s+(?:dependencies|scripts?|resources?|libraries|cdns?)\b/i.test(
+        content
+      )
+    ) {
+      extraErrors.push(
+        `Security Evidence Error: Report claims no external dependencies/resources, but workspace HTML references: ${externalUrls
+          .slice(0, 3)
+          .join(', ')}.`
+      );
+    }
+
+    if (Object.keys(vfsMap).length > 0 && output.vulnerabilities) {
+      const vfsLowerSet = new Set(Object.keys(vfsMap).map((k) => k.toLowerCase()));
+      const citedFiles = output.vulnerabilities.matchAll(/^\s*[-*]\s*File\s*:\s*`?([^\s`\n]+)`?/gim);
+      for (const match of citedFiles) {
+        const cited = normalizeProjectPath(match[1]);
+        if (cited && cited !== 'N/A' && cited.includes('.') && !vfsLowerSet.has(cited.toLowerCase())) {
+          extraErrors.push(
+            `Security Evidence Error: Vulnerabilities Found cites non-existent workspace file "${cited}".`
+          );
+        }
+      }
+    }
   }
 
   return { accepted: extraErrors.length === 0, errors: extraErrors, warnings: [] };

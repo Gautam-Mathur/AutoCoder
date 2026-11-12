@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import ts from 'typescript';
+import * as parse5 from 'parse5';
 
 export interface SecurityFinding {
   file: string;
@@ -658,33 +659,105 @@ export function isNodeGuardedAgainstNull(
   return false;
 }
 
-/**
- * Scans JavaScript and TypeScript source files for unguarded DOM property dereferences.
- */
-export function scanUnguardedDomDereferences(
-  files: Record<string, string>
-): { hasViolations: boolean; violations: UnguardedDomAccess[] } {
-  const violations: UnguardedDomAccess[] = [];
+function collectDomDerivedIdentifiers(sourceFile: ts.SourceFile): Set<string> {
+  const derived = new Set<string>();
+  const domInitPattern = /\b(?:getElementById|querySelector|querySelectorAll|getElementsByClassName|getElementsByTagName|useRef)\b/;
 
-  for (const [filePath, content] of Object.entries(files)) {
-    if (!/\.(js|ts)$/.test(filePath)) continue;
+  const visit = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      const initText = node.initializer.getText(sourceFile);
+      if (domInitPattern.test(initText)) {
+        derived.add(node.name.text);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return derived;
+}
 
-    const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.ES2022, true);
+function extractInlineHtmlScriptBlocks(htmlContent: string): Array<{ code: string; startLine: number }> {
+  const blocks: Array<{ code: string; startLine: number }> = [];
+  const docAst = parse5.parse(htmlContent, { sourceCodeLocationInfo: true });
 
-    function visit(node: ts.Node) {
-      if (ts.isPropertyAccessExpression(node)) {
-        const prop = node.name.text;
-        if (['style', 'innerHTML', 'textContent', 'value'].includes(prop)) {
-          const targetObj = node.expression.getText(sourceFile);
+  const walk = (node: any) => {
+    if (node.tagName && node.tagName.toLowerCase() === 'script') {
+      const attrs = Array.isArray(node.attrs) ? node.attrs : [];
+      const hasSrc = attrs.some((a: any) => a.name?.toLowerCase() === 'src');
+      const typeAttr = attrs.find((a: any) => a.name?.toLowerCase() === 'type')?.value?.toLowerCase()?.trim();
+      const isExecutableJs =
+        !typeAttr ||
+        typeAttr === 'text/javascript' ||
+        typeAttr === 'application/javascript' ||
+        typeAttr === 'module';
 
-          if (!['this', 'event', 'e', 'window', 'document'].includes(targetObj)) {
+      if (!hasSrc && isExecutableJs && Array.isArray(node.childNodes) && node.childNodes.length > 0) {
+        const textNode = node.childNodes[0];
+        const code = node.childNodes.map((c: any) => c.value || '').join('');
+        const startLine =
+          textNode?.sourceCodeLocation?.startLine ||
+          node.sourceCodeLocation?.startTag?.endLine ||
+          1;
+        if (code.trim()) {
+          blocks.push({ code, startLine });
+        }
+      }
+    }
+    if (Array.isArray(node.childNodes)) {
+      for (const child of node.childNodes) {
+        walk(child);
+      }
+    }
+  };
+
+  walk(docAst);
+  return blocks;
+}
+
+function scanScriptSourceForUnguardedDom(
+  filePath: string,
+  content: string,
+  scriptKind: ts.ScriptKind,
+  isJsxLike: boolean,
+  lineOffsetZeroBased: number,
+  violations: UnguardedDomAccess[]
+): void {
+  const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.ES2022, true, scriptKind);
+  const domDerived = isJsxLike ? collectDomDerivedIdentifiers(sourceFile) : null;
+  const domCallPattern = /\b(?:getElementById|querySelector|getElementsBy)\b/;
+
+  function visit(node: ts.Node) {
+    if (ts.isPropertyAccessExpression(node)) {
+      const prop = node.name.text;
+      if (['style', 'innerHTML', 'textContent', 'value'].includes(prop)) {
+        const targetObj = node.expression.getText(sourceFile);
+        const isSafeBuiltIn =
+          ['this', 'event', 'e', 'window', 'document', 'props'].includes(targetObj) ||
+          /^(?:e|evt|event)\.(?:target|currentTarget)\b/.test(targetObj);
+
+        if (!isSafeBuiltIn) {
+          let shouldInspect = true;
+          if (isJsxLike && prop === 'value') {
+            const rootIdent = targetObj.split('.')[0];
+            shouldInspect =
+              targetObj.endsWith('.current') ||
+              domCallPattern.test(targetObj) ||
+              Boolean(domDerived?.has(rootIdent));
+          } else if (isJsxLike && prop === 'style') {
+            const rootIdent = targetObj.split('.')[0];
+            if (['props', 'theme', 'styles'].includes(rootIdent)) {
+              shouldInspect = false;
+            }
+          }
+
+          if (shouldInspect) {
             const isGuarded = isNodeGuardedAgainstNull(node, targetObj, sourceFile);
 
             if (!isGuarded) {
               const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
               violations.push({
                 file: filePath,
-                line: line + 1,
+                line: lineOffsetZeroBased + line + 1,
                 expression: node.getText(sourceFile),
                 targetObject: targetObj,
                 reason: `Unguarded dereference of '${prop}' on '${targetObj}' without positive null check or instanceof guard.`,
@@ -693,10 +766,58 @@ export function scanUnguardedDomDereferences(
           }
         }
       }
-      ts.forEachChild(node, visit);
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+}
+
+/**
+ * Scans JavaScript, TypeScript, JSX/TSX, and inline HTML <script> source blocks
+ * for unguarded DOM property dereferences.
+ */
+export function scanUnguardedDomDereferences(
+  files: Record<string, string>
+): { hasViolations: boolean; violations: UnguardedDomAccess[] } {
+  const violations: UnguardedDomAccess[] = [];
+
+  for (const [filePath, content] of Object.entries(files)) {
+    if (/\.(html|htm)$/i.test(filePath)) {
+      const blocks = extractInlineHtmlScriptBlocks(content);
+      for (const block of blocks) {
+        scanScriptSourceForUnguardedDom(
+          filePath,
+          block.code,
+          ts.ScriptKind.JS,
+          false,
+          block.startLine - 1,
+          violations
+        );
+      }
+      continue;
     }
 
-    visit(sourceFile);
+    if (!/\.(js|jsx|ts|tsx)$/i.test(filePath)) continue;
+
+    const isTsx = filePath.toLowerCase().endsWith('.tsx');
+    const isJsx = filePath.toLowerCase().endsWith('.jsx');
+    const scriptKind = isTsx
+      ? ts.ScriptKind.TSX
+      : isJsx
+      ? ts.ScriptKind.JSX
+      : filePath.toLowerCase().endsWith('.ts')
+      ? ts.ScriptKind.TS
+      : ts.ScriptKind.JS;
+
+    scanScriptSourceForUnguardedDom(
+      filePath,
+      content,
+      scriptKind,
+      isTsx || isJsx,
+      0,
+      violations
+    );
   }
 
   return {

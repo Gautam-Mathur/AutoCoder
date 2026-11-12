@@ -21,6 +21,16 @@ export interface FileMutationAuth {
   isSetupOperation?: boolean;
   allowControlPlane?: boolean;
   authorizedFileSet?: AuthorizedFileSet;
+  allowedMutationPaths?: string[];
+}
+
+export function assertValidConversationId(conversationId: string): void {
+  if (
+    typeof conversationId !== 'string' ||
+    !/^[A-Za-z0-9_-]{8,128}$/.test(conversationId)
+  ) {
+    throw new Error('Security Exception: Invalid conversationId.');
+  }
 }
 
 /**
@@ -43,6 +53,19 @@ export async function assertAuthorizedFileMutation(
   // 1. Path sanitization and directory traversal check
   const safePath = sanitizePath(filePath);
   const normPath = normalizeWorkspacePath(safePath);
+
+  if (auth?.allowedMutationPaths) {
+    const scopedPaths = new Set(
+      auth.allowedMutationPaths.map((p) =>
+        normalizeWorkspacePath(sanitizePath(p))
+      )
+    );
+    if (!scopedPaths.has(normPath)) {
+      throw new Error(
+        `Authorization Exception: "${normPath}" is outside this invocation's allowedMutationPaths scope.`
+      );
+    }
+  }
 
   // 2. Control plane artifact guard
   if (isControlPlaneArtifact(normPath)) {
@@ -227,6 +250,7 @@ export async function readVirtualFile(
   conversationId: string,
   filePath: string
 ): Promise<string | null> {
+  assertValidConversationId(conversationId);
   const safePath = sanitizePath(filePath);
   const record = await prisma.virtualFile.findUnique({
     where: {
@@ -249,6 +273,7 @@ export async function writeVirtualFile(
   content: string,
   auth?: FileMutationAuth
 ): Promise<void> {
+  assertValidConversationId(conversationId);
   const safePath = sanitizePath(filePath);
   await assertAuthorizedFileMutation(conversationId, safePath, 'write', auth);
 
@@ -287,6 +312,7 @@ export async function writeVirtualFile(
  * Returns a list of all file paths in the virtual workspace.
  */
 export async function listVirtualFiles(conversationId: string): Promise<string[]> {
+  assertValidConversationId(conversationId);
   const records = await prisma.virtualFile.findMany({
     where: { conversationId },
     select: { filePath: true },
@@ -306,27 +332,49 @@ export async function applyDiff(
   startLine: number,
   endLine: number,
   newContent: string,
-  auth?: FileMutationAuth
+  auth?: FileMutationAuth,
+  expectedContentHash?: string
 ): Promise<void> {
+  assertValidConversationId(conversationId);
+  if (!Number.isSafeInteger(startLine) || startLine < 1) {
+    throw new Error('applyDiff failed: startLine must be a positive 1-based integer.');
+  }
+  if (!Number.isSafeInteger(endLine) || endLine < 1) {
+    throw new Error('applyDiff failed: endLine must be a positive 1-based integer.');
+  }
+  if (startLine > endLine) {
+    throw new Error('applyDiff failed: startLine cannot be greater than endLine.');
+  }
+  if (typeof newContent !== 'string') {
+    throw new Error('applyDiff failed: newContent must be a string.');
+  }
   const safePath = sanitizePath(filePath);
   await assertAuthorizedFileMutation(conversationId, safePath, 'diff', auth);
   const release = await acquireLock(conversationId, safePath);
 
   try {
-    const existing = await readVirtualFile(conversationId, safePath);
-    if (existing === null) {
+    const record = await prisma.virtualFile.findUnique({
+      where: { conversationId_filePath: { conversationId, filePath: safePath } },
+    });
+    if (!record) {
       throw new Error(
         `applyDiff failed: File "${safePath}" does not exist in the virtual workspace.`
       );
     }
+    const existing = record.content;
+    const actualHash = createContentHash(existing);
+    if (expectedContentHash !== undefined && actualHash !== expectedContentHash) {
+      throw new Error(`applyDiff conflict: "${safePath}" changed after it was read. Read it again.`);
+    }
 
     const lines = existing.split('\n');
-    const startLineNum = Math.max(1, startLine);
-    const endLineNum = Math.max(startLineNum, endLine);
+    const startLineNum = startLine;
+    const endLineNum = endLine;
 
-    if (startLineNum > lines.length + 1) {
+    const isAppend = startLineNum === lines.length + 1 && endLineNum === startLineNum;
+    if (startLineNum > lines.length + 1 || (!isAppend && endLineNum > lines.length)) {
       throw new Error(
-        `applyDiff failed: startLine ${startLineNum} exceeds total lines (${lines.length}) in "${safePath}".`
+        `applyDiff failed: range ${startLineNum}-${endLineNum} is outside the ${lines.length}-line file "${safePath}".`
       );
     }
 
@@ -374,26 +422,37 @@ export async function applyDiff(
  * Used before launching a preview server or exporting a zip download archive.
  */
 export async function flushVfsToDisk(conversationId: string): Promise<number> {
+  assertValidConversationId(conversationId);
   const records = await prisma.virtualFile.findMany({
     where: { conversationId },
   });
 
   if (records.length === 0) return 0;
 
-  const projectDir = path.join(process.cwd(), 'projects', conversationId);
+  const projectsRoot = path.resolve(process.cwd(), 'projects');
+  const projectDir = path.resolve(projectsRoot, conversationId);
+  if (fs.existsSync(projectDir)) {
+    const realRoot = fs.realpathSync(projectsRoot);
+    const realProject = fs.realpathSync(projectDir);
+    if (realProject !== realRoot && !realProject.startsWith(realRoot + path.sep)) {
+      throw new Error('Security Exception: Project directory resolves outside workspace root.');
+    }
+  }
 
   for (const record of records) {
+    let safePath: string;
     try {
-      const safePath = sanitizePath(record.filePath);
-      const fullPath = path.join(projectDir, safePath);
-      let normalizedContent = record.content;
-      if (safePath.endsWith('.html')) {
-        normalizedContent = normalizedContent.replace(/UTF-[\u4e00-\u9fa5]8/g, 'UTF-8');
-      }
-      safeWriteFileSync(fullPath, normalizedContent);
+      safePath = sanitizePath(record.filePath);
     } catch {
-      // Skip invalid or directory paths cleanly
+      // Skip invalid legacy paths cleanly
+      continue;
     }
+    const fullPath = path.join(projectDir, safePath);
+    let normalizedContent = record.content;
+    if (safePath.endsWith('.html')) {
+      normalizedContent = normalizedContent.replace(/UTF-[\u4e00-\u9fa5]8/g, 'UTF-8');
+    }
+    safeWriteFileSync(fullPath, normalizedContent);
   }
 
   return records.length;
@@ -527,6 +586,7 @@ export async function deleteVirtualFile(
   filePath: string,
   auth?: FileMutationAuth
 ): Promise<boolean> {
+  assertValidConversationId(conversationId);
   const safePath = sanitizePath(filePath);
   await assertAuthorizedFileMutation(conversationId, safePath, 'delete', auth);
 
@@ -607,8 +667,9 @@ export async function applyAuthorizedDiff(params: {
   endLine: number;
   newContent: string;
   isSetupOperation?: boolean;
+  expectedContentHash?: string;
 }): Promise<void> {
-  const { conversationId, pipelineRunId, stageExecutionId, filePath, startLine, endLine, newContent, isSetupOperation } = params;
+  const { conversationId, pipelineRunId, stageExecutionId, filePath, startLine, endLine, newContent, isSetupOperation, expectedContentHash } = params;
   let effectiveSetup = isSetupOperation;
   if (effectiveSetup === undefined) {
     try {
@@ -623,7 +684,7 @@ export async function applyAuthorizedDiff(params: {
     pipelineRunId,
     stageExecutionId,
     isSetupOperation: effectiveSetup,
-  });
+  }, expectedContentHash);
 }
 
 export async function deleteAuthorizedProjectFile(params: {

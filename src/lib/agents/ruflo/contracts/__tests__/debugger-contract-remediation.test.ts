@@ -138,11 +138,11 @@ project-root/
   });
 
   it('enforces authorization boundaries against control-plane modifications (C-03 / Sec. 8)', async () => {
-    // 1. Attempt to overwrite a control plane artifact via write_file tool
+    // 1. Attempt to overwrite a control plane artifact via write_file tool (rejected by stage/tool gate or VFS)
     const cpWriteResult = await executeTool(
       'write_file',
       { file_path: 'debug_report.md', content: 'fake report' },
-      { conversationId: testConvoId, pipelineRunId: testRunId, stageExecutionId: testStageExecId }
+      { conversationId: testConvoId, pipelineRunId: testRunId, stageExecutionId: testStageExecId, stageName: 'Debugger' }
     );
     assert.strictEqual(cpWriteResult.error, true);
     assert.ok(cpWriteResult.message.includes('Authorization Exception'));
@@ -150,8 +150,14 @@ project-root/
     // 2. Attempt to patch a control plane artifact via apply_diff tool
     const cpDiffResult = await executeTool(
       'apply_diff',
-      { file_path: 'plan.md', start_line: 1, end_line: 1, new_content: 'hijacked' },
-      { conversationId: testConvoId, pipelineRunId: testRunId, stageExecutionId: testStageExecId }
+      {
+        file_path: 'plan.md',
+        start_line: 1,
+        end_line: 1,
+        new_content: 'hijacked',
+        expected_content_hash: '0'.repeat(64),
+      },
+      { conversationId: testConvoId, pipelineRunId: testRunId, stageExecutionId: testStageExecId, stageName: 'Debugger' }
     );
     assert.strictEqual(cpDiffResult.error, true);
     assert.ok(cpDiffResult.message.includes('Authorization Exception'));
@@ -165,9 +171,20 @@ project-root/
       stageExecutionId: testStageExecId,
     });
 
-    // Initial check: verify code has bug
-    const initialContent = await readVirtualFile(testConvoId, targetFile);
-    assert.strictEqual(initialContent, brokenCode);
+    // Initial check: verify code has bug via read_file to obtain contentHash
+    const readRes = await executeTool(
+      'read_file',
+      { file_path: targetFile },
+      {
+        conversationId: testConvoId,
+        pipelineRunId: testRunId,
+        stageExecutionId: testStageExecId,
+        stageName: 'Debugger',
+      }
+    );
+    assert.strictEqual(readRes.found, true);
+    assert.strictEqual(readRes.content, brokenCode);
+    assert.ok(typeof readRes.contentHash === 'string' && readRes.contentHash.length === 64);
 
     // Debugger applies targeted surgical diff using authorized apply_diff tool
     const diffResult = await executeTool(
@@ -177,11 +194,13 @@ project-root/
         start_line: 2,
         end_line: 2,
         new_content: '  return a + b;',
+        expected_content_hash: readRes.contentHash,
       },
       {
         conversationId: testConvoId,
         pipelineRunId: testRunId,
         stageExecutionId: testStageExecId,
+        stageName: 'Debugger',
       }
     );
     assert.strictEqual(diffResult.success, true);

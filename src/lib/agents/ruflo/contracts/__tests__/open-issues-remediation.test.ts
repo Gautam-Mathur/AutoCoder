@@ -14,9 +14,9 @@ import { evaluateFinalPipelineGate } from '../../final-gate';
 import { executeContractStage } from '../../contract-executor';
 import { verifyAndRepairWorkspace } from '../../verification-loop';
 import {
-  assertAuthorizedToolMutation,
   executeTool,
   isValidNpmPackageSpec,
+  TOOL_REGISTRY,
 } from '../../toolbox';
 import {
   buildWorkspaceEvidenceBundle,
@@ -43,6 +43,7 @@ import { DEBUGGER_SCHEMA } from '../schemas/debugger';
 import { REVIEWER_SCHEMA } from '../schemas/reviewer';
 import { SECURITY_SCHEMA } from '../schemas/security';
 import { writeVirtualFile, generateWorkspaceManifest } from '../../vfs';
+import { abortPipelineExecution } from '../../orchestrator';
 
 describe('Open Issues & Contract Convergence Remediation Suite (F-01–F-14, C-10–C-22)', () => {
   const testPrefix = `open-remediation-${Date.now()}`;
@@ -167,6 +168,9 @@ project-root/
   });
 
   after(async () => {
+    await abortPipelineExecution(convOwnerA).catch(() => {});
+    await abortPipelineExecution(convOwnerB).catch(() => {});
+    await new Promise((r) => setTimeout(r, 100));
     await prisma.gateDecision.deleteMany({
       where: { conversationId: { in: [convOwnerA, convOwnerB] } },
     });
@@ -188,6 +192,7 @@ project-root/
     await prisma.conversation.deleteMany({
       where: { id: { in: [convOwnerA, convOwnerB] } },
     });
+    await prisma.$disconnect();
   });
 
   it('F-03: enforces session authentication and conversation ownership across users', async () => {
@@ -253,6 +258,10 @@ project-root/
 
     const updatedConv = await prisma.conversation.findUnique({ where: { id: convOwnerA } });
     assert.strictEqual(updatedConv?.qualityGateOverride, false);
+
+    // Abort the asynchronous orchestrator spawned by resumePost so tests never leak live LLM inference
+    await new Promise((r) => setTimeout(r, 50));
+    await abortPipelineExecution(convOwnerA);
   });
 
   it('F-14: validateSecurityGate uses stateless regexes across consecutive lines/files and scans .env/.json/.sql', () => {
@@ -285,10 +294,19 @@ project-root/
     const badInstall = await executeTool(
       'npm_install',
       { package_name: 'lodash; echo PWNED' },
-      convOwnerA
+      { conversationId: convOwnerA, pipelineRunId: runIdA, stageName: 'Coder' }
     );
     assert.strictEqual(badInstall.error, true);
-    assert.ok(badInstall.message.includes('Security Exception'));
+    assert.ok(badInstall.message.includes('Authorization Exception'));
+
+    const npmInstallTool = TOOL_REGISTRY.find((t) => t.name === 'npm_install');
+    assert.ok(npmInstallTool);
+    await assert.rejects(
+      async () => {
+        await npmInstallTool.execute({ package_name: 'lodash; echo PWNED' }, convOwnerA);
+      },
+      /Security Exception/
+    );
   });
 
   it('F-01: verifyAndRepairWorkspace routes Tester FAIL to Debugger and succeeds when next Tester cycle passes', async () => {

@@ -4,19 +4,19 @@ import {
   listVirtualFiles,
   applyDiff,
   deleteVirtualFile,
-  assertAuthorizedFileMutation,
-  FileMutationAuth,
+  flushVfsToDisk,
 } from './vfs';
 import { runLinter } from './linter';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
-import { prisma } from '../../db';
 import {
   isControlPlaneArtifact,
   normalizeProjectPath,
 } from './workspace-policy';
+import { createContentHash } from './contracts/fingerprints';
+import { AGENT_DEFS } from './agents';
 
 const execFileAsync = promisify(execFile);
 
@@ -37,35 +37,33 @@ export interface ToolExecutionContext {
   stageExecutionId?: string;
   stageName?: string;
   isSetupOperation?: boolean;
+  allowedMutationPaths?: string[];
 }
 
-export async function assertAuthorizedToolMutation(
-  conversationId: string,
-  rawFilePath: string,
-  pipelineRunId?: string,
-  stageExecutionId?: string,
-  isSetupOperation?: boolean
-): Promise<void> {
-  const normPath = normalizeProjectPath(rawFilePath);
-  if (isControlPlaneArtifact(normPath)) {
-    throw new Error(`Authorization Exception: Cannot modify control plane artifact "${normPath}".`);
+function resolveConversationProjectDir(conversationId: string): string {
+  if (
+    typeof conversationId !== 'string' ||
+    !/^[A-Za-z0-9_-]{8,128}$/.test(conversationId)
+  ) {
+    throw new Error('Security Exception: Invalid conversationId.');
   }
 
-  if (normPath.startsWith('../') || normPath.includes('/../') || normPath === '..') {
-    throw new Error(`Authorization Exception: Directory traversal detected for path "${rawFilePath}".`);
+  const projectsRoot = path.resolve(process.cwd(), 'projects');
+  const projectDir = path.resolve(projectsRoot, conversationId);
+
+  if (path.dirname(projectDir) !== projectsRoot) {
+    throw new Error('Security Exception: Project directory escaped workspace root.');
+  }
+  if (!fs.existsSync(projectDir)) {
+    throw new Error(`Project directory does not exist for conversation ${conversationId}.`);
   }
 
-  if (!pipelineRunId || typeof pipelineRunId !== 'string' || !pipelineRunId.trim()) {
-    throw new Error(
-      `Authorization Exception: active pipelineRunId is mandatory for tool mutation. Conversation-wide fallback authorization without a pipelineRunId is strictly forbidden.`
-    );
+  const realRoot = fs.realpathSync(projectsRoot);
+  const realProject = fs.realpathSync(projectDir);
+  if (realProject !== realRoot && !realProject.startsWith(realRoot + path.sep)) {
+    throw new Error('Security Exception: Project directory resolves outside workspace root.');
   }
-
-  await assertAuthorizedFileMutation(conversationId, normPath, 'write', {
-    pipelineRunId,
-    stageExecutionId,
-    isSetupOperation,
-  });
+  return realProject;
 }
 
 async function runProjectBinary(
@@ -74,13 +72,25 @@ async function runProjectBinary(
   conversationId: string,
   timeoutMs: number = 180000
 ) {
-  const projectDir = path.join(process.cwd(), 'projects', conversationId);
-  if (!fs.existsSync(projectDir)) {
+  let projectDir: string;
+  try {
+    projectDir = resolveConversationProjectDir(conversationId);
+  } catch (err: any) {
     return {
       success: false,
       exitCode: 1,
       stdout: '',
-      stderr: `Project directory does not exist for conversation ${conversationId}.`,
+      stderr: err.message,
+    };
+  }
+  try {
+    await flushVfsToDisk(conversationId);
+  } catch (err: any) {
+    return {
+      success: false,
+      exitCode: 1,
+      stdout: '',
+      stderr: `VFS synchronization failed; command not executed: ${err.message}`,
     };
   }
   const resolvedBin =
@@ -152,7 +162,12 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
           message: `File "${args.file_path}" does not exist yet. Suggestion: Use list_files to see exact paths of all existing files.` 
         };
       }
-      return { found: true, content, lineCount: content.split('\n').length };
+      return {
+        found: true,
+        content,
+        lineCount: content.split('\n').length,
+        contentHash: createContentHash(content),
+      };
     },
   },
 
@@ -190,6 +205,7 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
         stageExecutionId: ctx.stageExecutionId,
         stageName: ctx.stageName,
         isSetupOperation: ctx.isSetupOperation,
+        allowedMutationPaths: ctx.allowedMutationPaths,
       });
       return { success: true, message: `File "${args.file_path}" written successfully (${args.content.length} bytes).` };
     },
@@ -223,6 +239,11 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
         description: 'The new content to place at the specified line range. This replaces all lines between start_line and end_line.',
         required: true,
       },
+      expected_content_hash: {
+        type: 'string',
+        description: 'The contentHash returned by read_file. Prevents applying a patch to stale content.',
+        required: true,
+      },
     },
     execute: async (args, contextOrConversationId) => {
       const ctx = typeof contextOrConversationId === 'string'
@@ -233,6 +254,10 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
         throw new Error(
           `Authorization Exception: active pipelineRunId is mandatory for tool mutation. Conversation-wide fallback authorization without a pipelineRunId is strictly forbidden.`
         );
+      }
+
+      if (!args.expected_content_hash || typeof args.expected_content_hash !== 'string' || !args.expected_content_hash.trim()) {
+        throw new Error('Parameter "expected_content_hash" must be a non-empty content hash string.');
       }
 
       await applyDiff(
@@ -246,7 +271,9 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
           stageExecutionId: ctx.stageExecutionId,
           stageName: ctx.stageName,
           isSetupOperation: ctx.isSetupOperation,
-        }
+          allowedMutationPaths: ctx.allowedMutationPaths,
+        },
+        args.expected_content_hash
       );
       return { success: true, message: `Lines ${args.start_line}-${args.end_line} of "${args.file_path}" replaced successfully.` };
     },
@@ -280,6 +307,7 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
         stageExecutionId: ctx.stageExecutionId,
         stageName: ctx.stageName,
         isSetupOperation: ctx.isSetupOperation,
+        allowedMutationPaths: ctx.allowedMutationPaths,
       });
       return {
         success: deleted,
@@ -301,12 +329,15 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
         ? contextOrConversationId
         : contextOrConversationId.conversationId;
       const files = await listVirtualFiles(conversationId);
+      const visibleFiles = files.filter(
+        (p) => !isControlPlaneArtifact(normalizeProjectPath(p))
+      );
       return {
-        count: files.length,
-        files,
-        message: files.length === 0
+        count: visibleFiles.length,
+        files: visibleFiles,
+        message: visibleFiles.length === 0
           ? 'The workspace is empty. No files have been created yet.'
-          : `Found ${files.length} file(s) in the workspace.`,
+          : `Found ${visibleFiles.length} project file(s) in the workspace.`,
       };
     },
   },
@@ -433,6 +464,7 @@ export async function executeTool(
           stageExecutionId: options?.stageExecutionId,
           stageName: options?.stageName,
           isSetupOperation: options?.isSetupOperation,
+          allowedMutationPaths: options?.allowedMutationPaths,
         }
       : {
           ...contextOrConversationId,
@@ -442,8 +474,34 @@ export async function executeTool(
   const validatedArgs: Record<string, any> = {};
 
   try {
+    if (!context.stageName) {
+      throw new Error('Authorization Exception: stageName is required for tool execution.');
+    }
+    const agentDef = AGENT_DEFS[context.stageName];
+    if (!agentDef || !agentDef.tools.includes(toolName)) {
+      throw new Error(
+        `Authorization Exception: Tool "${toolName}" is not permitted for stage "${context.stageName}".`
+      );
+    }
+
+    if (
+      toolArgs !== undefined &&
+      toolArgs !== null &&
+      (typeof toolArgs !== 'object' || Array.isArray(toolArgs))
+    ) {
+      throw new Error(`Invalid arguments payload for tool "${toolName}": expected an object.`);
+    }
+
+    const argsInput = toolArgs || {};
+    const allowedNames = new Set(Object.keys(tool.parameters));
+    for (const suppliedName of Object.keys(argsInput)) {
+      if (!allowedNames.has(suppliedName)) {
+        throw new Error(`Unknown parameter "${suppliedName}" for tool "${toolName}".`);
+      }
+    }
+
     for (const [paramName, paramDef] of Object.entries(tool.parameters)) {
-      const value = toolArgs[paramName];
+      const value = argsInput[paramName];
 
       if (value === undefined || value === null) {
         if (paramDef.required) {
@@ -452,19 +510,29 @@ export async function executeTool(
         continue;
       }
 
-      // Strong type validation and safe coercion
       if (paramDef.type === 'string') {
-        validatedArgs[paramName] = String(value);
+        if (typeof value !== 'string') {
+          throw new Error(`Parameter "${paramName}" must be a string.`);
+        }
+        validatedArgs[paramName] = value;
       } else if (paramDef.type === 'integer') {
-        const parsed = parseInt(value, 10);
-        if (isNaN(parsed)) {
-          throw new Error(`Parameter "${paramName}" must be a valid integer, got: "${value}".`);
+        const parsed = typeof value === 'number'
+          ? value
+          : typeof value === 'string' && /^-?\d+$/.test(value.trim())
+            ? Number(value.trim())
+            : Number.NaN;
+        if (!Number.isSafeInteger(parsed)) {
+          throw new Error(`Parameter "${paramName}" must be a safe integer.`);
         }
         validatedArgs[paramName] = parsed;
       } else if (paramDef.type === 'number') {
-        const parsed = Number(value);
-        if (isNaN(parsed)) {
-          throw new Error(`Parameter "${paramName}" must be a valid number, got: "${value}".`);
+        const parsed = typeof value === 'number'
+          ? value
+          : typeof value === 'string' && value.trim() !== ''
+            ? Number(value)
+            : Number.NaN;
+        if (!Number.isFinite(parsed)) {
+          throw new Error(`Parameter "${paramName}" must be a finite number.`);
         }
         validatedArgs[paramName] = parsed;
       } else if (paramDef.type === 'boolean') {
@@ -515,4 +583,39 @@ export function toolToOllamaFormat(tool: ToolDefinition): object {
       },
     },
   };
+}
+
+export function toolToAnthropicFormat(tool: ToolDefinition): object {
+  const properties: Record<string, any> = {};
+  const required: string[] = [];
+
+  for (const [name, param] of Object.entries(tool.parameters)) {
+    properties[name] = {
+      type: param.type === 'integer' ? 'integer' : param.type,
+      description: param.description,
+    };
+    if (param.required) {
+      required.push(name);
+    }
+  }
+
+  return {
+    name: tool.name,
+    description: tool.description,
+    input_schema: {
+      type: 'object',
+      properties,
+      required,
+    },
+  };
+}
+
+export function toolsToProviderFormat(
+  tools: ToolDefinition[],
+  provider: string = 'ollama'
+): object[] {
+  if (provider === 'anthropic') {
+    return tools.map(toolToAnthropicFormat);
+  }
+  return tools.map(toolToOllamaFormat);
 }

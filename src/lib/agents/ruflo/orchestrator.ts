@@ -1,7 +1,18 @@
 import { EventEmitter } from 'events';
 import ts from 'typescript';
 import { prisma } from '../../db';
-import { runInference, getLLMConfig, startOllamaKeepAlive, stopOllamaKeepAlive, cleanJsonResponse } from '../inference';
+import {
+  runInference,
+  getLLMConfig,
+  startOllamaKeepAlive,
+  stopOllamaKeepAlive,
+  cleanJsonResponse,
+  InferenceOptions,
+  InferenceTurnResult,
+  Message,
+} from '../inference';
+import { getToolsForAgent } from './toolbox';
+import { executeToolLoop, ToolCallLogEntry } from './tool-loop';
 import { writeAgentOutput, queryAgentOutput } from '../sml';
 import { AGENT_DEFS, AgentDef } from './agents';
 import { loadExecutiveMemory, writeExecutiveMemoryRecord, OWNERSHIP, StageLedger } from './memory';
@@ -55,14 +66,19 @@ pipelineEvents.setMaxListeners(100);
 
 export const activePipelines = new Set<string>();
 export const pipelineAbortControllers = new Map<string, AbortController>();
+const abortedBeforeRegistration = new Set<string>();
 
 export async function abortPipelineExecution(conversationId: string): Promise<void> {
+  abortedBeforeRegistration.add(conversationId);
   const controller = pipelineAbortControllers.get(conversationId);
   if (controller) {
     controller.abort();
     pipelineAbortControllers.delete(conversationId);
   }
   activePipelines.delete(conversationId);
+  if (activePipelines.size === 0) {
+    stopOllamaKeepAlive();
+  }
 
   try {
     await prisma.conversation.update({
@@ -71,7 +87,7 @@ export async function abortPipelineExecution(conversationId: string): Promise<vo
     });
     await prisma.pipelineRun.upsert({
       where: { conversationId },
-      update: { state: 'CANCELLED' },
+      update: { state: 'CANCELLED', leaseOwner: null, leaseExpiresAt: null },
       create: { conversationId, state: 'CANCELLED' },
     });
   } catch (e) {
@@ -94,9 +110,9 @@ const INFRA_ERROR_SIGNATURES = [
 ] as const;
 
 function isInfrastructureError(err: any): boolean {
-  const msg = (err?.message || '').toLowerCase();
-  const code = (err?.code || '').toLowerCase();
-  const causeMsg = (err?.cause?.message || '').toLowerCase();
+  const msg = String(err?.message || '').toLowerCase();
+  const code = String(err?.code ?? '').toLowerCase();
+  const causeMsg = String(err?.cause?.message || '').toLowerCase();
   return (
     INFRA_ERROR_SIGNATURES.some(sig => msg.includes(sig) || causeMsg.includes(sig)) ||
     code === 'und_err_socket' ||
@@ -1435,6 +1451,16 @@ export function shouldPersistAgentOutput(
 
 // ─── Stage Execution Helper (runAgent) ─────────────────────────────────────
 
+export interface RunAgentRuntimeOptions {
+  pipelineRunId?: string;
+  stageExecutionId?: string;
+  isSetupOperation?: boolean;
+  allowedMutationPaths?: string[];
+  maxToolIterations?: number;
+  enableTools?: boolean;
+  inferenceTurnFn?: (messages: Message[], options?: InferenceOptions) => Promise<InferenceTurnResult>;
+}
+
 export async function runAgent(
   conversationId: string,
   agentName: string,
@@ -1446,7 +1472,8 @@ export async function runAgent(
   signal?: AbortSignal,
   validationError?: string,
   targetFile?: string,
-  persistOutput: boolean = true
+  persistOutput: boolean = true,
+  runtimeOptions?: RunAgentRuntimeOptions
 ): Promise<any> {
   const agentDef = AGENT_DEFS[agentName];
   if (!agentDef) {
@@ -1464,14 +1491,42 @@ export async function runAgent(
   const config = await getLLMConfig();
   const upstreamContext = await buildArtifactContext(conversationId, agentName);
 
+  const permittedTools =
+    agentDef.tools.length > 0 &&
+    Boolean(runtimeOptions?.pipelineRunId) &&
+    runtimeOptions?.enableTools !== false &&
+    process.env.MOCK_INFERENCE !== 'true'
+      ? getToolsForAgent(agentDef.tools)
+      : [];
+
   const constraintsBlock = `\n\nActive System Constraints:
 - Output MUST be valid structured markdown matching the exact header specifications.
 - Do NOT wrap your entire response in markdown code blocks (\`\`\`markdown). Return raw text directly.`;
 
-  const systemInstructions =
+  let systemInstructions =
     agentName === 'Coder'
       ? agentDef.systemPrompt
       : agentDef.systemPrompt + constraintsBlock;
+
+  if (permittedTools.length > 0) {
+    if (agentName === 'Coder' && targetFile) {
+      systemInstructions += `\n\n=== WORKSPACE TOOLS ENABLED (SCOPED TO ${targetFile}) ===
+You have interactive workspace tools to verify dependencies and check syntax before finishing:
+- list_files(): list existing workspace files.
+- read_file({ file_path }): inspect exact exports, types, or DOM IDs in dependency files (returns contentHash required for apply_diff).
+- write_file({ file_path, content }): write the complete file content to "${targetFile}".
+- apply_diff({ file_path, start_line, end_line, new_content, expected_content_hash }): surgically patch "${targetFile}" after reading it.
+- check_syntax({ file_path }): run TypeScript/JavaScript compiler syntax & type diagnostics on "${targetFile}".
+- typecheck(): run workspace-wide tsc --noEmit if tsconfig.json exists.
+Mutation scope is strictly restricted to "${targetFile}". If you write or patch "${targetFile}" using tools, always call check_syntax on "${targetFile}" and fix any reported errors before finishing, then return a brief summary or final code. If you do not call write_file or apply_diff, output ONLY the raw complete source code for "${targetFile}".`;
+    } else if (agentName === 'Debugger') {
+      systemInstructions += `\n\n=== WORKSPACE TOOLS DIAGNOSTIC & REPAIR GUIDANCE ===
+You have access to authorized workspace tools (${permittedTools.map((t) => t.name).join(', ')}).
+- Use read_file({ file_path }) before apply_diff to inspect exact lines and obtain expected_content_hash (= contentHash).
+- Use check_syntax, typecheck, or build_project to verify fixes against the actual workspace.
+- Only describe modifications in ### Patches Applied and verification results in ### Verification that reflect real edits and actual checks.`;
+    }
+  }
 
   let userContent: string;
   if (agentName === 'Coder' && targetFile) {
@@ -1584,59 +1639,122 @@ export async function runAgent(
   let chunkBuffer = '';
   let lastEmittedTime = Date.now();
 
-  const rawResponse = await runInference(
-    [
-      { role: 'system', content: systemInstructions },
-      { role: 'user', content: userContent },
-    ],
-    {
-      model: agentDef.model,
-      temperature: agentDef.temperature,
-      maxTokens: budget,
-      timeoutMs,
-      signal,
-      onChunk: (chunk: string) => {
-        tokenCount += Math.max(1, Math.round(chunk.length / 4));
-        chunkBuffer += chunk;
-        if (chunkBuffer.length > 4000) {
-          chunkBuffer = chunkBuffer.slice(-4000); // rolling 4000-char window of live generated code/markdown
-        }
-
-        const now = Date.now();
-        if (now - lastEmittedTime > 120) {
-          lastEmittedTime = now;
-
-          const speculativeApis = Array.from(chunkBuffer.matchAll(/(GET|POST|PUT|DELETE|PATCH)\s+(\/[a-zA-Z0-9_\-\/]+)/gi))
-            .map(m => ({ method: m[1].toUpperCase(), route: m[2] }));
-          const speculativeEntities = Array.from(chunkBuffer.matchAll(/(?:model|entity|table|struct)\s+([A-Z][a-zA-Z0-9]+)/gi))
-            .map(m => m[1]);
-          const speculativeFiles = Array.from(chunkBuffer.matchAll(/(?:File:|Path:|`)([a-zA-Z0-9_\-\/]+\.(?:html|css|js|ts|jsx|tsx|json|md))/gi))
-            .map(m => m[1]);
-
-          const evt = {
-            type: 'AGENT_STREAM_PROGRESS',
-            agent: agentName,
-            message: 'Streaming agent output...',
-            data: {
-              tokenCount,
-              maxTokens: budget,
-              latestText: chunkBuffer,
-              targetFile: targetFile || undefined,
-              apis: speculativeApis.slice(-5),
-              entities: Array.from(new Set(speculativeEntities)).slice(-6),
-              files: Array.from(new Set(speculativeFiles)).slice(-8),
-            },
-          };
-          onEvent(evt);
-          pipelineEvents.emit(`event:${conversationId}`, evt);
-        }
-      },
+  const onChunkHandler = (chunk: string) => {
+    tokenCount += Math.max(1, Math.round(chunk.length / 4));
+    chunkBuffer += chunk;
+    if (chunkBuffer.length > 4000) {
+      chunkBuffer = chunkBuffer.slice(-4000); // rolling 4000-char window of live generated code/markdown
     }
-  );
+
+    const now = Date.now();
+    if (now - lastEmittedTime > 120) {
+      lastEmittedTime = now;
+
+      const speculativeApis = Array.from(chunkBuffer.matchAll(/(GET|POST|PUT|DELETE|PATCH)\s+(\/[a-zA-Z0-9_\-\/]+)/gi))
+        .map(m => ({ method: m[1].toUpperCase(), route: m[2] }));
+      const speculativeEntities = Array.from(chunkBuffer.matchAll(/(?:model|entity|table|struct)\s+([A-Z][a-zA-Z0-9]+)/gi))
+        .map(m => m[1]);
+      const speculativeFiles = Array.from(chunkBuffer.matchAll(/(?:File:|Path:|`)([a-zA-Z0-9_\-\/]+\.(?:html|css|js|ts|jsx|tsx|json|md))/gi))
+        .map(m => m[1]);
+
+      const evt = {
+        type: 'AGENT_STREAM_PROGRESS',
+        agent: agentName,
+        message: 'Streaming agent output...',
+        data: {
+          tokenCount,
+          maxTokens: budget,
+          latestText: chunkBuffer,
+          targetFile: targetFile || undefined,
+          apis: speculativeApis.slice(-5),
+          entities: Array.from(new Set(speculativeEntities)).slice(-6),
+          files: Array.from(new Set(speculativeFiles)).slice(-8),
+        },
+      };
+      onEvent(evt);
+      pipelineEvents.emit(`event:${conversationId}`, evt);
+    }
+  };
+
+  let rawResponse = '';
+  let toolExecutions: ToolCallLogEntry[] = [];
+  let mutatedFiles: string[] = [];
+  let toolIterations = 1;
+
+  if (permittedTools.length > 0) {
+    onEvent({
+      type: 'AGENT_LOG',
+      agent: agentName,
+      message: `🧰 Tool runtime enabled for ${agentName} (${permittedTools.map((t) => t.name).join(', ')})`,
+    });
+
+    const loopResult = await executeToolLoop({
+      messages: [
+        { role: 'system', content: systemInstructions },
+        { role: 'user', content: userContent },
+      ],
+      tools: permittedTools,
+      toolContext: {
+        conversationId,
+        pipelineRunId: runtimeOptions?.pipelineRunId || '',
+        stageExecutionId: runtimeOptions?.stageExecutionId,
+        stageName: agentName,
+        isSetupOperation: runtimeOptions?.isSetupOperation,
+        allowedMutationPaths: runtimeOptions?.allowedMutationPaths,
+      },
+      inferenceOptions: {
+        model: agentDef.model,
+        temperature: agentDef.temperature,
+        maxTokens: budget,
+        timeoutMs,
+        signal,
+        onChunk: onChunkHandler,
+      },
+      maxIterations: runtimeOptions?.maxToolIterations ?? (agentName === 'Debugger' ? 10 : 8),
+      onEvent,
+      ...(runtimeOptions?.inferenceTurnFn ? { inferenceTurnFn: runtimeOptions.inferenceTurnFn } : {}),
+    });
+
+    rawResponse = loopResult.content;
+    toolExecutions = loopResult.toolExecutions;
+    mutatedFiles = loopResult.mutatedFiles;
+    toolIterations = loopResult.iterations;
+  } else {
+    rawResponse = await runInference(
+      [
+        { role: 'system', content: systemInstructions },
+        { role: 'user', content: userContent },
+      ],
+      {
+        model: agentDef.model,
+        temperature: agentDef.temperature,
+        maxTokens: budget,
+        timeoutMs,
+        signal,
+        onChunk: onChunkHandler,
+      }
+    );
+  }
+
+  const normTargetFile = targetFile ? normalizeProjectPath(targetFile) : '';
+  let mutatedTargetViaTool = false;
 
   let finalContent: string;
   if (agentName === 'Coder') {
-    finalContent = sanitizeCoderOutputForFile(rawResponse, targetFile);
+    if (
+      normTargetFile &&
+      mutatedFiles.some((mf) => mf.toLowerCase() === normTargetFile.toLowerCase())
+    ) {
+      const persistedVfsContent = await readVirtualFile(conversationId, normTargetFile);
+      if (persistedVfsContent && persistedVfsContent.trim().length > 0) {
+        finalContent = persistedVfsContent;
+        mutatedTargetViaTool = true;
+      } else {
+        finalContent = sanitizeCoderOutputForFile(rawResponse, targetFile);
+      }
+    } else {
+      finalContent = sanitizeCoderOutputForFile(rawResponse, targetFile);
+    }
   } else {
     finalContent = sanitizeStageOutput(rawResponse, EXPECTED_FIRST_HEADERS[agentName]);
   }
@@ -1644,8 +1762,10 @@ export async function runAgent(
   // If agent specifies an output filename in VFS_OUTPUT_MAP, write to VFS
   const outputFilename = VFS_OUTPUT_MAP[agentName];
   if (outputFilename && persistOutput) {
-    const pipelineRun = await prisma.pipelineRun.findUnique({ where: { conversationId } });
-    const runId = pipelineRun?.id || 'system-run';
+    const runId =
+      runtimeOptions?.pipelineRunId ||
+      (await prisma.pipelineRun.findUnique({ where: { conversationId } }))?.id ||
+      'system-run';
     await writeVirtualFile(conversationId, outputFilename, finalContent, {
       pipelineRunId: runId,
       allowControlPlane: true,
@@ -1662,9 +1782,15 @@ export async function runAgent(
     richLog: {
       telemetryType: 'rich_step_log',
       executionMemory: { stage: agentName },
-      orchestration: { durationMs },
+      orchestration: {
+        durationMs,
+        toolIterations,
+        toolCallCount: toolExecutions.length,
+        mutatedFiles,
+      },
       inflow: { systemInstructions, userContent, context: contextTelemetry },
       thought: finalContent,
+      ...(toolExecutions.length > 0 ? { toolExecutions } : {}),
       model: config.ollamaModel,
       budget,
       timeoutMs,
@@ -1710,16 +1836,22 @@ export async function runAgent(
     conversationId,
     agentName,
     'Completed',
-    `Agent ${agentName} completed in ${durationMs}ms (${finalContent.length} bytes generated). Estimated tokens: ${estimatedTokens}`
+    `Agent ${agentName} completed in ${durationMs}ms (${finalContent.length} bytes generated${toolExecutions.length > 0 ? `, ${toolExecutions.length} tool call(s)` : ''}). Estimated tokens: ${estimatedTokens}`
   );
 
   onEvent({
     type: 'AGENT_LOG',
     agent: agentName,
-    message: `Agent ${agentName} completed in ${durationMs}ms (${finalContent.length} bytes generated). [${inferenceId}]`,
+    message: `Agent ${agentName} completed in ${durationMs}ms (${finalContent.length} bytes generated${toolExecutions.length > 0 ? `, ${toolExecutions.length} tool call(s)` : ''}). [${inferenceId}]`,
   });
 
-  return { content: finalContent, raw: rawResponse };
+  return {
+    content: finalContent,
+    raw: rawResponse,
+    mutatedViaTool: mutatedTargetViaTool,
+    mutatedFiles,
+    toolExecutions,
+  };
 }
 
 export const localActivePipelines = new Map<string, string>();
@@ -1805,6 +1937,7 @@ export async function runOrchestrator(
   startStage?: string,
   existingLeaseOwnerId?: string
 ): Promise<void> {
+  abortedBeforeRegistration.delete(conversationId);
   if (signal?.aborted) {
     throw new Error('Pipeline compilation aborted due to client disconnect.');
   }
@@ -1819,6 +1952,12 @@ export async function runOrchestrator(
       return;
     }
     leaseOwnerId = lease.ownerId;
+  }
+
+  if (abortedBeforeRegistration.has(conversationId)) {
+    abortedBeforeRegistration.delete(conversationId);
+    await releasePipelineLease(conversationId, leaseOwnerId, 'CANCELLED').catch(() => {});
+    return;
   }
 
   localActivePipelines.set(conversationId, leaseOwnerId);
@@ -1855,6 +1994,11 @@ export async function runOrchestrator(
 
     if (!conversation) {
       throw new Error(`Conversation not found: ${conversationId}`);
+    }
+
+    if (conversation.status === 'Cancelled' || executionSignal.aborted) {
+      finalPipelineState = 'CANCELLED';
+      return;
     }
 
     const memoryState = await loadExecutiveMemory(conversationId);
@@ -1967,32 +2111,6 @@ export async function runOrchestrator(
           async (targetStage: string, customInput?: string, targetFile?: string) => {
             if (targetStage === 'Debugger') {
               debuggerExecutedInRun = true;
-              // Check if an accepted Debugger execution already exists for this pipeline run
-              const existingExec = await prisma.stageExecution.findFirst({
-                where: {
-                  pipelineRunId: runId,
-                  stageName: 'Debugger',
-                  state: 'ACCEPTED',
-                },
-                orderBy: { attempt: 'desc' },
-              });
-              if (existingExec) {
-                const latestArtifact = await prisma.artifactVersion.findFirst({
-                  where: {
-                    pipelineRunId: runId,
-                    stageName: 'Debugger',
-                    state: 'ACCEPTED',
-                  },
-                  orderBy: { version: 'desc' },
-                });
-                if (latestArtifact) {
-                  return {
-                    status: 'ACCEPTED',
-                    stageExecution: existingExec,
-                    content: latestArtifact.content,
-                  };
-                }
-              }
             }
             const res = await executeContractStage({
               conversationId,
@@ -2351,7 +2469,7 @@ export async function runOrchestrator(
     await prisma.conversation.update({
       where: { id: conversationId },
       data: { status: 'Failed' },
-    });
+    }).catch(() => {});
     finalPipelineState = 'FAILED';
   } finally {
     if (stopHeartbeat) stopHeartbeat();

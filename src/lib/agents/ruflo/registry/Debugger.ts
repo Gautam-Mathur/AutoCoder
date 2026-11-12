@@ -5,7 +5,6 @@ export const temperature = 0.2;
 export const maxTokens = 4096;
 export const allowedTools: string[] = [
   "read_file",
-  "write_file",
   "apply_diff",
   "list_files",
   "check_syntax",

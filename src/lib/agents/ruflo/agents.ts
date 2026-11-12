@@ -28,9 +28,9 @@ export const AGENT_DEFS: Record<string, AgentDef> = {
   System:      { ...System, tools: [] },
   Designer:    { ...Designer, tools: [] },
   Blueprinter: { ...Blueprinter, tools: [] },
-  Coder:       { ...Coder, tools: ['read_file', 'write_file', 'apply_diff', 'list_files', 'check_syntax', 'typecheck', 'build_project'] },
+  Coder:       { ...Coder, tools: Coder.allowedTools },
   Tester:      { ...Tester, tools: [] },
-  Debugger:    { ...Debugger, tools: ['read_file', 'write_file', 'apply_diff', 'list_files', 'check_syntax', 'typecheck', 'build_project'] },
+  Debugger:    { ...Debugger, tools: Debugger.allowedTools },
   Security:    { ...Security, tools: [] },
   Reviewer:    { ...Reviewer, tools: [] },
 };

@@ -11,7 +11,7 @@ import {
   deleteAuthorizedProjectFile,
   assertAuthorizedFileMutation,
 } from '../../vfs';
-import { executeTool } from '../../toolbox';
+import { executeTool, TOOL_REGISTRY } from '../../toolbox';
 
 describe('File Mutation Boundary & Authorization Audit Suite', () => {
   const prefix = `mutation-audit-${Date.now()}`;
@@ -279,7 +279,7 @@ project-root/
       const res = await executeTool(
         'write_file',
         { file_path: 'src/index.ts', content: 'export const hello = true;' },
-        convId1
+        { conversationId: convId1, pipelineRunId: '', stageName: 'Coder' }
       );
       assert.strictEqual(res.error, true);
       assert.ok(res.message.includes('Authorization Exception: active pipelineRunId is mandatory'));
@@ -288,8 +288,14 @@ project-root/
     it('fails closed in toolbox apply_diff when pipelineRunId is missing', async () => {
       const res = await executeTool(
         'apply_diff',
-        { file_path: 'src/index.ts', start_line: 1, end_line: 1, new_content: 'export const hello = false;' },
-        convId1
+        {
+          file_path: 'src/index.ts',
+          start_line: 1,
+          end_line: 1,
+          new_content: 'export const hello = false;',
+          expected_content_hash: '0'.repeat(64),
+        },
+        { conversationId: convId1, pipelineRunId: '', stageName: 'Coder' }
       );
       assert.strictEqual(res.error, true);
       assert.ok(res.message.includes('Authorization Exception: active pipelineRunId is mandatory'));
@@ -299,10 +305,19 @@ project-root/
       const res = await executeTool(
         'delete_file',
         { file_path: 'src/index.ts' },
-        convId1
+        { conversationId: convId1, pipelineRunId: '', stageName: 'Coder' }
       );
       assert.strictEqual(res.error, true);
-      assert.ok(res.message.includes('Authorization Exception: active pipelineRunId is mandatory'));
+      assert.ok(res.message.includes('Authorization Exception'));
+
+      const deleteTool = TOOL_REGISTRY.find((t) => t.name === 'delete_file');
+      assert.ok(deleteTool);
+      await assert.rejects(
+        async () => {
+          await deleteTool.execute({ file_path: 'src/index.ts' }, convId1);
+        },
+        /Authorization Exception: active pipelineRunId is mandatory/
+      );
     });
   });
 
@@ -341,6 +356,7 @@ project-root/
           conversationId: convId1,
           pipelineRunId: runId2,
           stageExecutionId: coderStageId,
+          stageName: 'Coder',
         }
       );
       assert.strictEqual(res.error, true);

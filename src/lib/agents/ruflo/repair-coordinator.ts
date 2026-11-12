@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import path from 'path';
+import ts from 'typescript';
 import { prisma } from '../../db';
 import { createContentHash } from './contracts/fingerprints';
 import {
@@ -16,6 +17,7 @@ import { CheckStatus } from './security-gate';
 import { parseDebuggerOutput } from './contracts/schemas/debugger';
 import { readVirtualFile, listVirtualFiles } from './vfs';
 import { parseHtmlDocument } from './dom-contract-validator';
+import { resolveModule, parseTsConfigOptions } from './module-resolver';
 
 export type FailureId = string;
 export type WorkspaceVersion = string;
@@ -362,19 +364,24 @@ export function normalizeFailures(
     const lines = testerOutput.split('\n');
     let inFailuresSection = false;
     let failIdx = 1;
+    let currentFailure: NormalizedFailure | null = null;
 
     for (const rawLine of lines) {
       const line = rawLine.trim();
       if (line.startsWith('### Failures')) {
         inFailuresSection = true;
+        currentFailure = null;
         continue;
       }
       if (inFailuresSection && line.startsWith('### ')) {
         inFailuresSection = false;
+        currentFailure = null;
         continue;
       }
+      if (!inFailuresSection) continue;
 
-      if (inFailuresSection && line.startsWith('-')) {
+      if (line.startsWith('-')) {
+        currentFailure = null;
         const match = line.match(/^-\s*\[([^\]]+)\]\s*(.*)$/);
         if (match) {
           const filePath = match[1].trim();
@@ -382,25 +389,32 @@ export function normalizeFailures(
           const normFile = filePath !== 'imports' && filePath !== 'project' && filePath !== 'tester'
             ? normalizeProjectPath(filePath)
             : '';
-          normalized.push({
+          currentFailure = {
             id: `FAIL-${String(failIdx++).padStart(3, '0')}`,
             source: 'tester',
             message,
             affectedFiles: normFile ? [normFile] : [],
             evidence: [line],
-          });
+          };
+          normalized.push(currentFailure);
         } else {
           const msg = line.replace(/^-\s*/, '').trim();
           if (msg && !/^None\b/i.test(msg)) {
-            normalized.push({
+            currentFailure = {
               id: `FAIL-${String(failIdx++).padStart(3, '0')}`,
               source: 'tester',
               message: msg,
               affectedFiles: [],
               evidence: [line],
-            });
+            };
+            normalized.push(currentFailure);
           }
         }
+      } else if (line && currentFailure) {
+        currentFailure.message = currentFailure.message
+          ? `${currentFailure.message}\n${line}`
+          : line;
+        currentFailure.evidence = [...(currentFailure.evidence || []), line];
       }
     }
   }
@@ -665,8 +679,62 @@ export interface CanonicalRepairContext {
   priorRepairDiff?: string;
 }
 
+function extractLocalModuleSpecifiers(filePath: string, content: string): string[] {
+  const specs: string[] = [];
+  const scriptKind = filePath.endsWith('.tsx')
+    ? ts.ScriptKind.TSX
+    : filePath.endsWith('.jsx')
+    ? ts.ScriptKind.JSX
+    : filePath.endsWith('.ts')
+    ? ts.ScriptKind.TS
+    : ts.ScriptKind.JS;
+  const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.ES2022, true, scriptKind);
+
+  const visit = (node: ts.Node) => {
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      specs.push(node.moduleSpecifier.text);
+    } else if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+      specs.push(node.moduleSpecifier.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return specs;
+}
+
 /**
- * Resolves source dependencies strictly via canonical POSIX paths and verified template references.
+ * Produces a bounded line-level diff summary between two versions of a file across repair cycles.
+ */
+export function buildCompactLineDiff(
+  filePath: string,
+  beforeContent: string,
+  afterContent: string,
+  maxChars: number = 2500
+): string {
+  if (beforeContent === afterContent) {
+    return `--- ${filePath}\n+++ ${filePath}\nNo text delta produced in prior cycle (file stayed identical).`;
+  }
+  const beforeLines = beforeContent.split('\n');
+  const afterLines = afterContent.split('\n');
+  const maxLines = Math.max(beforeLines.length, afterLines.length);
+  const hunks: string[] = [`--- a/${filePath}`, `+++ b/${filePath}`];
+
+  for (let i = 0; i < maxLines; i++) {
+    const prev = beforeLines[i];
+    const next = afterLines[i];
+    if (prev !== next) {
+      if (prev !== undefined) hunks.push(`- L${i + 1}: ${prev}`);
+      if (next !== undefined) hunks.push(`+ L${i + 1}: ${next}`);
+    }
+  }
+
+  const joined = hunks.join('\n');
+  if (joined.length <= maxChars) return joined;
+  return `${joined.slice(0, maxChars)}\n... [truncated ${joined.length - maxChars} chars]`;
+}
+
+/**
+ * Resolves source dependencies strictly via canonical POSIX paths, AST imports, and verified template references.
  * Zero file-count heuristics or suffix-matching fallbacks.
  */
 export async function resolveCanonicalRepairContext(
@@ -679,41 +747,90 @@ export async function resolveCanonicalRepairContext(
 
   for (const filePath of allVirtualFiles) {
     const content = await readVirtualFile(conversationId, filePath);
-    if (content) fileContents.set(path.posix.normalize(filePath), content);
+    if (typeof content === 'string') {
+      const cleanPath = normalizeProjectPath(path.posix.normalize(filePath.replace(/\\/g, '/')));
+      if (!isControlPlaneArtifact(cleanPath)) {
+        fileContents.set(cleanPath, content);
+      }
+    }
   }
 
-  const normalizedTarget = path.posix.normalize(targetFile);
+  const normalizedTarget = normalizeProjectPath(path.posix.normalize(targetFile.replace(/\\/g, '/')));
   const inflowFiles: Array<{ path: string; content: string; role: string }> = [];
+  const seenPaths = new Set<string>();
 
-  const isScript = /\.(js|jsx|ts|tsx)$/.test(normalizedTarget);
+  const addInflow = (p: string, content: string, role: string) => {
+    const clean = normalizeProjectPath(path.posix.normalize(p.replace(/\\/g, '/')));
+    if (seenPaths.has(clean)) return;
+    seenPaths.add(clean);
+    inflowFiles.push({ path: clean, content, role });
+  };
+
+  // Always include the target file's own current content so surgical repairs see exact current code/markup
+  const targetCurrentContent = fileContents.get(normalizedTarget);
+  if (targetCurrentContent !== undefined) {
+    addInflow(
+      normalizedTarget,
+      targetCurrentContent,
+      'TARGET_FILE: Current contents of the target file being repaired.'
+    );
+  }
+
+  const isScript = /\.(js|jsx|ts|tsx|mjs|cjs)$/.test(normalizedTarget);
   const isHtml = normalizedTarget.endsWith('.html');
+  const isCss = normalizedTarget.endsWith('.css');
 
-  // Case 1: Target is a Script (e.g., /shop/script.js)
+  // Case 1: Target is a Script (e.g., shop/script.js or src/app/page.tsx)
   if (isScript) {
     for (const [filePath, content] of fileContents) {
       if (filePath.endsWith('.html')) {
         const doc = parseHtmlDocument(filePath, content);
 
         // Strict canonical path match: script must be in doc.linkedScripts
-        const isReferencedInDoc = doc.linkedScripts.includes(normalizedTarget);
-
-        if (isReferencedInDoc) {
-          inflowFiles.push({
-            path: filePath,
+        if (doc.linkedScripts.includes(normalizedTarget)) {
+          addInflow(
+            filePath,
             content,
-            role: 'HOST_HTML_TEMPLATE: Defines the DOM elements, IDs, and classes queried by this script.',
-          });
+            'HOST_HTML_TEMPLATE: Defines the DOM elements, IDs, and classes queried by this script.'
+          );
 
           // Inflow ONLY stylesheets explicitly linked by this specific host template
           for (const cssPath of doc.linkedStylesheets) {
             const cssContent = fileContents.get(cssPath);
-            if (cssContent) {
-              inflowFiles.push({
-                path: cssPath,
-                content: cssContent,
-                role: 'LINKED_STYLESHEET: Declares style classes and visual animations for the host template.',
-              });
+            if (cssContent !== undefined) {
+              addInflow(
+                cssPath,
+                cssContent,
+                'LINKED_STYLESHEET: Declares style classes and visual animations for the host template.'
+              );
             }
+          }
+        }
+      }
+    }
+
+    // Resolve explicit local TS/JS module imports via canonical TS AST + ModuleResolver
+    if (targetCurrentContent) {
+      const workspaceFilePaths = Array.from(fileContents.keys());
+      const tsConfigContent = fileContents.get('tsconfig.json') || fileContents.get('jsconfig.json') || '';
+      const tsConfigOpts = tsConfigContent ? parseTsConfigOptions(tsConfigContent) : {};
+      const specifiers = extractLocalModuleSpecifiers(normalizedTarget, targetCurrentContent);
+
+      for (const spec of specifiers) {
+        if (!spec.startsWith('.') && !spec.startsWith('@/') && !spec.startsWith('/')) continue;
+        const resolved = resolveModule(normalizedTarget, spec, {
+          files: workspaceFilePaths,
+          ...tsConfigOpts,
+        });
+        if (resolved) {
+          const cleanResolved = normalizeProjectPath(path.posix.normalize(resolved));
+          const modContent = fileContents.get(cleanResolved);
+          if (modContent !== undefined) {
+            addInflow(
+              cleanResolved,
+              modContent,
+              'IMPORTED_MODULE: Local module directly imported by the target script.'
+            );
           }
         }
       }
@@ -721,46 +838,63 @@ export async function resolveCanonicalRepairContext(
   }
 
   // Case 2: Target is an HTML Document (e.g., index.html)
-  if (isHtml) {
-    const htmlContent = fileContents.get(normalizedTarget);
-    if (htmlContent) {
-      const doc = parseHtmlDocument(normalizedTarget, htmlContent);
+  if (isHtml && targetCurrentContent !== undefined) {
+    const doc = parseHtmlDocument(normalizedTarget, targetCurrentContent);
 
-      for (const scriptPath of doc.linkedScripts) {
-        const scriptContent = fileContents.get(scriptPath);
-        if (scriptContent) {
-          inflowFiles.push({
-            path: scriptPath,
-            content: scriptContent,
-            role: 'LINKED_SCRIPT: Script logic executed by this HTML template.',
-          });
-        }
+    for (const scriptPath of doc.linkedScripts) {
+      const scriptContent = fileContents.get(scriptPath);
+      if (scriptContent !== undefined) {
+        addInflow(
+          scriptPath,
+          scriptContent,
+          'LINKED_SCRIPT: Script logic executed by this HTML template.'
+        );
       }
+    }
 
-      for (const cssPath of doc.linkedStylesheets) {
-        const cssContent = fileContents.get(cssPath);
-        if (cssContent) {
-          inflowFiles.push({
-            path: cssPath,
-            content: cssContent,
-            role: 'LINKED_STYLESHEET: Stylesheet applied to this HTML template.',
-          });
+    for (const cssPath of doc.linkedStylesheets) {
+      const cssContent = fileContents.get(cssPath);
+      if (cssContent !== undefined) {
+        addInflow(
+          cssPath,
+          cssContent,
+          'LINKED_STYLESHEET: Stylesheet applied to this HTML template.'
+        );
+      }
+    }
+  }
+
+  // Case 3: Target is a Stylesheet (e.g., styles.css) -> include host HTML documents linking it
+  if (isCss) {
+    for (const [filePath, content] of fileContents) {
+      if (filePath.endsWith('.html')) {
+        const doc = parseHtmlDocument(filePath, content);
+        if (doc.linkedStylesheets.includes(normalizedTarget)) {
+          addInflow(
+            filePath,
+            content,
+            'HOST_HTML_TEMPLATE: Defines the DOM elements styled by this stylesheet.'
+          );
         }
       }
     }
   }
 
-  // Extract compact authoritative DOM contract if host HTML is in context
+  // Extract compact authoritative DOM contract if one or more host HTML templates are in context
+  const hostHtmlFiles = inflowFiles.filter((f) => f.path.endsWith('.html'));
   let domContractSnippet = '';
-  const hostHtml = inflowFiles.find((f) => f.path.endsWith('.html'));
-  if (hostHtml) {
-    const doc = parseHtmlDocument(hostHtml.path, hostHtml.content);
-    domContractSnippet = [
-      `### AUTHORITATIVE DOM CONTRACT (${hostHtml.path})`,
-      `- Declared Element IDs: ${[...doc.ids].join(', ') || 'none'}`,
-      `- Declared CSS Classes: ${[...doc.classes].join(', ') || 'none'}`,
-      `CRITICAL INSTRUCTION: Every getElementById() and querySelector() MUST strictly match the declared IDs/classes above. Never query unlisted identifiers.`,
-    ].join('\n');
+  if (hostHtmlFiles.length > 0) {
+    domContractSnippet = hostHtmlFiles
+      .map((hostHtml) => {
+        const doc = parseHtmlDocument(hostHtml.path, hostHtml.content);
+        return [
+          `### AUTHORITATIVE DOM CONTRACT (${hostHtml.path})`,
+          `- Declared Element IDs: ${[...doc.ids].join(', ') || 'none'}`,
+          `- Declared CSS Classes: ${[...doc.classes].join(', ') || 'none'}`,
+          `CRITICAL INSTRUCTION: Every getElementById() and querySelector() MUST strictly match the declared IDs/classes above. Never query unlisted identifiers.`,
+        ].join('\n');
+      })
+      .join('\n\n');
   }
 
   return {
@@ -779,7 +913,7 @@ export interface DiagnosticFingerprint {
 }
 
 function createNormalizedFailureSignature(failure: VerificationFailure): string {
-  const normMsg = failure.message.replace(/\s+/g, ' ').trim().slice(0, 80);
+  const normMsg = failure.message.replace(/\s+/g, ' ').trim().slice(0, 200);
   return `${failure.file}:${failure.code || 'NO_CODE'}:${normMsg}`;
 }
 
@@ -811,10 +945,15 @@ export function analyzeRepairTrajectory(
   maxAllowedCycles = 10
 ): { shouldHalt: boolean; reason?: 'OSCILLATION_DETECTED' | 'DIMINISHING_RETURNS' | 'BUDGET_EXCEEDED' } {
   // CHECK 1: True Oscillation Check (recurrence after visiting a different state: A -> B -> A)
-  // Distance must be >= 2 (must not match the immediate predecessor, which is consecutive persistence)
+  // Requires at least one intervening cycle with a DIFFERENT signatureHash (so A -> A -> A falls through to Diminishing Returns)
   for (let i = 0; i < history.length - 1; i++) {
     if (history[i].signatureHash === current.signatureHash) {
-      return { shouldHalt: true, reason: 'OSCILLATION_DETECTED' };
+      const hasInterveningChange = history
+        .slice(i + 1)
+        .some((prev) => prev.signatureHash !== current.signatureHash);
+      if (hasInterveningChange) {
+        return { shouldHalt: true, reason: 'OSCILLATION_DETECTED' };
+      }
     }
   }
 
@@ -847,6 +986,7 @@ export async function coordinateRepair(params: CoordinateRepairParams): Promise<
   const { conversationId, pipelineRunId, executeStageFn, emit, maxCycles = 10 } = params;
   const repairHistory: RepairHistoryRecord[] = [];
   const diagnosticHistory: DiagnosticFingerprint[] = [];
+  const priorDiffsByFile = new Map<string, string>();
 
   for (let cycle = 1; cycle <= maxCycles; cycle++) {
     // 1. Run Tester
@@ -940,6 +1080,71 @@ export async function coordinateRepair(params: CoordinateRepairParams): Promise<
         ].join('\n')
       : '';
 
+    const preCycleContents = new Map<string, string>();
+    let canonicalDebugSourcesBlock = '';
+    try {
+      const workspaceFileNames = await listVirtualFiles(conversationId);
+      const workspaceSet = new Set(
+        workspaceFileNames
+          .map((p) => normalizeProjectPath(path.posix.normalize(p.replace(/\\/g, '/'))))
+          .filter((p) => !isControlPlaneArtifact(p))
+      );
+
+      for (const wf of workspaceSet) {
+        const content = await readVirtualFile(conversationId, wf);
+        if (typeof content === 'string') {
+          preCycleContents.set(wf, content);
+        }
+      }
+
+      const candidateTargets = new Set<string>();
+      for (const f of normalizedFailures) {
+        for (const af of f.affectedFiles) {
+          const clean = normalizeProjectPath(path.posix.normalize(af.replace(/\\/g, '/')));
+          if (workspaceSet.has(clean)) {
+            candidateTargets.add(clean);
+          }
+        }
+        // Extract exact workspace file paths mentioned in runtime/import failure details
+        for (const wf of workspaceSet) {
+          if (wf && f.message.includes(wf)) {
+            candidateTargets.add(wf);
+          }
+        }
+      }
+
+      // If runtime failure has no file token matched yet and canonical index.html exists in VFS, resolve from index.html
+      if (candidateTargets.size === 0 && normalizedFailures.some((f) => f.affectedFiles.includes('runtime')) && workspaceSet.has('index.html')) {
+        candidateTargets.add('index.html');
+      }
+
+      const seenDebugFiles = new Set<string>();
+      const sourceSections: string[] = [];
+      const domSnippets: string[] = [];
+      const diffSections: string[] = [];
+
+      for (const ct of candidateTargets) {
+        const ctx = await resolveCanonicalRepairContext(conversationId, ct, priorDiffsByFile.get(ct));
+        if (ctx.domContractSnippet && !domSnippets.includes(ctx.domContractSnippet)) {
+          domSnippets.push(ctx.domContractSnippet);
+        }
+        if (ctx.priorRepairDiff) {
+          diffSections.push(ctx.priorRepairDiff);
+        }
+        for (const inf of ctx.inflowFiles) {
+          if (seenDebugFiles.has(inf.path)) continue;
+          seenDebugFiles.add(inf.path);
+          sourceSections.push(`#### ${inf.path} (${inf.role})\n\`\`\`\n${inf.content}\n\`\`\``);
+        }
+      }
+
+      canonicalDebugSourcesBlock = [
+        domSnippets.length > 0 ? domSnippets.join('\n\n') : '',
+        diffSections.length > 0 ? `### Prior Cycle Repair Diffs\n\`\`\`diff\n${diffSections.join('\n\n')}\n\`\`\`` : '',
+        sourceSections.length > 0 ? `### Canonical Repair Source Context\n${sourceSections.join('\n\n')}` : '',
+      ].filter(Boolean).join('\n\n');
+    } catch {}
+
     const debugContext = [
       `### Active Base Workspace Version`,
       beforeVersion,
@@ -947,6 +1152,7 @@ export async function coordinateRepair(params: CoordinateRepairParams): Promise<
       ...normalizedFailures.map((f) => `- [${f.id}] (${f.affectedFiles.join(', ') || 'workspace'}): ${f.message}`),
       jsGuidance,
       historyBlock,
+      canonicalDebugSourcesBlock,
       `### Original Tester Output`,
       testerResult.content || '',
     ].filter(Boolean).join('\n\n');
@@ -1041,53 +1247,101 @@ export async function coordinateRepair(params: CoordinateRepairParams): Promise<
       failureCount: normalizedFailures.length,
     });
 
-    // 6. Invoke Coder only after canonical repair plan passed validation against active workspace revision & authorized set
-    emit({
-      type: 'AGENT_START',
-      agent: 'Coder',
-      message: `Invoking Coder to implement targeted repairs across ${authorizedTargets.length} authorized file(s)...`,
-    });
-
-    const coderRepairInstructions = [
-      `### Targeted Repair Plan`,
-      `Base Workspace Version: ${beforeVersion}`,
-      plan.instructions.length ? `Patches & Fix Instructions from Debugger:\n${plan.instructions.join('\n')}` : '',
-      `Issues To Resolve:`,
-      ...normalizedFailures.map((f) => `- ${f.id}: ${f.message}`),
-    ].filter(Boolean).join('\n\n');
-
+    // 6. Check whether Debugger already applied direct surgical patches via tools, and invoke Coder only for remaining unpatched targets
+    const targetsNeedingCoder: string[] = [];
     for (const targetFile of authorizedTargets) {
-      try {
-        let fileRepairInstructions = coderRepairInstructions;
+      const normTarget = normalizeProjectPath(path.posix.normalize(targetFile.replace(/\\/g, '/')));
+      const preContent = preCycleContents.get(normTarget);
+      let patchedByDebugger = false;
+      if (typeof preContent === 'string') {
         try {
-          const repairContext = await resolveCanonicalRepairContext(conversationId, targetFile);
-          if (repairContext.domContractSnippet) {
-            fileRepairInstructions += `\n\n${repairContext.domContractSnippet}`;
-          }
-          if (repairContext.inflowFiles.length > 0) {
-            fileRepairInstructions +=
-              `\n\n### Linked Context Files:\n` +
-              repairContext.inflowFiles
-                .map((f) => `#### ${f.path} (${f.role})\n\`\`\`\n${f.content}\n\`\`\``)
-                .join('\n\n');
+          const postDebugContent = await readVirtualFile(conversationId, normTarget);
+          if (typeof postDebugContent === 'string' && postDebugContent !== preContent && postDebugContent.trim().length > 0) {
+            patchedByDebugger = true;
+            priorDiffsByFile.set(
+              normTarget,
+              buildCompactLineDiff(normTarget, preContent, postDebugContent)
+            );
+            emit({
+              type: 'AGENT_LOG',
+              agent: 'Debugger',
+              message: `[REPAIR_DIRECT_APPLIED] Debugger patched "${normTarget}" directly via tools; skipping redundant Coder rewrite.`,
+            });
           }
         } catch {}
+      }
+      if (!patchedByDebugger) {
+        targetsNeedingCoder.push(targetFile);
+      }
+    }
 
-        if (targetFile.endsWith('.js') || targetFile.endsWith('.jsx')) {
-          fileRepairInstructions += `\n\nIMPORTANT LANGUAGE RULE FOR JAVASCRIPT (.js):\nOutput pure standard ECMAScript only. DO NOT use TypeScript 'as Type' type assertions or ': Type' annotations (they trigger TS8010 syntax error). For DOM properties (.value, .reset, .dataset), use runtime guards (e.g., if (el instanceof HTMLInputElement)), querySelector, or JSDoc.`;
+    if (targetsNeedingCoder.length > 0) {
+      emit({
+        type: 'AGENT_START',
+        agent: 'Coder',
+        message: `Invoking Coder to implement targeted repairs across ${targetsNeedingCoder.length} authorized file(s)...`,
+      });
+
+      const coderRepairInstructions = [
+        `### Targeted Repair Plan`,
+        `Base Workspace Version: ${beforeVersion}`,
+        plan.instructions.length ? `Patches & Fix Instructions from Debugger:\n${plan.instructions.join('\n')}` : '',
+        `Issues To Resolve:`,
+        ...normalizedFailures.map((f) => `- ${f.id}: ${f.message}`),
+      ].filter(Boolean).join('\n\n');
+
+      for (const targetFile of targetsNeedingCoder) {
+        try {
+          const normTarget = normalizeProjectPath(path.posix.normalize(targetFile.replace(/\\/g, '/')));
+          let fileRepairInstructions = coderRepairInstructions;
+          let preRepairContent = preCycleContents.get(normTarget);
+          try {
+            if (preRepairContent === undefined) {
+              preRepairContent = (await readVirtualFile(conversationId, normTarget)) ?? undefined;
+            }
+            const priorDiff = priorDiffsByFile.get(normTarget);
+            const repairContext = await resolveCanonicalRepairContext(conversationId, normTarget, priorDiff);
+            if (repairContext.domContractSnippet) {
+              fileRepairInstructions += `\n\n${repairContext.domContractSnippet}`;
+            }
+            if (repairContext.priorRepairDiff) {
+              fileRepairInstructions += `\n\n### Prior Repair Diff (Previous Cycle Attempt on ${normTarget}):\n\`\`\`diff\n${repairContext.priorRepairDiff}\n\`\`\`\nAvoid repeating an ineffective edit; fix the underlying root cause cleanly.`;
+            }
+            if (repairContext.inflowFiles.length > 0) {
+              fileRepairInstructions +=
+                `\n\n### Linked Context Files:\n` +
+                repairContext.inflowFiles
+                  .map((f) => `#### ${f.path} (${f.role})\n\`\`\`\n${f.content}\n\`\`\``)
+                  .join('\n\n');
+            }
+          } catch {}
+
+          if (targetFile.endsWith('.js') || targetFile.endsWith('.jsx')) {
+            fileRepairInstructions += `\n\nIMPORTANT LANGUAGE RULE FOR JAVASCRIPT (.js):\nOutput pure standard ECMAScript only. DO NOT use TypeScript 'as Type' type assertions or ': Type' annotations (they trigger TS8010 syntax error). For DOM properties (.value, .reset, .dataset), use runtime guards (e.g., if (el instanceof HTMLInputElement)), querySelector, or JSDoc.`;
+          }
+          await executeStageFn('Coder', fileRepairInstructions, targetFile);
+
+          try {
+            const afterRepairContent = await readVirtualFile(conversationId, normTarget);
+            if (preRepairContent !== undefined && typeof afterRepairContent === 'string') {
+              priorDiffsByFile.set(
+                normTarget,
+                buildCompactLineDiff(normTarget, preRepairContent, afterRepairContent)
+              );
+            }
+          } catch {}
+        } catch (err: any) {
+          if (err?.message?.includes('Unexpected stage Coder')) {
+            break;
+          }
+          throw err;
         }
-        await executeStageFn('Coder', fileRepairInstructions, targetFile);
-      } catch (err: any) {
-        if (err?.message?.includes('Unexpected stage Coder')) {
-          break;
-        }
-        throw err;
       }
     }
 
     emit({
       type: 'AGENT_LOG',
-      agent: 'Coder',
+      agent: targetsNeedingCoder.length > 0 ? 'Coder' : 'Debugger',
       message: `[REPAIR_COMMITTED] Applied and committed targeted repairs across ${authorizedTargets.join(', ')}.`,
     });
 

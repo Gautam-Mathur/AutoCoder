@@ -11,11 +11,12 @@ import { resolveAcceptedStageInputs, commitAcceptedArtifact, invalidateDescendan
 import { validateStageCandidate } from './stage-acceptance';
 import { assertPipelineLease } from './pipeline-lease';
 import { appendPipelineEvent } from './pipeline-events';
-import { runAgent } from './orchestrator';
+import { runAgent, RunAgentRuntimeOptions } from './orchestrator';
 import { StageLedger } from './memory';
 import {
   generateWorkspaceManifest,
   loadAuthorizedFileSet,
+  readVirtualFile,
   writeAuthorizedProjectFile,
 } from './vfs';
 import {
@@ -39,6 +40,7 @@ export interface ExecuteContractStageParams {
   signal?: AbortSignal;
   customUserContent?: string;
   targetFile?: string;
+  runtimeToolOptions?: Partial<RunAgentRuntimeOptions>;
 }
 
 export async function executeContractStage(params: ExecuteContractStageParams) {
@@ -53,6 +55,7 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
     signal,
     customUserContent,
     targetFile,
+    runtimeToolOptions,
   } = params;
 
   // Step 8.1 — Acquire stage contract
@@ -127,10 +130,7 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
         throw new Error(`Stage execution for ${stageName} was aborted by signal.`);
       }
 
-      const effectiveCustomUserContent = [
-        customUserContent,
-        retryFeedback,
-      ].filter(Boolean).join('\n\n');
+      const rawCustomUserContent = customUserContent || '';
 
       // Stage-specific candidate generation logic
       if (stageName === 'Coder') {
@@ -147,6 +147,10 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
             throw new Error(`Authorization Exception: Target file "${tf}" is not in authorized file set.`);
           }
 
+          const isSetupFile = (authorized.setupManagedFiles || []).some(
+            (sf) => sf.toLowerCase() === tf.toLowerCase()
+          );
+
           const agentResult = await runAgent(
             conversationId,
             'Coder',
@@ -154,25 +158,36 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
             onEvent,
             ledger,
             genAttempt,
-            effectiveCustomUserContent,
+            rawCustomUserContent || undefined,
             signal,
             retryFeedback || undefined,
             tf,
-            false // persistOutput = false (we persist via writeAuthorizedProjectFile below)
+            false, // persistOutput = false (we persist via writeAuthorizedProjectFile or verify tool write below)
+            {
+              ...runtimeToolOptions,
+              pipelineRunId,
+              stageExecutionId: stageExecution.id,
+              isSetupOperation: isSetupFile,
+              allowedMutationPaths: [tf],
+            }
           );
 
-          const codeContent = agentResult?.content || '';
-          const isSetupFile = (authorized.setupManagedFiles || []).some(
-            (sf) => sf.toLowerCase() === tf.toLowerCase()
-          );
-          await writeAuthorizedProjectFile({
-            conversationId,
-            pipelineRunId,
-            stageExecutionId: stageExecution.id,
-            filePath: tf,
-            content: codeContent,
-            isSetupOperation: isSetupFile,
-          });
+          const alreadyPersistedViaTool =
+            Boolean(agentResult?.mutatedViaTool) &&
+            typeof (await readVirtualFile(conversationId, tf)) === 'string' &&
+            ((await readVirtualFile(conversationId, tf)) || '').trim().length > 0;
+
+          if (!alreadyPersistedViaTool) {
+            const codeContent = agentResult?.content || '';
+            await writeAuthorizedProjectFile({
+              conversationId,
+              pipelineRunId,
+              stageExecutionId: stageExecution.id,
+              filePath: tf,
+              content: codeContent,
+              isSetupOperation: isSetupFile,
+            });
+          }
         }
 
         const manifest = await generateWorkspaceManifest(conversationId, stageExecution.id, authorized);
@@ -188,6 +203,27 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
         candidateContent = reportRes.content;
         currentWorkspaceHash = reportRes.workspaceHash;
       } else if (stageName === 'Debugger') {
+        let authorizedFilesForEvidence: string[] | undefined;
+        let authorizedFilesForMutation: string[] | undefined;
+        try {
+          const authSet = await loadAuthorizedFileSet(conversationId, pipelineRunId);
+          authorizedFilesForEvidence = authSet.authorizedFiles;
+          authorizedFilesForMutation =
+            authSet.coderAuthorizedFiles && authSet.coderAuthorizedFiles.length > 0
+              ? authSet.coderAuthorizedFiles
+              : authSet.authorizedFiles;
+        } catch {
+          // Optional if upstream not loaded
+        }
+        const evidenceBundle = await buildWorkspaceEvidenceBundle(conversationId, authorizedFilesForEvidence);
+        currentWorkspaceHash = evidenceBundle.workspaceHash;
+
+        const debugContext = [
+          rawCustomUserContent,
+          formatEvidenceBundleForPrompt(evidenceBundle),
+          `Current Workspace Fingerprint Hash:\n${currentWorkspaceHash}`,
+        ].filter(Boolean).join('\n\n');
+
         const agentResult = await runAgent(
           conversationId,
           'Debugger',
@@ -195,14 +231,22 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
           onEvent,
           ledger,
           genAttempt,
-          effectiveCustomUserContent,
+          debugContext,
           signal,
           retryFeedback || undefined,
           targetFile,
-          true
+          true,
+          {
+            ...runtimeToolOptions,
+            pipelineRunId,
+            stageExecutionId: stageExecution.id,
+            ...(authorizedFilesForMutation ? { allowedMutationPaths: authorizedFilesForMutation } : {}),
+          }
         );
+        if (Array.isArray(agentResult?.mutatedFiles) && agentResult.mutatedFiles.length > 0) {
+          currentWorkspaceHash = await computeWorkspaceFingerprint(conversationId);
+        }
         candidateContent = agentResult?.content || '';
-        currentWorkspaceHash = await computeWorkspaceFingerprint(conversationId);
       } else if (stageName === 'Security') {
         let authorizedFilesForEvidence: string[] | undefined;
         try {
@@ -215,7 +259,7 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
         currentWorkspaceHash = evidenceBundle.workspaceHash;
 
         const securityContext = [
-          effectiveCustomUserContent,
+          rawCustomUserContent,
           formatEvidenceBundleForPrompt(evidenceBundle),
           `Current Workspace Fingerprint Hash:\n${currentWorkspaceHash}`,
         ].filter(Boolean).join('\n\n');
@@ -246,7 +290,7 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
         currentWorkspaceHash = evidenceBundle.workspaceHash;
 
         const reviewerContext = [
-          effectiveCustomUserContent,
+          rawCustomUserContent,
           formatEvidenceBundleForPrompt(evidenceBundle),
           `Current Workspace Fingerprint Hash:\n${currentWorkspaceHash}`,
         ].filter(Boolean).join('\n\n');
@@ -273,7 +317,7 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
           onEvent,
           ledger,
           genAttempt,
-          effectiveCustomUserContent,
+          rawCustomUserContent || undefined,
           signal,
           retryFeedback || undefined,
           targetFile,
@@ -301,12 +345,29 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
         payload: { contentHash, stageExecutionId: stageExecution.id, attempt: genAttempt },
       });
 
-      // Load authorized set for evidence if available
+      // Load authorized set and non-control-plane workspace files for deterministic evidence checks
       let authorizedForEvidence;
       try {
         authorizedForEvidence = await loadAuthorizedFileSet(conversationId, pipelineRunId);
       } catch {
         // Upstream architecture/blueprint may not be accepted yet (e.g. Queen/Planner stages)
+      }
+
+      let workspaceFilesForEvidence: Record<string, string> | undefined;
+      if (stageName === 'Security' || stageName === 'Reviewer' || stageName === 'Debugger') {
+        try {
+          const vfsRecords = await prisma.virtualFile.findMany({
+            where: { conversationId },
+            orderBy: { filePath: 'asc' },
+          });
+          workspaceFilesForEvidence = {};
+          for (const vf of vfsRecords) {
+            const norm = normalizeProjectPath(vf.filePath);
+            if (!isControlPlaneArtifact(norm)) {
+              workspaceFilesForEvidence[norm] = vf.content || '';
+            }
+          }
+        } catch {}
       }
 
       // Step 8.7 — Run stage-specific validators
@@ -325,6 +386,7 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
         evidence: {
           currentWorkspaceHash,
           authorized: authorizedForEvidence,
+          ...(workspaceFilesForEvidence ? { workspaceFiles: workspaceFilesForEvidence } : {}),
         },
       });
 

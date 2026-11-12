@@ -23,8 +23,10 @@ import {
   AuthorizedFileSet,
 } from '../../workspace-policy';
 import {
-  assertAuthorizedToolMutation,
-} from '../../toolbox';
+  writeVirtualFile,
+  readVirtualFile,
+  assertAuthorizedFileMutation,
+} from '../../vfs';
 import {
   normalizeFailures,
   validateRepairPlan,
@@ -42,10 +44,6 @@ import {
   NormalizedFailure,
   RepairPlan,
 } from '../../repair-coordinator';
-import {
-  writeVirtualFile,
-  readVirtualFile,
-} from '../../vfs';
 import {
   validateStageCandidate,
 } from '../../stage-acceptance';
@@ -230,35 +228,35 @@ project-root/
       );
     });
 
-    it('assertAuthorizedToolMutation rejects path traversal attempts (../)', async () => {
+    it('assertAuthorizedFileMutation rejects path traversal attempts (../)', async () => {
       await assert.rejects(
         async () => {
-          await assertAuthorizedToolMutation(convId, '../escape.ts', runId1);
+          await assertAuthorizedFileMutation(convId, '../escape.ts', 'write', { pipelineRunId: runId1 });
         },
-        /Directory traversal detected/
+        /file path traversal detected/
       );
 
       await assert.rejects(
         async () => {
-          await assertAuthorizedToolMutation(convId, 'src/../../escape.ts', runId1);
+          await assertAuthorizedFileMutation(convId, 'src/../../escape.ts', 'write', { pipelineRunId: runId1 });
         },
-        /Directory traversal detected/
+        /file path traversal detected/
       );
     });
 
-    it('assertAuthorizedToolMutation rejects control plane modifications', async () => {
+    it('assertAuthorizedFileMutation rejects control plane modifications', async () => {
       await assert.rejects(
         async () => {
-          await assertAuthorizedToolMutation(convId, 'architecture.md', runId1);
+          await assertAuthorizedFileMutation(convId, 'architecture.md', 'write', { pipelineRunId: runId1 });
         },
-        /Cannot modify control plane artifact/
+        /Cannot modify control-plane artifact/
       );
 
       await assert.rejects(
         async () => {
-          await assertAuthorizedToolMutation(convId, 'blueprint.md', runId1);
+          await assertAuthorizedFileMutation(convId, 'blueprint.md', 'write', { pipelineRunId: runId1 });
         },
-        /Cannot modify control plane artifact/
+        /Cannot modify control-plane artifact/
       );
     });
   });

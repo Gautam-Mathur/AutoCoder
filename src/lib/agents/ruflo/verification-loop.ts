@@ -323,6 +323,7 @@ export async function runFullWorkspaceTester(
   }
 
   // 7b. Semantic DOM Contract Validation (parse5 & css-what AST validation)
+  let domIncomplete = false;
   try {
     const domResult = validateDomContracts(fileObj);
     if (domResult.status !== 'NOT_APPLICABLE') {
@@ -330,6 +331,9 @@ export async function runFullWorkspaceTester(
         for (const f of domResult.failures) {
           failures.push(f);
         }
+      } else if (domResult.status === 'INCOMPLETE') {
+        domIncomplete = true;
+        notes.push(...domResult.details);
       }
       validatorReports.push({
         name: 'DOM Contract Validation',
@@ -491,19 +495,28 @@ export async function runFullWorkspaceTester(
   }
 
   // 8c. Strict Mandatory Conjunction & Overall Status Determination:
-  // - PASS: static passed AND all applicable execution checks passed cleanly.
+  // - PASS: static passed AND all applicable execution checks passed cleanly AND DOM contracts complete.
   // - FAIL: any static or execution check failed.
-  // - INCOMPLETE: required build or runtime execution stages could not be executed.
+  // - INCOMPLETE: required build, runtime execution, or DOM contract stages could not be completely verified.
   let overallStatus: 'PASS' | 'FAIL' | 'INCOMPLETE';
 
   if (staticStatus === 'FAIL' || buildStatus === 'FAIL' || runtimeStatus === 'FAIL') {
     overallStatus = 'FAIL';
   } else if (
+    domIncomplete ||
     (isBuildApplicable && buildStatus === 'NOT_EXECUTED') ||
     (isRuntimeApplicable && runtimeStatus === 'NOT_EXECUTED')
   ) {
     overallStatus = 'INCOMPLETE';
-    notes.push('Mandatory build or runtime execution could not be verified in this environment.');
+    if (domIncomplete) {
+      notes.push('Static DOM contract validation reported INCOMPLETE (dynamic selectors or unlinked scripts detected).');
+    }
+    if (
+      (isBuildApplicable && buildStatus === 'NOT_EXECUTED') ||
+      (isRuntimeApplicable && runtimeStatus === 'NOT_EXECUTED')
+    ) {
+      notes.push('Mandatory build or runtime execution could not be verified in this environment.');
+    }
   } else if (
     staticStatus === 'PASS' &&
     (!isBuildApplicable || buildStatus === 'PASS') &&
@@ -559,7 +572,14 @@ export async function runDeterministicTesterReport(params: {
 
   const failuresList = testResult.failures.length === 0
     ? 'None'
-    : testResult.failures.map((f) => `- [${f.file}] ${f.message}`).join('\n');
+    : testResult.failures
+        .map((f) => `- [${f.file}] ${String(f.message || '').replace(/\s*\r?\n\s*/g, ' | ')}`)
+        .join('\n');
+
+  const depValidator = testResult.telemetry.validators.find((v) => v.name === 'Dependency Validation');
+  const depStatusLabel = depValidator
+    ? depValidator.status
+    : (testResult.failures.some((f) => f.file === 'package.json') ? 'FAIL' : 'PASS');
 
   // Exact Result token output: PASS | FAIL | INCOMPLETE
   const resultToken: 'PASS' | 'FAIL' | 'INCOMPLETE' = testResult.telemetry.overallStatus;
@@ -574,7 +594,7 @@ Verification run ${runRecord.id} completed on cycle ${testResult.cycle} with sta
     testResult.telemetry.overallStatus === 'PASS'
       ? 'All applicable static, semantic, and execution verification checks passed cleanly.'
       : testResult.telemetry.overallStatus === 'INCOMPLETE'
-      ? 'Mandatory execution checks (build or runtime) could not be executed. Overall status is INCOMPLETE.'
+      ? 'Mandatory verification checks (build, runtime, or static DOM contracts) could not be completely verified. Overall status is INCOMPLETE.'
       : `Found ${testResult.failures.length} error(s).`
   }
 
@@ -592,7 +612,7 @@ ${testResult.telemetry.validators.map((v) => `- ${v.name}: ${v.status}`).join('\
 - Project File Linter: ${testResult.failures.some((f) => !['imports', 'project', 'package.json', 'build', 'runtime'].includes(f.file)) ? 'FAIL' : 'PASS'}
 - Cross-File Imports: ${testResult.failures.some((f) => f.file === 'imports') ? 'FAIL' : 'PASS'}
 - Project Structure: ${testResult.failures.some((f) => f.file === 'project') ? 'FAIL' : 'PASS'}
-- Dependency Validation: ${testResult.failures.some((f) => f.file === 'package.json') ? 'FAIL' : 'PASS'}
+- Dependency Validation: ${depStatusLabel}
 - Production Build: ${testResult.telemetry.buildStatus}
 - Runtime Smoke Test: ${testResult.telemetry.runtimeStatus}
 

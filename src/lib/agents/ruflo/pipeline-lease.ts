@@ -146,5 +146,9 @@ export function startLeaseHeartbeat(
     }
   }, intervalMs);
 
+  if (typeof (timer as any).unref === 'function') {
+    (timer as any).unref();
+  }
+
   return () => clearInterval(timer);
 }

@@ -55,39 +55,39 @@ export async function runLinter(
 
   const fileMap = new Map<string, string>();
   for (const vf of virtualFiles) {
-    fileMap.set(vf.filePath.replace(/\\/g, '/'), vf.content);
+    fileMap.set(normalizeProjectPath(vf.filePath), vf.content);
   }
 
-  const targetPath = filePath.replace(/\\/g, '/');
+  const targetPath = normalizeProjectPath(filePath);
   const content = fileMap.get(targetPath);
 
   if (content === undefined) {
     return {
       success: false,
-      errors: [{ line: 0, character: 0, message: `File not found in virtual workspace: ${filePath}`, severity: 'error' }],
-      summary: `Cannot lint: file "${filePath}" does not exist.`,
+      errors: [{ line: 0, character: 0, message: `File not found in virtual workspace: ${targetPath}`, severity: 'error' }],
+      summary: `Cannot lint: file "${targetPath}" does not exist.`,
     };
   }
 
-  if (filePath.endsWith('.html')) {
-    const htmlCheck = runHtmlLinkCheck(content, filePath, fileMap);
+  if (targetPath.endsWith('.html')) {
+    const htmlCheck = runHtmlLinkCheck(content, targetPath, fileMap);
     if (!htmlCheck.success) return htmlCheck;
-    return runBracketBalanceCheck(content, filePath);
+    return runBracketBalanceCheck(content, targetPath);
   }
 
-  if (filePath.endsWith('.css')) {
-    return runCssPropertyCheck(content, filePath);
+  if (targetPath.endsWith('.css')) {
+    return runCssPropertyCheck(content, targetPath);
   }
 
-  if (filePath.endsWith('.prisma')) {
-    return runPrismaSchemaCheck(content, filePath);
+  if (targetPath.endsWith('.prisma')) {
+    return runPrismaSchemaCheck(content, targetPath);
   }
 
-  if (!filePath.endsWith('.ts') && !filePath.endsWith('.tsx') && !filePath.endsWith('.js') && !filePath.endsWith('.jsx')) {
-    return runBracketBalanceCheck(content, filePath);
+  if (!targetPath.endsWith('.ts') && !targetPath.endsWith('.tsx') && !targetPath.endsWith('.js') && !targetPath.endsWith('.jsx')) {
+    return runBracketBalanceCheck(content, targetPath);
   }
 
-  const isJsOrJsx = filePath.endsWith('.js') || filePath.endsWith('.jsx');
+  const isJsOrJsx = targetPath.endsWith('.js') || targetPath.endsWith('.jsx');
   const hasTsCheck = isTsCheckEnabled(content);
 
   const cwd = process.cwd().replace(/\\/g, '/');
@@ -101,9 +101,17 @@ export async function runLinter(
     if (fileMap.has(cleanName)) {
       return { key: cleanName, content: fileMap.get(cleanName)! };
     }
+    const normClean = normalizeProjectPath(cleanName);
+    if (fileMap.has(normClean)) {
+      return { key: normClean, content: fileMap.get(normClean)! };
+    }
     const relativePath = cleanName.startsWith(cwd + '/') ? cleanName.slice(cwd.length + 1) : cleanName;
     if (fileMap.has(relativePath)) {
       return { key: relativePath, content: fileMap.get(relativePath)! };
+    }
+    const normRel = normalizeProjectPath(relativePath);
+    if (fileMap.has(normRel)) {
+      return { key: normRel, content: fileMap.get(normRel)! };
     }
     for (const [key, val] of fileMap.entries()) {
       if (cleanName.endsWith('/' + key) || cleanName === key) {
@@ -161,14 +169,14 @@ export async function runLinter(
   const errors: LintResult['errors'] = [];
 
   // Run bracket balance check for structural unclosed bracket validation
-  const bracketCheck = runBracketBalanceCheck(content, filePath);
+  const bracketCheck = runBracketBalanceCheck(content, targetPath);
   if (!bracketCheck.success) {
     errors.push(...bracketCheck.errors);
   }
 
   // Next.js App Router 'use client' directive check
-  if ((filePath.startsWith('app/') || filePath.includes('/app/')) &&
-      /\.(tsx|jsx)$/.test(filePath)) {
+  if ((targetPath.startsWith('app/') || targetPath.includes('/app/')) &&
+      /\.(tsx|jsx)$/.test(targetPath)) {
     const hasClientHooks = /\b(useState|useEffect|useRef|useCallback|useMemo|useContext)\b/.test(content);
     const hasUseClient = content.trimStart().startsWith("'use client'") || content.trimStart().startsWith('"use client"');
     if (hasClientHooks && !hasUseClient) {
@@ -244,8 +252,8 @@ export async function runLinter(
     success,
     errors,
     summary: success
-      ? `No errors found in "${filePath}".`
-      : `Found ${errors.length} issue(s) in "${filePath}": ${errors.map((e) => `Line ${e.line}: ${e.message}`).join('; ')}`,
+      ? `No errors found in "${targetPath}".`
+      : `Found ${errors.length} issue(s) in "${targetPath}": ${errors.map((e) => `Line ${e.line}: ${e.message}`).join('; ')}`,
   };
 }
 

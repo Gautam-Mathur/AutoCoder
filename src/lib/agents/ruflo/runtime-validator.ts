@@ -788,9 +788,21 @@ export async function executeStaticFrontendSmokeTest(
               if (reqUrl.origin === allowedOrigin) {
                 send('Fetch.continueRequest', { requestId });
               } else {
+                if (!request.url?.endsWith('favicon.ico')) {
+                  const blockedMsg = `Blocked external resource request (AccessDenied): ${request.url}`;
+                  if (!consoleErrors.includes(blockedMsg)) {
+                    consoleErrors.push(blockedMsg);
+                  }
+                }
                 send('Fetch.failRequest', { requestId, errorReason: 'AccessDenied' });
               }
             } catch {
+              if (!request.url?.endsWith('favicon.ico')) {
+                const blockedMsg = `Blocked external resource request (AccessDenied): ${request.url}`;
+                if (!consoleErrors.includes(blockedMsg)) {
+                  consoleErrors.push(blockedMsg);
+                }
+              }
               send('Fetch.failRequest', { requestId, errorReason: 'AccessDenied' });
             }
           }
@@ -826,9 +838,19 @@ export async function executeStaticFrontendSmokeTest(
             });
           }
 
+          if (data.method === 'Runtime.consoleAPICalled' && data.params?.type === 'error') {
+            const argsText = (data.params.args || [])
+              .map((a: any) => a?.description || (a?.value !== undefined ? String(a.value) : ''))
+              .filter(Boolean)
+              .join(' ');
+            if (argsText && !argsText.includes('favicon.ico') && !consoleErrors.includes(argsText)) {
+              consoleErrors.push(argsText);
+            }
+          }
+
           if (data.method === 'Log.entryAdded' && data.params.entry?.level === 'error') {
             const entryText = data.params.entry?.text || '';
-            if (!entryText.includes('favicon.ico')) {
+            if (entryText && !entryText.includes('favicon.ico') && !consoleErrors.includes(entryText)) {
               consoleErrors.push(entryText);
             }
           }
