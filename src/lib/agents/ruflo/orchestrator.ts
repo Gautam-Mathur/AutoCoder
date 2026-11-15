@@ -12,7 +12,7 @@ import {
   Message,
 } from '../inference';
 import { getToolsForAgent } from './toolbox';
-import { executeToolLoop, ToolCallLogEntry } from './tool-loop';
+import { executeToolLoop, ToolCallLogEntry, stripRawToolCallMarkup } from './tool-loop';
 import { writeAgentOutput, queryAgentOutput } from '../sml';
 import { AGENT_DEFS, AgentDef } from './agents';
 import { loadExecutiveMemory, writeExecutiveMemoryRecord, OWNERSHIP, StageLedger } from './memory';
@@ -96,6 +96,21 @@ export async function abortPipelineExecution(conversationId: string): Promise<vo
 }
 
 // ─── Infrastructure Failure Detection ───────────────────────────────────────
+
+export function isAbortError(err: any, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  if (!err) return false;
+  if (err.name === 'AbortError') return true;
+  if (err.name === 'DOMException' && String(err.message || '').toLowerCase().includes('abort')) return true;
+  const msg = String(err.message || '').toLowerCase();
+  return (
+    msg.includes('operation was aborted') ||
+    msg.includes('aborted by signal') ||
+    msg.includes('the user aborted a request') ||
+    msg.includes('aborted during tool execution') ||
+    msg.includes('aborted before inference')
+  );
+}
 
 const INFRA_ERROR_SIGNATURES = [
   'ollama is not running',
@@ -732,7 +747,7 @@ export function parseBlueprintFiles(blueprintText: string): BlueprintFileSection
       .replace(/[*`'"]/g, '')
       .replace(/^\.\//, '')
       .replace(/^\//, '')
-      .split(/\s*[\(\[\{]/)[0]
+      .split(/\s+[\(\[\{]/)[0]
       .trim()
       .replace(/\/+$/, '');
 
@@ -1250,6 +1265,9 @@ export function syncHtmlAssetLinks(
 export function sanitizeCoderOutputForFile(raw: string, filePath?: string): string {
   if (!raw || !raw.trim()) return '';
 
+  // Reject raw tool calls emitted in conversational text immediately
+  if (stripRawToolCallMarkup(raw).trim().length === 0) return '';
+
   let text = raw.trim();
   const ext = filePath ? path.extname(filePath).toLowerCase() : '';
   const extWithoutDot = ext.replace(/^\./, '');
@@ -1277,14 +1295,14 @@ export function sanitizeCoderOutputForFile(raw: string, filePath?: string): stri
 
     if (candidateFences.length === 1) {
       const codeCandidate = candidateFences[0][2].trim();
-      if (isParserValid(codeCandidate, ext)) {
+      if (isParserValid(codeCandidate, ext) && stripRawToolCallMarkup(codeCandidate).length > 0) {
         return codeCandidate;
       }
     } else if (candidateFences.length > 1) {
       // Multiple tagged blocks: test parser validity
       const validBlocks = candidateFences
         .map((m) => m[2].trim())
-        .filter((code) => isParserValid(code, ext));
+        .filter((code) => isParserValid(code, ext) && stripRawToolCallMarkup(code).length > 0);
       if (validBlocks.length === 1) {
         return validBlocks[0];
       }
@@ -1300,7 +1318,7 @@ export function sanitizeCoderOutputForFile(raw: string, filePath?: string): stri
       // No tag matched directly: check generic fences for parse validity
       const validGeneric = matches
         .map((m) => m[2].trim())
-        .filter((code) => code.length > 10 && isParserValid(code, ext));
+        .filter((code) => code.length > 10 && isParserValid(code, ext) && stripRawToolCallMarkup(code).length > 0);
       if (validGeneric.length === 1) {
         return validGeneric[0];
       }
@@ -1312,12 +1330,13 @@ export function sanitizeCoderOutputForFile(raw: string, filePath?: string): stri
 
   // 3. JSON Parsing (.json)
   if (ext === '.json') {
-    const firstBrace = text.search(/[{\[]/);
+    const cleaned = stripRawToolCallMarkup(text);
+    const firstBrace = cleaned.search(/[{\[]/);
     if (firstBrace >= 0) {
-      for (let endIdx = text.length; endIdx > firstBrace; endIdx--) {
-        const char = text[endIdx - 1];
+      for (let endIdx = cleaned.length; endIdx > firstBrace; endIdx--) {
+        const char = cleaned[endIdx - 1];
         if (char === '}' || char === ']') {
-          const candidate = text.substring(firstBrace, endIdx);
+          const candidate = cleaned.substring(firstBrace, endIdx);
           try {
             JSON.parse(candidate);
             return candidate.trim();
@@ -1325,55 +1344,72 @@ export function sanitizeCoderOutputForFile(raw: string, filePath?: string): stri
         }
       }
     }
-    return text;
+    return '';
   }
 
   // 4. JavaScript / TypeScript (.js, .jsx, .ts, .tsx)
   if (['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs'].includes(ext)) {
-    const jsStart = text.search(
+    const cleaned = stripRawToolCallMarkup(text);
+    const jsStart = cleaned.search(
       /^(?:\s*['"]use (?:client|server)['"];?|#!|\/\/|\/\*|import\s+|export\s+|const\s+|let\s+|var\s+|(?:async\s+)?function\s+|class\s+|interface\s+|type\s+|enum\s+|declare\s+|namespace\s+|\(\s*(?:async\s*)?\([^)]*\)\s*=>)/m
     );
-    if (jsStart > 0) {
-      const candidate = text.substring(jsStart).trim();
+    if (jsStart >= 0) {
+      const candidate = cleaned.substring(jsStart).trim();
       if (isParserValid(candidate, ext)) {
         return candidate;
       }
     }
-    return text.trim();
+    if (isParserValid(cleaned, ext) && cleaned.length > 0) {
+      return cleaned.trim();
+    }
+    return '';
   }
 
   // 5. CSS / SCSS (.css, .scss, .less)
   if (['.css', '.scss', '.less'].includes(ext)) {
-    const cssStart = text.search(
+    const cleaned = stripRawToolCallMarkup(text);
+    const cssStart = cleaned.search(
       /^(?:\/\*|@(?:tailwind|import|charset|layer|property|keyframes|media|supports|font-face|container|page)|:root|\*|[.#a-zA-Z0-9_\-\[\]="':,\s]+\{)/m
     );
-    if (cssStart > 0) {
-      return text.substring(cssStart).trim();
+    if (cssStart >= 0) {
+      const candidate = cleaned.substring(cssStart).trim();
+      if (isParserValid(candidate, ext)) {
+        return candidate;
+      }
     }
-    return text.trim();
+    return cleaned.trim();
   }
 
   // 6. HTML / SVG (.html, .svg)
   if (['.html', '.svg'].includes(ext)) {
-    const htmlStart = text.search(
+    const cleaned = stripRawToolCallMarkup(text);
+    const htmlStart = cleaned.search(
       /^(?:<!DOCTYPE\s+html|<\?xml|<html|<head|<title|<meta|<link|<style|<script|<body|<header|<main|<nav|<footer|<section|<div|<svg|<!--)/im
     );
-    if (htmlStart > 0) {
-      return text.substring(htmlStart).trim();
+    if (htmlStart >= 0) {
+      return cleaned.substring(htmlStart).trim();
     }
-    return text.trim();
+    return cleaned.trim();
   }
 
-  // 7. Prisma (.prisma)
+  // 7. Markdown (.md, .markdown)
+  if (['.md', '.markdown'].includes(ext)) {
+    const cleaned = stripRawToolCallMarkup(text);
+    return cleaned.trim();
+  }
+
+  // 8. Prisma (.prisma)
   if (ext === '.prisma') {
-    const prismaStart = text.search(/^(?:\/\/\s*[\w\-\s]+|datasource\s+|generator\s+|model\s+|enum\s+|type\s+)/m);
-    if (prismaStart > 0) {
-      return text.substring(prismaStart).trim();
+    const cleaned = stripRawToolCallMarkup(text);
+    const prismaStart = cleaned.search(/^(?:\/\/\s*[\w\-\s]+|datasource\s+|generator\s+|model\s+|enum\s+|type\s+)/m);
+    if (prismaStart >= 0) {
+      return cleaned.substring(prismaStart).trim();
     }
-    return text.trim();
+    return cleaned.trim();
   }
 
-  return text.trim();
+  const cleaned = stripRawToolCallMarkup(text);
+  return cleaned.trim();
 }
 
 /**
@@ -1775,10 +1811,11 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
   const durationMs = Date.now() - startTime;
   const estimatedTokens = Math.round((systemInstructions.length + userContent.length + finalContent.length) / 4);
 
+  const STAGE_TELEMETRY_STATUS = 'Completed';
   await writeRichTelemetryLog({
     conversationId,
     agentName,
-    status: 'Completed',
+    status: STAGE_TELEMETRY_STATUS,
     richLog: {
       telemetryType: 'rich_step_log',
       executionMemory: { stage: agentName },
@@ -2431,10 +2468,11 @@ export async function runOrchestrator(
     // Launch preview ONLY after Final Gate and deterministic Security/Quality Gates pass (F-08)
     await launchVSCodePreview(conversationId, emit);
 
+    const PIPELINE_COMPLETED_STATUS = 'Completed';
     await prisma.$transaction([
       prisma.conversation.update({
         where: { id: conversationId },
-        data: { status: 'Completed' },
+        data: { status: PIPELINE_COMPLETED_STATUS },
       }),
       prisma.pipelineRun.update({
         where: { conversationId },
@@ -2448,6 +2486,23 @@ export async function runOrchestrator(
     });
 
   } catch (err: any) {
+    if (isAbortError(err, executionSignal)) {
+      finalPipelineState = 'CANCELLED';
+      emit({
+        type: 'PIPELINE_CANCELLED',
+        message: 'Pipeline execution was cancelled.',
+      });
+      await prisma.conversation.update({
+        where: { id: conversationId },
+        data: { status: 'Cancelled' },
+      }).catch(() => {});
+      await prisma.pipelineRun.updateMany({
+        where: { conversationId },
+        data: { state: 'CANCELLED', leaseOwner: null, leaseExpiresAt: null },
+      }).catch(() => {});
+      return;
+    }
+
     console.error(`Pipeline error in conversation ${conversationId}:`, err);
     await flushVfsToDisk(conversationId).catch(() => {});
 

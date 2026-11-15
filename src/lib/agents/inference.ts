@@ -827,7 +827,8 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
               0
             ) + (hasTools ? JSON.stringify(options.tools).length : 0);
           const needed = Math.ceil(promptChars / 4) + (options.maxTokens || 4096) + 512;
-          return Math.min(131072, Math.max(32768, needed));
+          const maxAllowed = parseInt(process.env.OLLAMA_MAX_CTX || '32768', 10);
+          return Math.min(maxAllowed, Math.max(16384, needed));
         })(),
       },
       stream: true,

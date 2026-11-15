@@ -17,7 +17,10 @@ import { coordinateRepair } from '../repair-coordinator';
 import {
   executeToolLoop,
   serializeToolResultForModel,
+  extractTextToolCalls,
+  stripRawToolCallMarkup,
 } from '../tool-loop';
+import { sanitizeCoderOutputForFile } from '../orchestrator';
 import {
   getToolsForAgent,
   toolToAnthropicFormat,
@@ -648,7 +651,7 @@ Frontend-only project.`;
       assert.equal(stageRes.status, 'ACCEPTED');
       assert.equal(sawScopeViolationRejection, true, 'Coder out-of-scope mutation attempt must fail closed');
       assert.equal(await readVirtualFile(convId, 'tsconfig.json'), tsconfigCode.trim());
-      assert.equal(await readVirtualFile(convId, 'src/utils.ts'), utilsCode.trim(), 'src/utils.ts must stay uncorrupted');
+      assert.equal((await readVirtualFile(convId, 'src/utils.ts'))?.trim(), utilsCode.trim(), 'src/utils.ts must stay uncorrupted');
       assert.equal(
         await readVirtualFile(convId, 'src/app.ts'),
         appCode,
@@ -792,6 +795,121 @@ Frontend-only project.`;
 
       assert.deepEqual(stageCalls, ['Tester', 'Debugger', 'Tester']);
       assert.ok(logs.some((l) => l.includes('[REPAIR_DIRECT_APPLIED]')));
+    });
+  });
+
+  describe('Local Model Text-Based Tool Calling & Sanitizer Defense Suite', () => {
+    const dummyTools = getToolsForAgent(AGENT_DEFS.Coder.tools);
+
+    it('extracts Qwen XML tool calls when Ollama streams them into turn content', () => {
+      const qwenRaw = `<function=list_files>\n</function>\n</tool_call>`;
+      const extracted = extractTextToolCalls(qwenRaw, dummyTools);
+
+      assert.strictEqual(extracted.length, 1);
+      assert.strictEqual(extracted[0].toolCall.name, 'list_files');
+      assert.deepStrictEqual(extracted[0].toolCall.arguments, {});
+    });
+
+    it('extracts tool calls with parameters from XML tags', () => {
+      const qwenWithParams = `<tool_call>\n<function=read_file>\n<parameter=file_path>package.json</parameter>\n</function>\n</tool_call>`;
+      const extracted = extractTextToolCalls(qwenWithParams, dummyTools);
+
+      assert.strictEqual(extracted.length, 1);
+      assert.strictEqual(extracted[0].toolCall.name, 'read_file');
+      assert.strictEqual(extracted[0].toolCall.arguments.file_path, 'package.json');
+    });
+
+    it('extracts tool calls from markdown code fences', () => {
+      const fenceCall = "```tool_call\n{\"name\": \"write_file\", \"arguments\": {\"file_path\": \"README.md\", \"content\": \"# Test\"}}\n```";
+      const extracted = extractTextToolCalls(fenceCall, dummyTools);
+
+      assert.strictEqual(extracted.length, 1);
+      assert.strictEqual(extracted[0].toolCall.name, 'write_file');
+      assert.strictEqual(extracted[0].toolCall.arguments.file_path, 'README.md');
+      assert.strictEqual(extracted[0].toolCall.arguments.content, '# Test');
+    });
+
+    it('stripRawToolCallMarkup strips pseudo-XML and returns empty for pure tool calls', () => {
+      const pureToolCall = `<function=list_files>\n</function>\n</tool_call>`;
+      const stripped = stripRawToolCallMarkup(pureToolCall);
+      assert.strictEqual(stripped, '');
+    });
+
+    it('stripRawToolCallMarkup preserves surrounding markdown explanation', () => {
+      const mixed = `Checking existing files before proceeding:\n<function=list_files>\n</function>\n</tool_call>\nDone.`;
+      const stripped = stripRawToolCallMarkup(mixed);
+      assert.ok(stripped.includes('Checking existing files before proceeding:'));
+      assert.ok(stripped.includes('Done.'));
+      assert.strictEqual(stripped.includes('<function='), false);
+      assert.strictEqual(stripped.includes('</tool_call>'), false);
+    });
+
+    it('sanitizeCoderOutputForFile rejects pure tool calls for package.json and README.md', () => {
+      const rawToolCall = `<function=list_files>\n</function>\n</tool_call>`;
+      assert.strictEqual(sanitizeCoderOutputForFile(rawToolCall, 'package.json'), '');
+      assert.strictEqual(sanitizeCoderOutputForFile(rawToolCall, 'README.md'), '');
+      assert.strictEqual(sanitizeCoderOutputForFile(rawToolCall, 'src/index.ts'), '');
+    });
+
+    it('sanitizeCoderOutputForFile preserves valid JSON and valid code', () => {
+      const validJson = `{\n  "name": "my-app",\n  "version": "1.0.0"\n}`;
+      assert.strictEqual(sanitizeCoderOutputForFile(validJson, 'package.json'), validJson);
+
+      const validTs = `export function add(a: number, b: number) {\n  return a + b;\n}`;
+      assert.strictEqual(sanitizeCoderOutputForFile(validTs, 'src/math.ts'), validTs);
+    });
+
+    it('executes text-based tool calls in executeToolLoop and feeds tool results back to the model', async () => {
+      await writeVirtualFile(convId, 'src/utils.ts', 'export function sum(a: number, b: number) { return a + b; }', {
+        pipelineRunId: runId,
+        stageExecutionId: seedExecId,
+      });
+
+      let turnCount = 0;
+      const result = await executeToolLoop({
+        messages: [{ role: 'user', content: 'Inspect the workspace and produce src/app.ts' }],
+        tools: dummyTools,
+        toolContext: {
+          conversationId: convId,
+          pipelineRunId: runId,
+          stageExecutionId: seedExecId,
+          stageName: 'Coder',
+        },
+        maxIterations: 4,
+        inferenceTurnFn: async (msgs) => {
+          turnCount++;
+          if (turnCount === 1) {
+            // Model emits raw XML tool call in content instead of structured toolCalls
+            return {
+              content: 'I will check workspace files first:\n<function=list_files>\n</function>\n</tool_call>',
+              toolCalls: [],
+              provider: 'mock',
+              model: 'qwen3-coder:30b',
+              durationMs: 10,
+            };
+          }
+
+          // In turn 2, verify the model received the tool result message
+          const toolMsg = msgs.find((m) => m.role === 'tool');
+          assert.ok(toolMsg, 'Expected role: tool message in conversation history');
+          assert.ok(toolMsg.content.includes('src/utils.ts'), 'Expected list_files result in tool message');
+
+          return {
+            content: 'export const appResult = 42;',
+            toolCalls: [],
+            provider: 'mock',
+            model: 'qwen3-coder:30b',
+            durationMs: 10,
+          };
+        },
+      });
+
+      assert.strictEqual(result.iterations, 2);
+      assert.strictEqual(result.toolExecutions.length, 1);
+      assert.strictEqual(result.toolExecutions[0].toolName, 'list_files');
+      assert.strictEqual(result.toolExecutions[0].success, true);
+      assert.ok(result.content.includes('export const appResult = 42;'));
+      assert.strictEqual(result.content.includes('<function='), false);
     });
   });
 });

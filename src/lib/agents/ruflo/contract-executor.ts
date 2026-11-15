@@ -11,7 +11,7 @@ import { resolveAcceptedStageInputs, commitAcceptedArtifact, invalidateDescendan
 import { validateStageCandidate } from './stage-acceptance';
 import { assertPipelineLease } from './pipeline-lease';
 import { appendPipelineEvent } from './pipeline-events';
-import { runAgent, RunAgentRuntimeOptions } from './orchestrator';
+import { runAgent, RunAgentRuntimeOptions, sanitizeCoderOutputForFile } from './orchestrator';
 import { StageLedger } from './memory';
 import {
   generateWorkspaceManifest,
@@ -151,6 +151,22 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
             (sf) => sf.toLowerCase() === tf.toLowerCase()
           );
 
+          // Fast-forward resume: if target file already exists in VFS with valid content, skip re-generation
+          if (!targetFile) {
+            const existingContent = await readVirtualFile(conversationId, tf);
+            if (existingContent && existingContent.trim().length > 0) {
+              const sanitized = sanitizeCoderOutputForFile(existingContent, tf);
+              if (sanitized && sanitized.trim().length > 0) {
+                onEvent({
+                  type: 'AGENT_LOG',
+                  agent: 'Coder',
+                  message: `⏩ Target file "${tf}" already generated and verified in VFS (${existingContent.length} bytes). Resuming next target...`,
+                });
+                continue;
+              }
+            }
+          }
+
           const agentResult = await runAgent(
             conversationId,
             'Coder',
@@ -178,7 +194,54 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
             ((await readVirtualFile(conversationId, tf)) || '').trim().length > 0;
 
           if (!alreadyPersistedViaTool) {
-            const codeContent = agentResult?.content || '';
+            let codeContent = sanitizeCoderOutputForFile(agentResult?.content || '', tf);
+
+            if (!codeContent || codeContent.trim().length === 0) {
+              onEvent({
+                type: 'AGENT_LOG',
+                agent: 'Coder',
+                message: `⚠️ [Coder] Target file "${tf}" produced invalid or tool-contaminated output. Retrying file generation...`,
+              });
+
+              const retryResult = await runAgent(
+                conversationId,
+                'Coder',
+                userPromptText,
+                onEvent,
+                ledger,
+                genAttempt + 1,
+                rawCustomUserContent || undefined,
+                signal,
+                `[CRITICAL CORRECTION FOR "${tf}"]:\nYour previous output for "${tf}" contained tool invocation tags or was empty instead of valid file source code. You MUST output ONLY the complete, raw source code for "${tf}" directly, or write it via write_file. Do not output pseudo-XML tool tags.`,
+                tf,
+                false,
+                {
+                  ...runtimeToolOptions,
+                  pipelineRunId,
+                  stageExecutionId: stageExecution.id,
+                  isSetupOperation: isSetupFile,
+                  allowedMutationPaths: [tf],
+                }
+              );
+
+              const persistedOnRetry =
+                Boolean(retryResult?.mutatedViaTool) &&
+                typeof (await readVirtualFile(conversationId, tf)) === 'string' &&
+                ((await readVirtualFile(conversationId, tf)) || '').trim().length > 0;
+
+              if (persistedOnRetry) {
+                continue;
+              }
+
+              codeContent = sanitizeCoderOutputForFile(retryResult?.content || '', tf);
+            }
+
+            if (!codeContent || codeContent.trim().length === 0) {
+              throw new Error(
+                `Coder failed to produce valid source code for "${tf}". Output was empty or contained pseudo-tool syntax.`
+              );
+            }
+
             await writeAuthorizedProjectFile({
               conversationId,
               pipelineRunId,

@@ -2,6 +2,7 @@ import {
   InferenceOptions,
   InferenceTurnResult,
   Message,
+  ToolCall,
   runInferenceTurn,
 } from '../inference';
 import {
@@ -46,6 +47,149 @@ export interface RunToolLoopResult {
 }
 
 const MUTATING_TOOLS = new Set(['write_file', 'apply_diff', 'delete_file']);
+
+export interface ExtractedTextToolCall {
+  toolCall: ToolCall;
+  rawMatchedText: string;
+}
+
+/**
+ * Strips raw XML, pseudo-tag, or fenced tool call markup emitted in prose
+ * by open-source models (such as Qwen, DeepSeek, Llama).
+ */
+export function stripRawToolCallMarkup(text: string): string {
+  if (!text || typeof text !== 'string') return '';
+  return text
+    .replace(/(?:<tool_call>\s*)?<(?:function|invoke)(?:=|\s+name=)["']?([a-zA-Z0-9_-]+)["']?>[\s\S]*?<\/(?:function|invoke)>(?:\s*<\/tool_call>)?/gi, '')
+    .replace(/(?:<tool_call>\s*)?<(?:function|invoke)(?:=|\s+name=)["']?([a-zA-Z0-9_-]+)["']?\s*\/>(?:\s*<\/tool_call>)?/gi, '')
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
+    .replace(/```(?:tool_call|tool|function_call)[\s\S]*?```/gi, '')
+    .replace(/<\/?(?:tool_call|function|parameter|invoke|arg)[^>]*>/gi, '')
+    .trim();
+}
+
+/**
+ * Parses text-based pseudo-tool invocations (Qwen XML tags or Markdown tool call fences)
+ * into normalized ToolCall objects when Ollama streams them into message content.
+ */
+export function extractTextToolCalls(
+  content: string,
+  availableTools?: ToolDefinition[]
+): ExtractedTextToolCall[] {
+  if (!content || typeof content !== 'string') return [];
+  const validToolNames = new Map<string, string>(
+    (availableTools || []).map((t) => [t.name.toLowerCase(), t.name])
+  );
+
+  const results: ExtractedTextToolCall[] = [];
+  const seenMatches = new Set<string>();
+
+  // Pattern 1: <tool_call>...JSON...</tool_call>
+  const toolCallJsonRegex = /<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/gi;
+  for (const match of content.matchAll(toolCallJsonRegex)) {
+    try {
+      const parsed = JSON.parse(match[1]);
+      const rawName = parsed.name || parsed.tool || parsed.function;
+      const canonicalName = validToolNames.get(String(rawName || '').toLowerCase());
+      if (canonicalName || validToolNames.size === 0) {
+        results.push({
+          toolCall: {
+            id: `call_text_${Math.random().toString(36).substring(2, 10)}`,
+            name: canonicalName || String(rawName),
+            arguments: parsed.arguments || parsed.parameters || {},
+          },
+          rawMatchedText: match[0],
+        });
+        seenMatches.add(match[0]);
+      }
+    } catch {}
+  }
+
+  // Pattern 2: ```tool_call / ```tool / ```function_call
+  const fenceRegex = /```(?:tool_call|tool|function_call)\s*\r?\n([\s\S]*?)\r?\n```/gi;
+  for (const match of content.matchAll(fenceRegex)) {
+    try {
+      const parsed = JSON.parse(match[1]);
+      const rawName = parsed.name || parsed.tool || parsed.function;
+      const canonicalName = validToolNames.get(String(rawName || '').toLowerCase());
+      if (canonicalName || validToolNames.size === 0) {
+        results.push({
+          toolCall: {
+            id: `call_text_${Math.random().toString(36).substring(2, 10)}`,
+            name: canonicalName || String(rawName),
+            arguments: parsed.arguments || parsed.parameters || {},
+          },
+          rawMatchedText: match[0],
+        });
+        seenMatches.add(match[0]);
+      }
+    } catch {}
+  }
+
+  // Pattern 3: Qwen / Local model XML tags:
+  // e.g.:
+  // <tool_call><function=list_files></function></tool_call>
+  // <function=list_files></function></tool_call>
+  // <function=read_file><parameter=file_path>...</parameter></function>
+  // <invoke name="read_file"><parameter name="file_path">...</parameter></invoke>
+  const xmlFunctionRegex =
+    /(?:<tool_call>\s*)?<(?:function|invoke)(?:=|\s+name=)["']?([a-zA-Z0-9_-]+)["']?>([\s\S]*?)<\/(?:function|invoke)>(?:\s*<\/tool_call>)?/gi;
+
+  for (const match of content.matchAll(xmlFunctionRegex)) {
+    if (seenMatches.has(match[0])) continue;
+    const rawName = match[1];
+    const canonicalName = validToolNames.get(rawName.toLowerCase());
+    if (!canonicalName && validToolNames.size > 0) continue;
+
+    const body = match[2];
+    const args: Record<string, any> = {};
+
+    const paramRegex =
+      /<(?:parameter|arg)(?:=|\s+name=)["']?([a-zA-Z0-9_-]+)["']?>([\s\S]*?)<\/(?:parameter|arg)>/gi;
+    for (const pMatch of body.matchAll(paramRegex)) {
+      const key = pMatch[1];
+      let val: any = pMatch[2].trim();
+      try {
+        if ((val.startsWith('{') && val.endsWith('}')) || (val.startsWith('[') && val.endsWith(']'))) {
+          val = JSON.parse(val);
+        }
+      } catch {}
+      args[key] = val;
+    }
+
+    results.push({
+      toolCall: {
+        id: `call_text_${Math.random().toString(36).substring(2, 10)}`,
+        name: canonicalName || rawName,
+        arguments: args,
+      },
+      rawMatchedText: match[0],
+    });
+    seenMatches.add(match[0]);
+  }
+
+  // Pattern 4: Self-closing <function=list_files /> or <invoke name="list_files" />
+  const selfClosingRegex =
+    /(?:<tool_call>\s*)?<(?:function|invoke)(?:=|\s+name=)["']?([a-zA-Z0-9_-]+)["']?\s*\/>(?:\s*<\/tool_call>)?/gi;
+  for (const match of content.matchAll(selfClosingRegex)) {
+    if (seenMatches.has(match[0])) continue;
+    const rawName = match[1];
+    const canonicalName = validToolNames.get(rawName.toLowerCase());
+    if (!canonicalName && validToolNames.size > 0) continue;
+
+    results.push({
+      toolCall: {
+        id: `call_text_${Math.random().toString(36).substring(2, 10)}`,
+        name: canonicalName || rawName,
+        arguments: {},
+      },
+      rawMatchedText: match[0],
+    });
+    seenMatches.add(match[0]);
+  }
+
+  return results;
+}
 
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== 'object') {
@@ -193,9 +337,20 @@ export async function executeToolLoop(params: RunToolLoopParams): Promise<RunToo
       tools: formattedTools,
     });
 
-    if (!turn.toolCalls || turn.toolCalls.length === 0) {
+    const textToolCalls =
+      (!turn.toolCalls || turn.toolCalls.length === 0)
+        ? extractTextToolCalls(turn.content, tools)
+        : [];
+
+    const effectiveToolCalls =
+      turn.toolCalls && turn.toolCalls.length > 0
+        ? turn.toolCalls
+        : textToolCalls.map((t) => t.toolCall);
+
+    if (effectiveToolCalls.length === 0) {
+      const cleaned = stripRawToolCallMarkup(turn.content || '');
       return {
-        content: turn.content || '',
+        content: cleaned || turn.content || '',
         iterations: iteration,
         toolExecutions,
         mutatedFiles: Array.from(mutatedFilesSet),
@@ -203,10 +358,18 @@ export async function executeToolLoop(params: RunToolLoopParams): Promise<RunToo
       };
     }
 
+    let cleanedContent = turn.content || '';
+    if (textToolCalls.length > 0) {
+      for (const extracted of textToolCalls) {
+        cleanedContent = cleanedContent.replace(extracted.rawMatchedText, '');
+      }
+      cleanedContent = stripRawToolCallMarkup(cleanedContent);
+    }
+
     workingMessages.push({
       role: 'assistant',
-      content: turn.content || '',
-      tool_calls: turn.toolCalls.map((tc) => ({
+      content: cleanedContent,
+      tool_calls: effectiveToolCalls.map((tc) => ({
         id: tc.id,
         type: 'function',
         function: {
@@ -218,7 +381,7 @@ export async function executeToolLoop(params: RunToolLoopParams): Promise<RunToo
 
     let allBlockedInIteration = true;
 
-    for (const tc of turn.toolCalls) {
+    for (const tc of effectiveToolCalls) {
       if (inferenceOptions.signal?.aborted) {
         throw new Error(`Stage ${stageLabel} aborted during tool execution.`);
       }
@@ -326,8 +489,10 @@ export async function executeToolLoop(params: RunToolLoopParams): Promise<RunToo
     tools: undefined,
   });
 
+  const finalCleaned = stripRawToolCallMarkup(finalTurn.content || '');
+
   return {
-    content: finalTurn.content || '',
+    content: finalCleaned || finalTurn.content || '',
     iterations: maxIterations + 1,
     toolExecutions,
     mutatedFiles: Array.from(mutatedFilesSet),

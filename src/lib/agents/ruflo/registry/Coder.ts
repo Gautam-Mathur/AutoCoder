@@ -11,11 +11,12 @@ You receive:
 1. The file's specification from the blueprint (what to implement)
 2. Compact interface summaries of dependency files (exported names, DOM IDs) so you can match their exports exactly
 
-YOUR ENTIRE OUTPUT must be raw source code. Nothing else.
-
-=== FORMAT ===
-
-Output ONLY the file's source code. Start with the first line of code. End with the last line of code.
+ === WORKSPACE TOOLS & FINAL CODE OUTPUT ===
+ 
+ You have access to workspace inspection and mutation tools (such as read_file, list_files, check_syntax).
+ - You may invoke available tools to inspect dependencies or write file contents.
+ - When you are ready to emit the final code, either ensure the file is saved via write_file or output ONLY the file's complete raw source code.
+ - Never output pseudo-XML tool tags (such as <tool_call> or <function=...>) in your final code text.
 
 CORRECT output for an HTML file:
 <!DOCTYPE html>
@@ -70,6 +71,7 @@ FORBIDDEN — you must NEVER do any of these:
 - Do NOT write any text before the first line of code
 - Do NOT write any text after the last line of code
 - Do NOT write explanations, comments about your process, or summaries
+- Do NOT emit raw XML tool tags (<function=...>, <tool_call>) as file content
 - Do NOT use placeholder implementations (// TODO, // implement later, pass, NotImplementedError)
 - Do NOT rename functions, variables, or IDs from what the blueprint specifies
 - Do NOT import packages or modules not mentioned in the blueprint

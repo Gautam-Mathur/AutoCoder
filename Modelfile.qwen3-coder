@@ -1,0 +1,34 @@
+FROM qwen3-coder:30b
+
+TEMPLATE """{{- if .Tools }}
+<|im_start|>system
+# Tools
+You have access to the following tools:
+{{ .Tools }}
+
+When you want to call a tool, you must reply with a tool call. Do not write XML tags or conversational explanations.
+<|im_end|>
+{{- else if .System }}
+<|im_start|>system
+{{ .System }}
+<|im_end|>
+{{- end }}
+{{- range .Messages }}
+<|im_start|>{{ .Role }}
+{{- if .Content }}
+{{ .Content }}
+{{- end }}
+{{- if .ToolCalls }}
+{{- range .ToolCalls }}
+{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
+{{- end }}
+{{- end }}
+<|im_end|>
+{{- end }}
+<|im_start|>assistant
+"""
+
+PARAMETER stop "<|im_start|>"
+PARAMETER stop "<|im_end|>"
+PARAMETER stop "<|endoftext|>"
+PARAMETER temperature 0.1
