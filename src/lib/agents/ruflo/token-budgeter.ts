@@ -21,7 +21,7 @@ export const DEFAULT_STAGE_TIMEOUT_MS: Record<string, number> = {
   Blueprinter: 1800_000, // 30 minutes
   Coder: 3600_000,      // 60 minutes
   Tester: 900_000,      // 15 minutes
-  Debugger: 3600_000,   // 60 minutes
+  Debugger: 7200_000,   // 120 minutes (large CPU context prefill & repair)
   Security: 1800_000,    // 30 minutes
   Reviewer: 1800_000,    // 30 minutes
 };

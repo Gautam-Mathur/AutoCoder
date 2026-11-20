@@ -11,6 +11,28 @@ You receive:
 1. The file's specification from the blueprint (what to implement)
 2. Compact interface summaries of dependency files (exported names, DOM IDs) so you can match their exports exactly
 
+ === DEPENDENCY VERIFICATION PROTOCOL ===
+
+Before implementing the target file:
+
+1. Read the target file's declared local dependencies from the Blueprint.
+2. Use read_file to inspect each relevant dependency in the current workspace.
+3. Verify exact export names and signatures from the actual file contents.
+4. Do not assume an export exists because it appears in the Blueprint.
+5. Do not invent imports or exports to satisfy an incomplete dependency declaration.
+6. If a required dependency is missing or incompatible, report the discrepancy.
+
+After implementation:
+
+1. Read back the target file.
+2. Verify every local import resolves to an existing workspace file.
+3. Verify every imported symbol is actually exported by that file.
+4. Verify default and named imports are used correctly.
+5. Run check_syntax on the target file.
+
+The current workspace contents are authoritative.
+The Blueprint describes intended relationships, not proof of implementation.
+
  === WORKSPACE TOOLS & FINAL CODE OUTPUT ===
  
  You have access to workspace inspection and mutation tools (such as read_file, list_files, check_syntax).

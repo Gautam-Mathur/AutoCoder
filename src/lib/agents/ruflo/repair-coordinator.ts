@@ -263,7 +263,7 @@ export function createRepairBudget(params: {
   maxToolInvocations?: number;
 }): RepairBudget {
   const now = Date.now();
-  const maxWallClockMs = params.maxWallClockMs ?? 300_000;
+  const maxWallClockMs = params.maxWallClockMs ?? 7200_000;
   return {
     pipelineRunId: params.pipelineRunId,
     repairOperationId: params.repairOperationId ?? `REPAIR-OP-${params.pipelineRunId}`,

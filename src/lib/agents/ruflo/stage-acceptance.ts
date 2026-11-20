@@ -61,7 +61,6 @@ function validateQueen(content: string): AcceptanceResult {
   const requiredHeadings = [
     'Project Name',
     'Project Goal',
-    'MVP Scope',
     'Technical Constraints',
     'Risks',
   ];
@@ -75,19 +74,52 @@ function validateQueen(content: string): AcceptanceResult {
     }
   }
 
+  // Support both new Operational Scope and legacy MVP Scope for full backwards compatibility
+  const hasOperationalScope = countHeading(content, '### Operational Scope') > 0;
+  const hasMvpScope = countHeading(content, '### MVP Scope') > 0;
+  if (!hasOperationalScope && !hasMvpScope) {
+    errors.push('Queen Contract Error: Missing required scope section ("### Operational Scope" or "### MVP Scope").');
+  }
+
+  // Workstream A.3: Validate Functional Requirements IDs and Assumptions/Out of Scope when present
+  if (countHeading(content, '### Functional Requirements') > 0) {
+    const frSection = extractRequiredSection(content, 'Functional Requirements');
+    if (!frSection || frSection.trim().length === 0) {
+      errors.push('Queen Contract Error: "### Functional Requirements" section is empty.');
+    } else if (!/FR-\d+/i.test(frSection)) {
+      warnings.push('Queen Functional Requirements should prefer stable IDs (e.g. FR-001).');
+    }
+  }
+
+  if (countHeading(content, '### Assumptions and Open Decisions') > 0) {
+    const assumptions = extractRequiredSection(content, 'Assumptions and Open Decisions');
+    if (!assumptions || assumptions.trim().length === 0) {
+      errors.push('Queen Contract Error: "### Assumptions and Open Decisions" section is empty.');
+    }
+  }
+
+  if (countHeading(content, '### Out of Scope') > 0) {
+    const outOfScope = extractRequiredSection(content, 'Out of Scope');
+    if (!outOfScope || outOfScope.trim().length === 0) {
+      errors.push('Queen Contract Error: "### Out of Scope" section is empty.');
+    }
+  }
+
   if (errors.length > 0) {
     return { accepted: false, errors, warnings };
   }
 
   const projectName = extractRequiredSection(content, 'Project Name');
   const projectGoal = extractRequiredSection(content, 'Project Goal');
-  const scope = extractRequiredSection(content, 'MVP Scope');
+  const scope = hasOperationalScope
+    ? extractRequiredSection(content, 'Operational Scope')
+    : extractRequiredSection(content, 'MVP Scope');
   const constraints = extractRequiredSection(content, 'Technical Constraints');
   const risks = extractRequiredSection(content, 'Risks');
 
   if (!projectName) errors.push('Queen Project Name section is empty.');
   if (!projectGoal) errors.push('Queen Project Goal section is empty.');
-  if (!scope) errors.push('Queen MVP Scope section is empty.');
+  if (!scope) errors.push('Queen Scope section is empty.');
   if (!constraints) errors.push('Queen Technical Constraints section is empty.');
   if (!risks) errors.push('Queen Risks section is empty.');
 

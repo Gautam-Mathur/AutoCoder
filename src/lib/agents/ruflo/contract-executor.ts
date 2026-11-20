@@ -15,10 +15,12 @@ import { runAgent, RunAgentRuntimeOptions, sanitizeCoderOutputForFile } from './
 import { StageLedger } from './memory';
 import {
   generateWorkspaceManifest,
+  listVirtualFiles,
   loadAuthorizedFileSet,
   readVirtualFile,
   writeAuthorizedProjectFile,
 } from './vfs';
+import { validateImportExportIntegrity } from './import-export-validator';
 import {
   computeWorkspaceFingerprint,
   runDeterministicTesterReport,
@@ -256,6 +258,27 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
         const manifest = await generateWorkspaceManifest(conversationId, stageExecution.id, authorized);
         candidateContent = JSON.stringify(manifest, null, 2);
         currentWorkspaceHash = await computeWorkspaceFingerprint(conversationId);
+
+        // Workstream E.6: Pre-Tester Deterministic Import/Export Integrity Check
+        try {
+          const vfsFiles = await listVirtualFiles(conversationId);
+          const currentFileMap = new Map<string, string>();
+          for (const vf of vfsFiles) {
+            if (!isControlPlaneArtifact(vf.filePath)) {
+              currentFileMap.set(normalizeProjectPath(vf.filePath), vf.content);
+            }
+          }
+          const importVal = validateImportExportIntegrity(currentFileMap);
+          if (!importVal.valid) {
+            onEvent({
+              type: 'AGENT_LOG',
+              agent: 'Coder',
+              message: `⚠️ [Coder] Pre-Tester Import/Export Validation detected ${importVal.errors.length} issue(s): ${importVal.errors.map(e => e.message).join('; ')}`,
+            });
+          }
+        } catch (e: any) {
+          console.warn(`[Coder Pre-Tester Import Validation] non-fatal inspection exception:`, e?.message || e);
+        }
       } else if (stageName === 'Tester') {
         const reportRes = await runDeterministicTesterReport({
           conversationId,

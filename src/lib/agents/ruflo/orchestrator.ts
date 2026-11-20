@@ -443,28 +443,10 @@ export async function extractSection(conversationId: string, vfsPath: string, se
   return `[Section "${sectionName}" not found in ${vfsPath}]`;
 }
 
+import { extractDependencyInterfaceAST } from './source-analysis';
+
 export function extractDependencyInterface(filePath: string, content: string): string {
-  if (filePath.endsWith('.html')) {
-    const ids = [...content.matchAll(/\bid=["']([^"']+)["']/g)].map(m => m[1]);
-    const cssLinks = [...content.matchAll(/href=["']([^"']+\.css)["']/g)].map(m => m[1]);
-    const jsLinks = [...content.matchAll(/src=["']([^"']+\.js)["']/g)].map(m => m[1]);
-    return `[HTML] IDs: ${[...new Set(ids)].join(', ') || 'none'} | CSS links: ${cssLinks.join(', ') || 'none'} | Scripts: ${jsLinks.join(', ') || 'none'}`;
-  }
-  if (filePath.endsWith('.css')) {
-    const selectors = [...content.matchAll(/^([.#][\w-]+)/gm)].map(m => m[1]);
-    const vars = [...content.matchAll(/(--[\w-]+)\s*:/g)].map(m => m[1]);
-    return `[CSS] Selectors: ${[...new Set(selectors)].join(', ') || 'none'} | Variables: ${[...new Set(vars)].join(', ') || 'none'}`;
-  }
-  if (/\.(js|ts|jsx|tsx)$/.test(filePath)) {
-    const named = [...content.matchAll(/export\s+(?:async\s+)?(?:function|const|class|let|var|type|interface|enum)\s+(\w+)/g)].map(m => m[1]);
-    const reExports = [...content.matchAll(/export\s*\{([^}]+)\}/g)].flatMap(m =>
-      m[1].split(',').map(s => s.trim().split(/\s+as\s+/).pop()!.trim()).filter(Boolean)
-    );
-    const dflt = content.match(/export\s+default\s+(?:class|function)?\s*(\w+)/)?.[1];
-    const allExports = [...new Set([...named, ...reExports, ...(dflt ? [`default:${dflt}`] : [])])];
-    return `[JS/TS] Exports: ${allExports.join(', ') || 'none'}`;
-  }
-  return content.substring(0, 300);
+  return extractDependencyInterfaceAST(filePath, content);
 }
 
 export type TargetLanguagePolicy = {
