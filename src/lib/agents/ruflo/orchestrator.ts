@@ -1424,6 +1424,49 @@ function isParserValid(content: string, ext: string): boolean {
   return true;
 }
 
+/**
+ * Real-time stream extractor: unpacks pure source code as it streams character-by-character,
+ * dynamically stripping XML tool invocation envelopes (<parameter=content>) and markdown fences
+ * so the code editor updates live "alphabet by alphabet".
+ */
+export function extractLiveStreamingCode(raw: string): string {
+  if (!raw) return '';
+
+  // 1. Tool call with <parameter=content> or <parameter name="content">
+  // Match the last occurrence in case earlier tool calls already completed in the same stream
+  const paramMatches = [...raw.matchAll(/<parameter(?:=|\s+name=)["']?content["']?>\r?\n?([\s\S]*)/gi)];
+  if (paramMatches.length > 0) {
+    let content = paramMatches[paramMatches.length - 1][1];
+    content = content.replace(/<\/parameter>[\s\S]*$/i, '');
+    return content;
+  }
+
+  // 2. JSON tool call arguments with "content": "..."
+  const jsonContentMatches = [...raw.matchAll(/"content"\s*:\s*"([\s\S]*)/gi)];
+  if (jsonContentMatches.length > 0) {
+    let jsonStr = jsonContentMatches[jsonContentMatches.length - 1][1];
+    jsonStr = jsonStr.replace(/"\s*,?\s*"[^"]+"\s*:[\s\S]*$/i, '');
+    jsonStr = jsonStr.replace(/"\s*\}[\s\S]*$/i, '');
+    jsonStr = jsonStr.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"');
+    return jsonStr;
+  }
+
+  // 3. Markdown code fence: ```lang ...
+  const fenceMatches = [...raw.matchAll(/```[a-zA-Z0-9_\-+.]*\r?\n([\s\S]*)/gi)];
+  if (fenceMatches.length > 0) {
+    let content = fenceMatches[fenceMatches.length - 1][1];
+    content = content.replace(/\r?\n```[\s\S]*$/, '');
+    return content;
+  }
+
+  // 4. If raw starts with tool call opening tags but hasn't reached content parameter yet:
+  if (/^\s*<(?:function|tool_call)/i.test(raw)) {
+    return '// Synthesizing file code...';
+  }
+
+  return raw;
+}
+
 export function composeAgentUserContent(params: {
   upstreamContext: string;
   customUserContent?: string;
@@ -1763,19 +1806,22 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
       pipelineEvents.emit(`event:${conversationId}`, evtOutflow);
     }
 
+    const liveCode = extractLiveStreamingCode(fullAccumulatedText);
+
     const now = Date.now();
     if (canonicalTargetFile && (persistOutput || agentName === 'Coder') && now - lastVfsFlushTime > 2500) {
       lastVfsFlushTime = now;
       const runId =
         runtimeOptions?.pipelineRunId ||
         'system-run';
-      writeVirtualFile(conversationId, canonicalTargetFile, fullAccumulatedText, {
+      const flushContent = liveCode.trim().length > 0 ? liveCode : fullAccumulatedText;
+      writeVirtualFile(conversationId, canonicalTargetFile, flushContent, {
         pipelineRunId: runId,
         allowControlPlane: true,
       }).catch(() => {});
     }
 
-    if (now - lastEmittedTime > 120) {
+    if (now - lastEmittedTime > 80) {
       lastEmittedTime = now;
 
       const speculativeApis = Array.from(chunkBuffer.matchAll(/(GET|POST|PUT|DELETE|PATCH)\s+(\/[a-zA-Z0-9_\-\/]+)/gi))
@@ -1796,6 +1842,7 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
           maxTokens: budget,
           latestText: chunkBuffer,
           fullText: fullAccumulatedText,
+          liveCode,
           targetFile: canonicalTargetFile,
           fileIndex: runtimeOptions?.fileIndex,
           totalFiles: runtimeOptions?.totalFiles,
@@ -1806,7 +1853,6 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
         },
       };
       onEvent(evt);
-      pipelineEvents.emit(`event:${conversationId}`, evt);
     }
   };
 
@@ -2111,8 +2157,19 @@ export async function runOrchestrator(
   let stopHeartbeat: (() => void) | undefined;
 
   // Single Event Emission: Emits to global EventEmitter for browser SSE streams & persists to DB
+  let lastProgressDbSaveTime = 0;
   const emit = (event: any) => {
     pipelineEvents.emit(`event:${conversationId}`, event);
+
+    // For high-frequency AGENT_STREAM_PROGRESS, throttle SQLite inserts to once every 2 seconds
+    if (event.type === 'AGENT_STREAM_PROGRESS') {
+      const now = Date.now();
+      if (now - lastProgressDbSaveTime < 2000) {
+        return;
+      }
+      lastProgressDbSaveTime = now;
+    }
+
     prisma.pipelineRun.findUnique({ where: { conversationId } }).then((run) => {
       if (run) {
         appendPipelineEvent({

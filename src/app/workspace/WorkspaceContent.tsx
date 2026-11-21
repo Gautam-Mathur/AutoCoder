@@ -37,6 +37,43 @@ interface FileNode {
   children?: FileNode[];
 }
 
+function extractLiveStreamingCode(raw: string): string {
+  if (!raw) return '';
+
+  // 1. Tool call with <parameter=content> or <parameter name="content">
+  const paramMatches = [...raw.matchAll(/<parameter(?:=|\s+name=)["']?content["']?>\r?\n?([\s\S]*)/gi)];
+  if (paramMatches.length > 0) {
+    let content = paramMatches[paramMatches.length - 1][1];
+    content = content.replace(/<\/parameter>[\s\S]*$/i, '');
+    return content;
+  }
+
+  // 2. JSON tool call arguments with "content": "..."
+  const jsonContentMatches = [...raw.matchAll(/"content"\s*:\s*"([\s\S]*)/gi)];
+  if (jsonContentMatches.length > 0) {
+    let jsonStr = jsonContentMatches[jsonContentMatches.length - 1][1];
+    jsonStr = jsonStr.replace(/"\s*,?\s*"[^"]+"\s*:[\s\S]*$/i, '');
+    jsonStr = jsonStr.replace(/"\s*\}[\s\S]*$/i, '');
+    jsonStr = jsonStr.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"');
+    return jsonStr;
+  }
+
+  // 3. Markdown code fence: ```lang ...
+  const fenceMatches = [...raw.matchAll(/```[a-zA-Z0-9_\-+.]*\r?\n([\s\S]*)/gi)];
+  if (fenceMatches.length > 0) {
+    let content = fenceMatches[fenceMatches.length - 1][1];
+    content = content.replace(/\r?\n```[\s\S]*$/, '');
+    return content;
+  }
+
+  // 4. If raw starts with tool call opening tags but hasn't reached content parameter yet:
+  if (/^\s*<(?:function|tool_call)/i.test(raw)) {
+    return '// Synthesizing file code...';
+  }
+
+  return raw;
+}
+
 const buildFileTree = (fileList: string[]): FileNode => {
   const root: FileNode = { name: 'Root', path: '', isDirectory: true, children: [] };
   
@@ -721,15 +758,19 @@ export default function WorkspaceContent() {
               selectedFileRef.current = targetFile;
               setSelectedFile(targetFile);
             }
-            // Fetch live content for open file (only if actively streaming outflow into this same file right now)
-            if (agentActivityState === 'synthesizing_outflow' && activeStreamingFile === targetFile && streamingFileContent.trim().length > 0) {
-              setFileContent(streamingFileContent);
+            // Fetch live content for open file (preserve live character-by-character stream while actively synthesizing)
+            if (agentActivityState === 'synthesizing_outflow' && (activeStreamingFile === targetFile || currentStage === 'Coder')) {
+              if (streamingFileContent && streamingFileContent.trim().length > 0) {
+                setFileContent(streamingFileContent);
+              }
             } else {
               const diskRes = await fetch(`/api/conversations/${id}/files/read?file=${encodeURIComponent(targetFile)}`);
               if (diskRes.ok) {
                 const fileData = await diskRes.json();
                 if (fileData.content !== undefined) {
-                  setFileContent(fileData.content);
+                  if (agentActivityState !== 'synthesizing_outflow') {
+                    setFileContent(fileData.content);
+                  }
                 }
               }
             }
@@ -1078,13 +1119,15 @@ export default function WorkspaceContent() {
 
         if (currentTarget) {
           setActiveStreamingFile(currentTarget);
-          const liveText = progressData?.fullText || progressData?.latestText || '';
-          setStreamingFileContent(liveText);
+          const rawFullText = progressData?.fullText || progressData?.latestText || '';
+          const liveCode = progressData?.liveCode || extractLiveStreamingCode(rawFullText);
+          const liveDisplay = liveCode.trim().length > 0 ? liveCode : rawFullText;
+          setStreamingFileContent(liveDisplay);
 
           // Ensure target file appears in file explorer tree immediately
           setFiles((prev) => (prev.includes(currentTarget) ? prev : [...prev, currentTarget]));
 
-          // Auto-select and stream live into Monaco Editor!
+          // Auto-select and stream live into Monaco Editor character-by-character!
           const isPriorStageFile =
             !selectedFileRef.current ||
             (selectedFileRef.current in STAGE_FILE_TO_AGENT && selectedFileRef.current !== currentTarget);
@@ -1094,7 +1137,7 @@ export default function WorkspaceContent() {
               selectedFileRef.current = currentTarget;
               setSelectedFile(currentTarget);
             }
-            setFileContent(liveText);
+            setFileContent(liveDisplay);
           }
         }
         return;
