@@ -1927,6 +1927,10 @@ export async function startPipelineIfUnowned(
   onEvent?: PipelineEventCallback,
   startStage?: string
 ): Promise<{ started: boolean }> {
+  if (activePipelines.has(conversationId) || localActivePipelines.has(conversationId)) {
+    return { started: false };
+  }
+
   const lease = await acquirePipelineLease(conversationId);
   if (!lease.acquired) {
     return { started: false };

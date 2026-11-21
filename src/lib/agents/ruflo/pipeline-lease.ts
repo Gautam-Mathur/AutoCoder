@@ -1,7 +1,9 @@
 import { randomUUID } from 'crypto';
 import { prisma } from '../../db';
 
-const LEASE_MS = 60_000;
+// Stage timeout is up to 600_000ms (10 minutes) for heavy models (e.g. qwen3-coder:30b).
+// Keep lease comfortably active for 10 minutes per renewal.
+const LEASE_MS = 600_000;
 
 export interface PipelineLease {
   conversationId: string;
@@ -132,7 +134,7 @@ export function startLeaseHeartbeat(
   conversationId: string,
   ownerId: string,
   onLeaseLost?: () => void,
-  intervalMs = 20_000
+  intervalMs = 15_000
 ): () => void {
   const timer = setInterval(async () => {
     try {
