@@ -1651,6 +1651,27 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
     `Agent ${agentName} started (Attempt ${attempt}/3)... Estimated tokens: ${budget}`
   );
 
+  const canonicalTargetFile = targetFile || VFS_OUTPUT_MAP[agentName] || undefined;
+
+  const inflowDesc = upstreamContext.trim().length > 0
+    ? `Upstream specifications (${upstreamContext.length.toLocaleString()} chars)`
+    : userPromptText
+    ? `User Prompt (${userPromptText.length.toLocaleString()} chars)`
+    : 'System Directives';
+
+  const evtReadingInflow = {
+    type: 'AGENT_INFLOW_READING',
+    agent: agentName,
+    message: `📥 Reading Inflow Context: ${inflowDesc}`,
+    data: {
+      inflow: inflowDesc,
+      targetFile: canonicalTargetFile,
+      model: config.ollamaModel,
+    },
+  };
+  onEvent(evtReadingInflow);
+  pipelineEvents.emit(`event:${conversationId}`, evtReadingInflow);
+
   onEvent({
     type: 'AGENT_LOG',
     agent: agentName,
@@ -1661,7 +1682,7 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
   let chunkBuffer = '';
   let fullAccumulatedText = '';
   let lastEmittedTime = Date.now();
-  const canonicalTargetFile = targetFile || VFS_OUTPUT_MAP[agentName] || undefined;
+  let hasEmittedOutflowStart = false;
 
   const onChunkHandler = (chunk: string) => {
     tokenCount += Math.max(1, Math.round(chunk.length / 4));
@@ -1669,6 +1690,20 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
     fullAccumulatedText += chunk;
     if (chunkBuffer.length > 4000) {
       chunkBuffer = chunkBuffer.slice(-4000); // rolling 4000-char window of live generated code/markdown
+    }
+
+    if (!hasEmittedOutflowStart) {
+      hasEmittedOutflowStart = true;
+      const evtOutflow = {
+        type: 'AGENT_OUTFLOW_STARTING',
+        agent: agentName,
+        message: `📤 Synthesizing Outflow into ${canonicalTargetFile || agentName}...`,
+        data: {
+          targetFile: canonicalTargetFile,
+        },
+      };
+      onEvent(evtOutflow);
+      pipelineEvents.emit(`event:${conversationId}`, evtOutflow);
     }
 
     const now = Date.now();

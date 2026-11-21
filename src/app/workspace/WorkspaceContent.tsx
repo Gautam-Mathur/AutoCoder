@@ -346,6 +346,8 @@ export default function WorkspaceContent() {
   const [fileContent, setFileContent] = useState<string>('// Select a file to view content');
   const [activeStreamingFile, setActiveStreamingFile] = useState<string | null>(null);
   const [streamingFileContent, setStreamingFileContent] = useState<string>('');
+  const [agentActivityState, setAgentActivityState] = useState<'idle' | 'reading_inflow' | 'synthesizing_outflow'>('idle');
+  const [inflowDetail, setInflowDetail] = useState<string>('');
   const [agentOutputs, setAgentOutputs] = useState<Record<string, any>>({});
   const [expandedDirs, setExpandedDirs] = useState<Record<string, boolean>>({});
 
@@ -692,7 +694,33 @@ export default function WorkspaceContent() {
         return;
       }
 
+      if (data.type === 'AGENT_INFLOW_READING') {
+        setAgentActivityState('reading_inflow');
+        if (data.data?.inflow) {
+          setInflowDetail(data.data.inflow);
+        }
+        addLog({
+          type: 'AGENT_LOG',
+          agent: data.agent,
+          message: data.message,
+          data: data.data,
+        });
+        return;
+      }
+
+      if (data.type === 'AGENT_OUTFLOW_STARTING') {
+        setAgentActivityState('synthesizing_outflow');
+        addLog({
+          type: 'AGENT_LOG',
+          agent: data.agent,
+          message: data.message,
+          data: data.data,
+        });
+        return;
+      }
+
       if (data.type === 'AGENT_STREAM_PROGRESS') {
+        setAgentActivityState('synthesizing_outflow');
         setStreamProgress(data.data);
 
         // Determine active target file being written or generated
@@ -737,6 +765,7 @@ export default function WorkspaceContent() {
       if (data.type === 'AGENT_START') {
         setStreamProgress(null);
         setActiveStreamingFile(null);
+        setAgentActivityState('reading_inflow');
       }
 
       addLog({
@@ -754,6 +783,7 @@ export default function WorkspaceContent() {
         if (data.type === 'AGENT_COMPLETE') {
           setStreamProgress(null);
           setActiveStreamingFile(null);
+          setAgentActivityState('idle');
           if (data.agent && data.data) {
             setAgentOutputs((prev) => ({
               ...prev,
@@ -1594,10 +1624,35 @@ export default function WorkspaceContent() {
             <TerminalIcon className="w-4 h-4 text-electric-indigo" />
             <span className="text-[10px] font-mono tracking-wider font-bold text-on-surface uppercase">Pipeline Interactions</span>
           </div>
-          <span className={`px-2 py-0.5 bg-slate-800 border border-slate-600 rounded text-[10px] font-mono font-bold text-slate-300`}>
-            Pass: {currentStage}
-          </span>
+          <div className="flex items-center gap-2">
+            {pipelineStatus === 'Active' && agentActivityState === 'reading_inflow' && (
+              <span className="px-2 py-0.5 bg-sky-500/10 border border-sky-500/40 rounded text-[10px] font-mono font-bold text-sky-400 flex items-center gap-1.5 animate-pulse">
+                <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-ping"></span>
+                📥 Reading Inflow
+              </span>
+            )}
+            {pipelineStatus === 'Active' && agentActivityState === 'synthesizing_outflow' && (
+              <span className="px-2 py-0.5 bg-emerald-500/10 border border-emerald-500/40 rounded text-[10px] font-mono font-bold text-emerald-400 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                📤 Synthesizing Outflow
+              </span>
+            )}
+            <span className={`px-2 py-0.5 bg-slate-800 border border-slate-600 rounded text-[10px] font-mono font-bold text-slate-300`}>
+              Pass: {currentStage}
+            </span>
+          </div>
         </div>
+
+        {/* Inflow Reading Banner when waiting for inference or reading context */}
+        {pipelineStatus === 'Active' && agentActivityState === 'reading_inflow' && (
+          <div className="bg-sky-950/60 border-b border-sky-800/60 px-3 py-2 flex items-center justify-between text-[10px] font-mono select-none">
+            <div className="flex items-center gap-2 text-sky-300">
+              <span className="w-2 h-2 rounded-full bg-sky-400 animate-ping" />
+              <span>📥 <strong>{currentStage}</strong> is reading inflow context...</span>
+            </div>
+            <span className="text-sky-400/80 truncate max-w-[200px]">{inflowDetail || 'Analyzing upstream specifications'}</span>
+          </div>
+        )}
 
         {streamProgress && (
           <div className="bg-slate-950 border-b border-slate-800 px-3 py-2 flex flex-col gap-1.5 select-none transition-all">
@@ -2097,11 +2152,18 @@ export default function WorkspaceContent() {
                       <span className="text-slate-500">Active:</span>
                       <span className="text-slate-200 font-semibold">{selectedFile}</span>
                     </div>
-                    {activeStreamingFile === selectedFile && (
+                    {activeStreamingFile === selectedFile ? (
                       <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded">
                         <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
-                        LIVE GENERATING...
+                        LIVE OUTFLOW GENERATING...
                       </div>
+                    ) : (
+                      pipelineStatus === 'Active' && agentActivityState === 'reading_inflow' && (
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-sky-400 bg-sky-500/10 border border-sky-500/30 px-2 py-0.5 rounded">
+                          <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse"></span>
+                          {currentStage} READING INFLOW...
+                        </div>
+                      )
                     )}
                   </div>
                 )}
