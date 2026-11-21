@@ -1653,7 +1653,20 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
 
   const canonicalTargetFile = targetFile || VFS_OUTPUT_MAP[agentName] || undefined;
 
-  const inflowDesc = upstreamContext.trim().length > 0
+  const resolvedInflowArtifacts = requiredArtifactNames.map((art) => ({
+    name: art,
+    included: userContent.includes(`=== ARTIFACT: ${art} ===`),
+  }));
+
+  const inflowItemsList = [
+    ...(resolvedInflowArtifacts.filter((a) => a.included).map((a) => a.name)),
+    ...(userContent.includes('Original Request:') || !upstreamContext.trim() ? ['User Prompt'] : []),
+    ...(customUserContent ? ['Directives/Repair Feedback'] : []),
+  ];
+
+  const inflowDesc = inflowItemsList.length > 0
+    ? `[${inflowItemsList.join(', ')}] (${(upstreamContext.length + userPromptText.length).toLocaleString()} chars)`
+    : upstreamContext.trim().length > 0
     ? `Upstream specifications (${upstreamContext.length.toLocaleString()} chars)`
     : userPromptText
     ? `User Prompt (${userPromptText.length.toLocaleString()} chars)`
@@ -1665,6 +1678,7 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
     message: `📥 Reading Inflow Context: ${inflowDesc}`,
     data: {
       inflow: inflowDesc,
+      inflowArtifacts: inflowItemsList,
       targetFile: canonicalTargetFile,
       model: config.ollamaModel,
     },

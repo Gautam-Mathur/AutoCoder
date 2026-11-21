@@ -1645,12 +1645,19 @@ export default function WorkspaceContent() {
 
         {/* Inflow Reading Banner when waiting for inference or reading context */}
         {pipelineStatus === 'Active' && agentActivityState === 'reading_inflow' && (
-          <div className="bg-sky-950/60 border-b border-sky-800/60 px-3 py-2 flex items-center justify-between text-[10px] font-mono select-none">
-            <div className="flex items-center gap-2 text-sky-300">
-              <span className="w-2 h-2 rounded-full bg-sky-400 animate-ping" />
-              <span>📥 <strong>{currentStage}</strong> is reading inflow context...</span>
+          <div className="bg-sky-950/70 border-b border-sky-800/80 px-3 py-2 flex flex-col gap-1 text-[10px] font-mono select-none">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sky-300">
+                <span className="w-2 h-2 rounded-full bg-sky-400 animate-ping" />
+                <span className="font-bold">📥 {currentStage} Reading Inflow:</span>
+              </div>
+              <span className="text-[9px] bg-sky-900/60 border border-sky-700/50 text-sky-200 px-1.5 py-0.5 rounded font-mono">
+                Context Ingestion
+              </span>
             </div>
-            <span className="text-sky-400/80 truncate max-w-[200px]">{inflowDetail || 'Analyzing upstream specifications'}</span>
+            <div className="text-slate-300 bg-slate-900/80 border border-sky-900/50 rounded p-1.5 text-[9.5px] leading-relaxed break-words font-mono">
+              {inflowDetail || 'Ingesting upstream stage specification artifacts and user constraints'}
+            </div>
           </div>
         )}
 
@@ -2159,9 +2166,10 @@ export default function WorkspaceContent() {
                       </div>
                     ) : (
                       pipelineStatus === 'Active' && agentActivityState === 'reading_inflow' && (
-                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-sky-400 bg-sky-500/10 border border-sky-500/30 px-2 py-0.5 rounded">
+                        <div className="flex items-center gap-1.5 text-[10px] font-mono text-sky-400 bg-sky-500/10 border border-sky-500/30 px-2 py-0.5 rounded">
                           <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse"></span>
-                          {currentStage} READING INFLOW...
+                          <span className="font-bold">{currentStage} READING INFLOW:</span>
+                          <span className="text-slate-300 font-normal truncate max-w-[300px]">{inflowDetail}</span>
                         </div>
                       )
                     )}
