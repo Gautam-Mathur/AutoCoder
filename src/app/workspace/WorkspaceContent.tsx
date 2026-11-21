@@ -162,6 +162,24 @@ function getSimpleFileExplanation(fileName: string, moduleResp?: string) {
   };
 }
 
+const STAGE_OUTPUT_FILES: Record<string, string> = {
+  Queen: 'plan.md',
+  Planner: 'requirements.md',
+  Architect: 'architecture.md',
+  System: 'backend_spec.md',
+  Designer: 'ui_spec.md',
+  Blueprinter: 'blueprint.md',
+  Coder: 'index.html',
+  Tester: 'test_report.md',
+  Debugger: 'debug_report.md',
+  Security: 'security_report.md',
+  Reviewer: 'review_report.md',
+};
+
+const STAGE_FILE_TO_AGENT: Record<string, string> = Object.fromEntries(
+  Object.entries(STAGE_OUTPUT_FILES).map(([agent, file]) => [file, agent])
+);
+
 function unwrapStageData(raw: any): any {
   if (!raw) return null;
   let data = raw;
@@ -418,9 +436,10 @@ export default function WorkspaceContent() {
   // Load details from DB
   const fetchConversationDetails = async (id: string) => {
     try {
+      let data: any = null;
       const res = await fetch(`/api/conversations/${id}`);
       if (res.ok) {
-        const data = await res.json();
+        data = await res.json();
         setPipelineStatus(data.status);
         setCurrentStage(data.currentStage);
         if (data.title) {
@@ -530,7 +549,23 @@ export default function WorkspaceContent() {
         const diskFiles = await filesRes.json();
         if (diskFiles && diskFiles.length > 0) {
           const normalizedDiskFiles = diskFiles.map(normalizeFilePath).filter(Boolean);
-          setFiles(normalizedDiskFiles);
+          
+          // Make sure activeStreamingFile and any stage outputs are always in files list
+          setFiles((prev) => {
+            const list = [...normalizedDiskFiles];
+            if (activeStreamingFile && !list.includes(activeStreamingFile)) {
+              list.push(activeStreamingFile);
+            }
+            if (Array.isArray(data.outputs)) {
+              data.outputs.forEach((out: any) => {
+                const stageFile = STAGE_OUTPUT_FILES[out.agentName || out.stage];
+                if (stageFile && !list.includes(stageFile)) {
+                  list.push(stageFile);
+                }
+              });
+            }
+            return Array.from(new Set(list));
+          });
           
           // Auto-expand all folder paths in tree view so code files are immediately visible
           const autoExpand: Record<string, boolean> = {};
@@ -542,15 +577,28 @@ export default function WorkspaceContent() {
           });
           setExpandedDirs((prev) => ({ ...autoExpand, ...prev }));
           
-          // Auto-select first file if none selected, or restore from localStorage / refresh open file
-          const targetFile = selectedFileRef.current || localStorage.getItem(`selectedFile_${id}`) || normalizedDiskFiles[0];
-          if (targetFile && normalizedDiskFiles.includes(targetFile)) {
+          // Auto-select active streaming file, active stage output file, or restore selection
+          const activeStageName = currentStage || (data?.pipelineRun?.currentStage) || (data?.currentStage);
+          const activeStageFile = activeStageName ? STAGE_OUTPUT_FILES[activeStageName] : null;
+
+          let targetFile = selectedFileRef.current;
+          if (activeStreamingFile) {
+            targetFile = activeStreamingFile;
+          } else if (data?.status === 'Active' && activeStageFile) {
+            targetFile = activeStageFile;
+          } else if (!targetFile) {
+            targetFile = localStorage.getItem(`selectedFile_${id}`) || activeStageFile || normalizedDiskFiles[0];
+          }
+
+          if (targetFile) {
             if (selectedFileRef.current !== targetFile) {
               selectedFileRef.current = targetFile;
               setSelectedFile(targetFile);
             }
             // Fetch live content for open file (unless actively streaming into this same file)
-            if (activeStreamingFile !== targetFile) {
+            if (activeStreamingFile === targetFile && streamingFileContent) {
+              setFileContent(streamingFileContent);
+            } else {
               const diskRes = await fetch(`/api/conversations/${id}/files/read?file=${encodeURIComponent(targetFile)}`);
               if (diskRes.ok) {
                 const fileData = await diskRes.json();
@@ -736,8 +784,23 @@ export default function WorkspaceContent() {
 
       if (data.type === 'AGENT_INFLOW_READING') {
         setAgentActivityState('reading_inflow');
+        const agentName = data.agent || data.stage;
+        if (agentName) setCurrentStage(agentName);
         if (data.data?.inflow) {
           setInflowDetail(data.data.inflow);
+        }
+        const target = data.data?.targetFile || (agentName && STAGE_OUTPUT_FILES[agentName]) || `${agentName}.md`;
+        if (target) {
+          setActiveStreamingFile(target);
+          setFiles((prev) => (prev.includes(target) ? prev : [...prev, target]));
+          const isPriorStageFile =
+            !selectedFileRef.current ||
+            (selectedFileRef.current in STAGE_FILE_TO_AGENT && selectedFileRef.current !== target);
+          if (isPriorStageFile) {
+            selectedFileRef.current = target;
+            setSelectedFile(target);
+            setFileContent(`// [${agentName}] Reading inflow context:\n// ${data.data?.inflow || 'Upstream specifications'}`);
+          }
         }
         addLog({
           type: 'AGENT_LOG',
@@ -750,6 +813,21 @@ export default function WorkspaceContent() {
 
       if (data.type === 'AGENT_OUTFLOW_STARTING') {
         setAgentActivityState('synthesizing_outflow');
+        const agentName = data.agent || data.stage || currentStage;
+        if (agentName) setCurrentStage(agentName);
+        const target = data.data?.targetFile || (agentName && STAGE_OUTPUT_FILES[agentName]) || `${agentName}.md`;
+        if (target) {
+          setActiveStreamingFile(target);
+          setFiles((prev) => (prev.includes(target) ? prev : [...prev, target]));
+          const isPriorStageFile =
+            !selectedFileRef.current ||
+            (selectedFileRef.current in STAGE_FILE_TO_AGENT && selectedFileRef.current !== target);
+          if (isPriorStageFile) {
+            selectedFileRef.current = target;
+            setSelectedFile(target);
+            setFileContent(`// [${agentName}] Synthesizing outflow for ${target}...`);
+          }
+        }
         addLog({
           type: 'AGENT_LOG',
           agent: data.agent,
@@ -761,37 +839,32 @@ export default function WorkspaceContent() {
 
       if (data.type === 'AGENT_STREAM_PROGRESS') {
         setAgentActivityState('synthesizing_outflow');
-        setStreamProgress(data.data);
+        const progressData = data.data?.data && (data.data.type || data.data.agent) ? data.data.data : data.data;
+        const agentName = data.agent || data.stage || data.data?.agent || currentStage;
+        if (agentName && agentName !== currentStage) {
+          setCurrentStage(agentName);
+        }
+        setStreamProgress(progressData);
 
-        // Determine active target file being written or generated
-        const stageDefaults: Record<string, string> = {
-          Queen: 'plan.md',
-          Planner: 'requirements.md',
-          Architect: 'architecture.md',
-          System: 'backend_spec.md',
-          Designer: 'ui_spec.md',
-          Blueprinter: 'blueprint.md',
-          Coder: 'index.html',
-          Debugger: 'debug_report.md',
-          Security: 'security_report.md',
-          Reviewer: 'review_report.md',
-        };
         const currentTarget =
-          data.data?.targetFile ||
-          (data.agent && stageDefaults[data.agent]) ||
-          (currentStage && stageDefaults[currentStage]) ||
-          'index.html';
+          progressData?.targetFile ||
+          (agentName && STAGE_OUTPUT_FILES[agentName]) ||
+          'architecture.md';
 
         if (currentTarget) {
           setActiveStreamingFile(currentTarget);
-          const liveText = data.data?.fullText || data.data?.latestText || '';
+          const liveText = progressData?.fullText || progressData?.latestText || '';
           setStreamingFileContent(liveText);
 
-          // Ensure target file appears in file explorer tree
+          // Ensure target file appears in file explorer tree immediately
           setFiles((prev) => (prev.includes(currentTarget) ? prev : [...prev, currentTarget]));
 
-          // If no file selected or selectedFile is this streaming file, update Monaco editor content live!
-          if (!selectedFileRef.current || selectedFileRef.current === currentTarget) {
+          // Auto-select and stream live into Monaco Editor!
+          const isPriorStageFile =
+            !selectedFileRef.current ||
+            (selectedFileRef.current in STAGE_FILE_TO_AGENT && selectedFileRef.current !== currentTarget);
+
+          if (isPriorStageFile || selectedFileRef.current === currentTarget) {
             if (selectedFileRef.current !== currentTarget) {
               selectedFileRef.current = currentTarget;
               setSelectedFile(currentTarget);
@@ -805,21 +878,21 @@ export default function WorkspaceContent() {
       if (data.type === 'AGENT_START') {
         setStreamProgress(null);
         setAgentActivityState('reading_inflow');
-        const stageDefaults: Record<string, string> = {
-          Queen: 'plan.md',
-          Planner: 'requirements.md',
-          Architect: 'architecture.md',
-          System: 'backend_spec.md',
-          Designer: 'ui_spec.md',
-          Blueprinter: 'blueprint.md',
-          Coder: 'index.html',
-          Debugger: 'debug_report.md',
-          Security: 'security_report.md',
-          Reviewer: 'review_report.md',
-        };
-        const target = stageDefaults[data.agent] || `${data.agent}.md`;
+        const agentName = data.agent || data.stage;
+        if (agentName) setCurrentStage(agentName);
+        const target = (agentName && STAGE_OUTPUT_FILES[agentName]) || `${agentName}.md`;
         setActiveStreamingFile(target);
         setFiles((prev) => (prev.includes(target) ? prev : [...prev, target]));
+
+        const isPriorStageFile =
+          !selectedFileRef.current ||
+          (selectedFileRef.current in STAGE_FILE_TO_AGENT && selectedFileRef.current !== target);
+
+        if (isPriorStageFile) {
+          selectedFileRef.current = target;
+          setSelectedFile(target);
+          setFileContent(`// [${agentName}] Agent started. Analyzing specifications...`);
+        }
       }
 
       addLog({
@@ -1225,19 +1298,7 @@ export default function WorkspaceContent() {
         const data = await res.json();
 
         // 2a. Check if this path matches a stage specification artifact in VFS_OUTPUT_MAP
-        const stageArtifactMap: Record<string, string> = {
-          'plan.md': 'Queen',
-          'requirements.md': 'Planner',
-          'architecture.md': 'Architect',
-          'backend_spec.md': 'System',
-          'ui_spec.md': 'Designer',
-          'blueprint.md': 'Blueprinter',
-          'security_report.md': 'Security',
-          'review_report.md': 'Reviewer',
-          'debug_report.md': 'Debugger',
-        };
-
-        const targetAgent = stageArtifactMap[pathStr];
+        const targetAgent = STAGE_FILE_TO_AGENT[pathStr];
         if (targetAgent && Array.isArray(data.outputs)) {
           const stageOutput = data.outputs.find((o: any) => o.agentName === targetAgent || o.stage === targetAgent);
           if (stageOutput) {
@@ -2223,10 +2284,19 @@ export default function WorkspaceContent() {
                       <span className="text-slate-200 font-semibold">{selectedFile}</span>
                     </div>
                     {activeStreamingFile === selectedFile ? (
-                      <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded">
+                      <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded animate-pulse">
                         <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
                         LIVE OUTFLOW GENERATING...
                       </div>
+                    ) : activeStreamingFile && activeStreamingFile !== selectedFile ? (
+                      <button
+                        onClick={() => handleSelectFile(activeStreamingFile)}
+                        className="flex items-center gap-1.5 text-[10px] font-bold text-amber-400 bg-amber-500/15 border border-amber-500/40 hover:bg-amber-500/25 px-2 py-0.5 rounded cursor-pointer animate-pulse transition-colors"
+                        title="Click to view live generated file"
+                      >
+                        <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+                        <span>⚡ View Live Outflow ({activeStreamingFile})</span>
+                      </button>
                     ) : (
                       pipelineStatus === 'Active' && agentActivityState === 'reading_inflow' && (
                         <div className="flex items-center gap-1.5 text-[10px] font-mono text-sky-400 bg-sky-500/10 border border-sky-500/30 px-2 py-0.5 rounded">
@@ -2250,6 +2320,8 @@ export default function WorkspaceContent() {
                       fontSize: 12,
                       fontFamily: 'JetBrains Mono',
                       domReadOnly: true,
+                      wordWrap: 'on',
+                      scrollBeyondLastLine: false,
                     }}
                   />
                 </div>

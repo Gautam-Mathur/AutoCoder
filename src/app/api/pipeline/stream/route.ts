@@ -75,15 +75,29 @@ export async function GET(request: NextRequest) {
             } catch (err) {
               parsedPayload = { message: ev.payload };
             }
-            sendEvent(
-              {
-                type: ev.eventType,
-                stage: ev.stageName,
-                data: parsedPayload,
-                timestamp: ev.createdAt,
-              },
-              ev.sequence
-            );
+
+            if (parsedPayload && typeof parsedPayload === 'object' && parsedPayload.type) {
+              sendEvent(
+                {
+                  ...parsedPayload,
+                  agent: parsedPayload.agent || ev.stageName,
+                  stage: parsedPayload.stage || parsedPayload.agent || ev.stageName,
+                  timestamp: parsedPayload.timestamp || ev.createdAt,
+                },
+                ev.sequence
+              );
+            } else {
+              sendEvent(
+                {
+                  type: ev.eventType,
+                  agent: ev.stageName,
+                  stage: ev.stageName,
+                  data: parsedPayload,
+                  timestamp: ev.createdAt,
+                },
+                ev.sequence
+              );
+            }
           }
         } else {
           // Fallback to history logs replay if no pipeline events exist yet

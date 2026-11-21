@@ -1653,6 +1653,22 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
 
   const canonicalTargetFile = targetFile || VFS_OUTPUT_MAP[agentName] || undefined;
 
+  if (canonicalTargetFile && persistOutput) {
+    const runId =
+      runtimeOptions?.pipelineRunId ||
+      (await prisma.pipelineRun.findUnique({ where: { conversationId } }))?.id ||
+      'system-run';
+    await writeVirtualFile(
+      conversationId,
+      canonicalTargetFile,
+      `<!-- Stage: ${agentName} (${canonicalTargetFile}) in progress... -->\n`,
+      {
+        pipelineRunId: runId,
+        allowControlPlane: true,
+      }
+    ).catch(() => {});
+  }
+
   const resolvedInflowArtifacts = requiredArtifactNames.map((art) => ({
     name: art,
     included: userContent.includes(`=== ARTIFACT: ${art} ===`),
@@ -1696,6 +1712,7 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
   let chunkBuffer = '';
   let fullAccumulatedText = '';
   let lastEmittedTime = Date.now();
+  let lastVfsFlushTime = 0;
   let hasEmittedOutflowStart = false;
 
   const onChunkHandler = (chunk: string) => {
@@ -1721,6 +1738,17 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
     }
 
     const now = Date.now();
+    if (canonicalTargetFile && persistOutput && now - lastVfsFlushTime > 2500) {
+      lastVfsFlushTime = now;
+      const runId =
+        runtimeOptions?.pipelineRunId ||
+        'system-run';
+      writeVirtualFile(conversationId, canonicalTargetFile, fullAccumulatedText, {
+        pipelineRunId: runId,
+        allowControlPlane: true,
+      }).catch(() => {});
+    }
+
     if (now - lastEmittedTime > 120) {
       lastEmittedTime = now;
 
