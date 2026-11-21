@@ -180,6 +180,20 @@ const STAGE_FILE_TO_AGENT: Record<string, string> = Object.fromEntries(
   Object.entries(STAGE_OUTPUT_FILES).map(([agent, file]) => [file, agent])
 );
 
+const STAGE_INFLOW_FILES: Record<string, string[]> = {
+  Queen: [],
+  Planner: ['plan.md'],
+  Architect: ['requirements.md', 'plan.md'],
+  System: ['architecture.md', 'requirements.md'],
+  Designer: ['architecture.md', 'requirements.md'],
+  Blueprinter: ['architecture.md', 'backend_spec.md', 'ui_spec.md'],
+  Coder: ['blueprint.md', 'architecture.md'],
+  Tester: ['index.html'],
+  Debugger: ['test_report.md'],
+  Security: ['backend_spec.md', 'architecture.md'],
+  Reviewer: ['blueprint.md', 'architecture.md'],
+};
+
 function unwrapStageData(raw: any): any {
   if (!raw) return null;
   let data = raw;
@@ -460,20 +474,8 @@ export default function WorkspaceContent() {
             const latestHistory = data.history[0]; // first item is newest in history
             if (latestHistory && (latestHistory.status === 'Started' || latestHistory.status === 'Running')) {
               setAgentActivityState((prev) => (prev === 'idle' ? 'reading_inflow' : prev));
-              const stageDefaults: Record<string, string> = {
-                Queen: 'plan.md',
-                Planner: 'requirements.md',
-                Architect: 'architecture.md',
-                System: 'backend_spec.md',
-                Designer: 'ui_spec.md',
-                Blueprinter: 'blueprint.md',
-                Coder: 'index.html',
-                Debugger: 'debug_report.md',
-                Security: 'security_report.md',
-                Reviewer: 'review_report.md',
-              };
-              const stageArtifact = stageDefaults[latestHistory.stage] || `${latestHistory.stage}.md`;
-              setActiveStreamingFile((prev) => prev || stageArtifact);
+              const stageArtifact = STAGE_OUTPUT_FILES[latestHistory.stage] || `${latestHistory.stage}.md`;
+              setActiveStreamingFile(stageArtifact);
               // Ensure target file appears in file explorer tree
               setFiles((prev) => (prev.includes(stageArtifact) ? prev : [...prev, stageArtifact]));
 
@@ -582,12 +584,14 @@ export default function WorkspaceContent() {
           const activeStageFile = activeStageName ? STAGE_OUTPUT_FILES[activeStageName] : null;
 
           let targetFile = selectedFileRef.current;
-          if (activeStreamingFile) {
-            targetFile = activeStreamingFile;
-          } else if (data?.status === 'Active' && activeStageFile) {
-            targetFile = activeStageFile;
-          } else if (!targetFile) {
-            targetFile = localStorage.getItem(`selectedFile_${id}`) || activeStageFile || normalizedDiskFiles[0];
+          if (!targetFile) {
+            if (activeStreamingFile && agentActivityState === 'synthesizing_outflow') {
+              targetFile = activeStreamingFile;
+            } else if (data?.status === 'Active' && activeStageFile) {
+              targetFile = activeStageFile;
+            } else {
+              targetFile = localStorage.getItem(`selectedFile_${id}`) || activeStageFile || normalizedDiskFiles[0];
+            }
           }
 
           if (targetFile) {
@@ -595,8 +599,8 @@ export default function WorkspaceContent() {
               selectedFileRef.current = targetFile;
               setSelectedFile(targetFile);
             }
-            // Fetch live content for open file (unless actively streaming into this same file)
-            if (activeStreamingFile === targetFile && streamingFileContent) {
+            // Fetch live content for open file (only if actively streaming outflow into this same file right now)
+            if (agentActivityState === 'synthesizing_outflow' && activeStreamingFile === targetFile && streamingFileContent.trim().length > 0) {
               setFileContent(streamingFileContent);
             } else {
               const diskRes = await fetch(`/api/conversations/${id}/files/read?file=${encodeURIComponent(targetFile)}`);
@@ -784,6 +788,8 @@ export default function WorkspaceContent() {
 
       if (data.type === 'AGENT_INFLOW_READING') {
         setAgentActivityState('reading_inflow');
+        setStreamProgress(null);
+        setStreamingFileContent('');
         const agentName = data.agent || data.stage;
         if (agentName) setCurrentStage(agentName);
         if (data.data?.inflow) {
@@ -813,6 +819,8 @@ export default function WorkspaceContent() {
 
       if (data.type === 'AGENT_OUTFLOW_STARTING') {
         setAgentActivityState('synthesizing_outflow');
+        setStreamProgress(null);
+        setStreamingFileContent('');
         const agentName = data.agent || data.stage || currentStage;
         if (agentName) setCurrentStage(agentName);
         const target = data.data?.targetFile || (agentName && STAGE_OUTPUT_FILES[agentName]) || `${agentName}.md`;
@@ -849,7 +857,8 @@ export default function WorkspaceContent() {
         const currentTarget =
           progressData?.targetFile ||
           (agentName && STAGE_OUTPUT_FILES[agentName]) ||
-          'architecture.md';
+          (currentStage && STAGE_OUTPUT_FILES[currentStage]) ||
+          `${agentName || 'outflow'}.md`;
 
         if (currentTarget) {
           setActiveStreamingFile(currentTarget);
@@ -877,6 +886,7 @@ export default function WorkspaceContent() {
 
       if (data.type === 'AGENT_START') {
         setStreamProgress(null);
+        setStreamingFileContent('');
         setAgentActivityState('reading_inflow');
         const agentName = data.agent || data.stage;
         if (agentName) setCurrentStage(agentName);
@@ -909,13 +919,21 @@ export default function WorkspaceContent() {
       if (data.type === 'AGENT_COMPLETE' || data.type === 'AGENT_LOG') {
         if (data.type === 'AGENT_COMPLETE') {
           setStreamProgress(null);
+          setStreamingFileContent('');
           setActiveStreamingFile(null);
           setAgentActivityState('idle');
-          if (data.agent && data.data) {
+          const agentName = data.agent || data.stage;
+          const target = agentName && STAGE_OUTPUT_FILES[agentName];
+          if (agentName && data.data) {
             setAgentOutputs((prev) => ({
               ...prev,
-              [data.agent]: data.data,
+              [agentName]: data.data,
             }));
+            const parsed = safeParseJson(data.data);
+            const finalTxt = parsed?.content || (typeof data.data === 'string' ? data.data : '');
+            if (finalTxt && target && selectedFileRef.current === target) {
+              setFileContent(finalTxt);
+            }
           }
         }
         fetchConversationDetails(conversationId);
@@ -1227,9 +1245,9 @@ export default function WorkspaceContent() {
       );
     } else {
       const isSelected = selectedFile === node.path;
-      const isStreaming = activeStreamingFile === node.path;
-      const isOutflow = isStreaming && agentActivityState === 'synthesizing_outflow';
-      const isInflow = isStreaming && agentActivityState === 'reading_inflow';
+      const isOutflow = activeStreamingFile === node.path && agentActivityState === 'synthesizing_outflow';
+      const isInflow = pipelineStatus === 'Active' && agentActivityState === 'reading_inflow' && (STAGE_INFLOW_FILES[currentStage] || []).includes(node.path);
+      const isTargetPreparing = activeStreamingFile === node.path && agentActivityState === 'reading_inflow';
 
       return (
         <button
@@ -1258,6 +1276,12 @@ export default function WorkspaceContent() {
               INFLOW
             </span>
           )}
+          {isTargetPreparing && (
+            <span className="flex items-center gap-1 text-[9px] font-bold text-indigo-400 bg-indigo-500/10 border border-indigo-500/30 px-1 py-0.2 rounded">
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></span>
+              TARGET
+            </span>
+          )}
         </button>
       );
     }
@@ -1273,8 +1297,8 @@ export default function WorkspaceContent() {
       localStorage.setItem(`selectedFile_${conversationId}`, pathStr);
     }
 
-    // If this file is currently streaming live, display current streaming content immediately
-    if (activeStreamingFile === pathStr && streamingFileContent) {
+    // If this file is currently actively streaming outflow live, display current streaming content immediately
+    if (agentActivityState === 'synthesizing_outflow' && activeStreamingFile === pathStr && streamingFileContent.trim().length > 0) {
       setFileContent(streamingFileContent);
       return;
     }
@@ -1756,8 +1780,8 @@ export default function WorkspaceContent() {
               </span>
             )}
             {pipelineStatus === 'Active' && agentActivityState === 'synthesizing_outflow' && (
-              <span className="px-2 py-0.5 bg-emerald-500/10 border border-emerald-500/40 rounded text-[10px] font-mono font-bold text-emerald-400 flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span className="px-2 py-0.5 bg-amber-500/10 border border-amber-500/40 rounded text-[10px] font-mono font-bold text-amber-400 flex items-center gap-1.5 animate-pulse">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
                 📤 Synthesizing Outflow
               </span>
             )}
@@ -1781,6 +1805,25 @@ export default function WorkspaceContent() {
             </div>
             <div className="text-slate-300 bg-slate-900/80 border border-sky-900/50 rounded p-1.5 text-[9.5px] leading-relaxed break-words font-mono">
               {inflowDetail || 'Ingesting upstream stage specification artifacts and user constraints'}
+            </div>
+          </div>
+        )}
+
+        {/* Outflow Synthesis Banner when actively writing target file */}
+        {pipelineStatus === 'Active' && agentActivityState === 'synthesizing_outflow' && (
+          <div className="bg-amber-950/70 border-b border-amber-800/80 px-3 py-2 flex flex-col gap-1 text-[10px] font-mono select-none">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-amber-300">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                <span className="font-bold">📤 {currentStage} Synthesizing Outflow:</span>
+              </div>
+              <span className="text-[9px] bg-amber-900/60 border border-amber-700/50 text-amber-200 px-1.5 py-0.5 rounded font-mono">
+                Target: {activeStreamingFile || (currentStage && STAGE_OUTPUT_FILES[currentStage]) || 'Outflow Artifact'}
+              </span>
+            </div>
+            <div className="text-amber-200/90 bg-slate-900/80 border border-amber-900/50 rounded p-1.5 text-[9.5px] leading-relaxed break-words font-mono flex items-center justify-between">
+              <span>Streaming live tokens into <strong className="text-amber-400 font-bold">{activeStreamingFile || (currentStage && STAGE_OUTPUT_FILES[currentStage])}</strong></span>
+              {streamingFileContent && <span className="text-[9px] text-slate-400 font-normal">{streamingFileContent.length.toLocaleString()} bytes</span>}
             </div>
           </div>
         )}
@@ -2283,12 +2326,12 @@ export default function WorkspaceContent() {
                       <span className="text-slate-500">Active:</span>
                       <span className="text-slate-200 font-semibold">{selectedFile}</span>
                     </div>
-                    {activeStreamingFile === selectedFile ? (
+                    {activeStreamingFile === selectedFile && agentActivityState === 'synthesizing_outflow' ? (
                       <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded animate-pulse">
                         <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
                         LIVE OUTFLOW GENERATING...
                       </div>
-                    ) : activeStreamingFile && activeStreamingFile !== selectedFile ? (
+                    ) : activeStreamingFile && activeStreamingFile !== selectedFile && agentActivityState === 'synthesizing_outflow' ? (
                       <button
                         onClick={() => handleSelectFile(activeStreamingFile)}
                         className="flex items-center gap-1.5 text-[10px] font-bold text-amber-400 bg-amber-500/15 border border-amber-500/40 hover:bg-amber-500/25 px-2 py-0.5 rounded cursor-pointer animate-pulse transition-colors"
