@@ -543,13 +543,34 @@ export default function WorkspaceContent() {
   const loadSMLData = (outputs: any[]) => {
     // Populate agent outputs map
     const outputsMap: Record<string, any> = {};
+    const stageArtifactMap: Record<string, string> = {
+      Queen: 'plan.md',
+      Planner: 'requirements.md',
+      Architect: 'architecture.md',
+      System: 'backend_spec.md',
+      Designer: 'ui_spec.md',
+      Blueprinter: 'blueprint.md',
+      Security: 'security_report.md',
+      Reviewer: 'review_report.md',
+      Debugger: 'debug_report.md',
+    };
+    const stageFiles: string[] = [];
+
     outputs.forEach((o) => {
       const parsed = safeParseJson(o.validatedJson);
       if (parsed) {
         outputsMap[o.agentName] = parsed;
       }
+      const mappedFile = stageArtifactMap[o.agentName] || stageArtifactMap[o.stage];
+      if (mappedFile) {
+        stageFiles.push(mappedFile);
+      }
     });
     setAgentOutputs((prev) => ({ ...prev, ...outputsMap }));
+
+    if (stageFiles.length > 0) {
+      setFiles((prev) => [...new Set([...prev, ...stageFiles])]);
+    }
 
     // Extrapolate outputs
     const plannerOut = outputs.find((o) => o.agentName === 'Planner');
@@ -1105,10 +1126,37 @@ export default function WorkspaceContent() {
         }
       }
 
-      // 2. Fallback to DB outputs
+      // 2. Fallback to DB outputs (both Coder files and stage specification outputs e.g. plan.md, requirements.md)
       const res = await fetch(`/api/conversations/${conversationId}`);
       if (res.ok) {
         const data = await res.json();
+
+        // 2a. Check if this path matches a stage specification artifact in VFS_OUTPUT_MAP
+        const stageArtifactMap: Record<string, string> = {
+          'plan.md': 'Queen',
+          'requirements.md': 'Planner',
+          'architecture.md': 'Architect',
+          'backend_spec.md': 'System',
+          'ui_spec.md': 'Designer',
+          'blueprint.md': 'Blueprinter',
+          'security_report.md': 'Security',
+          'review_report.md': 'Reviewer',
+          'debug_report.md': 'Debugger',
+        };
+
+        const targetAgent = stageArtifactMap[pathStr];
+        if (targetAgent && Array.isArray(data.outputs)) {
+          const stageOutput = data.outputs.find((o: any) => o.agentName === targetAgent || o.stage === targetAgent);
+          if (stageOutput) {
+            const parsed = safeParseJson(stageOutput.validatedJson);
+            const content = parsed?.content || (typeof stageOutput.validatedJson === 'string' ? stageOutput.validatedJson : '');
+            if (content && content.trim().length > 0) {
+              setFileContent(content);
+              return;
+            }
+          }
+        }
+
         const coderOutputs = data.outputs.filter((o: any) => o.agentName === 'Coder');
         
         let foundContent = '';
