@@ -28,12 +28,18 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const title = typeof body?.title === 'string' && body.title.trim() ? body.title.trim() : 'New Autocoder Project';
+    const originalPrompt = typeof body?.prompt === 'string' && body.prompt.trim()
+      ? body.prompt.trim()
+      : typeof body?.originalPrompt === 'string' && body.originalPrompt.trim()
+      ? body.originalPrompt.trim()
+      : null;
 
     // Owner ID is strictly derived from the authenticated session, never from client-supplied fields
     const conversation = await prisma.conversation.create({
       data: {
         ownerId: session.user.id,
         title,
+        originalPrompt,
         status: 'Idle',
         currentStage: 'Queen',
       },

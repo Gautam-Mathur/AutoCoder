@@ -77,14 +77,14 @@ export default function LandingDashboard() {
       const res = await fetch('/api/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title }),
+        body: JSON.stringify({ title, prompt: finalPrompt }),
       });
 
       if (res.ok) {
         const data = await res.json();
         setActiveId(data.id);
         setActivePrompt(finalPrompt);
-        router.push(`/workspace?id=${data.id}&prompt=${encodeURIComponent(finalPrompt)}`);
+        router.push(`/workspace?id=${data.id}`);
       }
     } catch (e) {
       console.error(e);

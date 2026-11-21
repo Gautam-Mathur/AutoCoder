@@ -381,18 +381,18 @@ export default function WorkspaceContent() {
     };
   }, []);
 
-  // Auto-start or auto-resume pipeline if loaded and status is Active or Paused (or Idle with initial prompt)
+  // Auto-start or auto-resume pipeline if loaded and status is Active or Paused (or Idle with prompt)
   useEffect(() => {
     if (detailsLoaded && !didConnectRef.current) {
       if (pipelineStatus === 'Active' || pipelineStatus === 'Paused') {
         didConnectRef.current = true;
         handleStartPipeline(true);
-      } else if (pipelineStatus === 'Idle' && initialPrompt) {
+      } else if (pipelineStatus === 'Idle' && promptText?.trim()) {
         didConnectRef.current = true;
         handleStartPipeline(false);
       }
     }
-  }, [detailsLoaded, pipelineStatus, initialPrompt]);
+  }, [detailsLoaded, pipelineStatus, promptText]);
 
   // Live polling effect during active pipeline execution to keep file tree and active code view updated without manual reloads
   useEffect(() => {
@@ -420,6 +420,9 @@ export default function WorkspaceContent() {
         setCurrentStage(data.currentStage);
         if (data.title) {
           setActiveTitle(data.title);
+        }
+        if (data.originalPrompt && !promptText) {
+          setPromptText(data.originalPrompt);
         }
 
         // Load SML data if exists
@@ -639,8 +642,9 @@ export default function WorkspaceContent() {
       eventSourceRef.current = null;
     }
 
-    // Establish SSE stream
-    const url = `/api/pipeline/stream?conversationId=${conversationId}&prompt=${encodeURIComponent(promptText)}`;
+    // Establish SSE stream (omit large prompt from URL to avoid HTTP 431 header limits)
+    const promptQuery = promptText && promptText.length < 500 ? `&prompt=${encodeURIComponent(promptText)}` : '';
+    const url = `/api/pipeline/stream?conversationId=${conversationId}${promptQuery}`;
     const eventSource = new EventSource(url);
     eventSourceRef.current = eventSource;
 
@@ -1571,10 +1575,21 @@ export default function WorkspaceContent() {
               placeholder="Send prompt or refine instructions..."
             />
             <button
-              onClick={() => {
+              onClick={async () => {
                 if (pipelineStatus === 'Failed') {
                   handleRetryFailedPipeline();
                 } else {
+                  if (conversationId && promptText?.trim()) {
+                    try {
+                      await fetch(`/api/conversations/${conversationId}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ originalPrompt: promptText.trim() }),
+                      });
+                    } catch (err) {
+                      console.error('Failed to update conversation prompt before run:', err);
+                    }
+                  }
                   handleStartPipeline(false);
                 }
               }}

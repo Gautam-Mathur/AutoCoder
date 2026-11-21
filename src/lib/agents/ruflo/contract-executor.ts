@@ -263,9 +263,12 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
         try {
           const vfsFiles = await listVirtualFiles(conversationId);
           const currentFileMap = new Map<string, string>();
-          for (const vf of vfsFiles) {
-            if (!isControlPlaneArtifact(vf.filePath)) {
-              currentFileMap.set(normalizeProjectPath(vf.filePath), vf.content);
+          for (const filePath of vfsFiles) {
+            if (!isControlPlaneArtifact(filePath)) {
+              const content = await readVirtualFile(conversationId, filePath);
+              if (content !== null) {
+                currentFileMap.set(normalizeProjectPath(filePath), content);
+              }
             }
           }
           const importVal = validateImportExportIntegrity(currentFileMap);

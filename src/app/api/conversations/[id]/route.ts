@@ -36,6 +36,41 @@ export async function GET(
   }
 }
 
+export async function PATCH(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  try {
+    const session = await getAuthenticatedSession(request);
+    const { id } = await context.params;
+    const access = await verifyConversationOwnership(id, session);
+    if (!access.authorized) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+
+    const body = await request.json();
+    const updateData: any = {};
+
+    if (typeof body?.title === 'string' && body.title.trim()) {
+      updateData.title = body.title.trim();
+    }
+    if (typeof body?.originalPrompt === 'string') {
+      updateData.originalPrompt = body.originalPrompt.trim();
+    } else if (typeof body?.prompt === 'string') {
+      updateData.originalPrompt = body.prompt.trim();
+    }
+
+    const updated = await prisma.conversation.update({
+      where: { id },
+      data: updateData,
+    });
+
+    return NextResponse.json(updated);
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
+}
+
 export async function DELETE(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
