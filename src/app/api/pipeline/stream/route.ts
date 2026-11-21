@@ -35,9 +35,8 @@ export async function GET(request: NextRequest) {
       const sendEvent = (event: any, customId?: number) => {
         try {
           const eventId = customId !== undefined ? customId : ++seqCounter;
-          const eventType = event.type || 'message';
           controller.enqueue(
-            encoder.encode(`id: ${eventId}\nevent: ${eventType}\ndata: ${JSON.stringify(event)}\n\n`)
+            encoder.encode(`id: ${eventId}\ndata: ${JSON.stringify(event)}\n\n`)
           );
         } catch (e) {
           // Stream closed
@@ -45,11 +44,24 @@ export async function GET(request: NextRequest) {
       };
 
       // 1. Replay past pipeline events from SQLite filtering by sequence > lastSeq
+      // Skip high-frequency historical streaming progress chunks from older sequences so we immediately replay up to the current stage!
       try {
+        const maxSeqRec = await prisma.pipelineEvent.aggregate({
+          _max: { sequence: true },
+          where: { conversationId },
+        });
+        const maxSeq = maxSeqRec._max.sequence || 0;
+        // Keep stream progress chunks only from the latest 100 sequences (active stage), skip older streaming flood
+        const streamProgressThreshold = Math.max(0, maxSeq - 100);
+
         const events = await prisma.pipelineEvent.findMany({
           where: {
             conversationId,
             ...(lastSeq > 0 ? { sequence: { gt: lastSeq } } : {}),
+            OR: [
+              { eventType: { not: 'AGENT_STREAM_PROGRESS' } },
+              { sequence: { gte: streamProgressThreshold } },
+            ],
           },
           orderBy: { sequence: 'asc' },
           take: 500,

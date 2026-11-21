@@ -435,6 +435,46 @@ export default function WorkspaceContent() {
 
         // Populate logs from database execution history
         if (data.history && data.history.length > 0) {
+          // If the pipeline is currently Active and we don't have stream progress yet,
+          // infer the current stage activity state and inflow from the latest history item
+          if (data.status === 'Active') {
+            const latestHistory = data.history[0]; // first item is newest in history
+            if (latestHistory && (latestHistory.status === 'Started' || latestHistory.status === 'Running')) {
+              setAgentActivityState((prev) => (prev === 'idle' ? 'reading_inflow' : prev));
+              const stageDefaults: Record<string, string> = {
+                Queen: 'plan.md',
+                Planner: 'requirements.md',
+                Architect: 'architecture.md',
+                System: 'backend_spec.md',
+                Designer: 'ui_spec.md',
+                Blueprinter: 'blueprint.md',
+                Coder: 'index.html',
+                Debugger: 'debug_report.md',
+                Security: 'security_report.md',
+                Reviewer: 'review_report.md',
+              };
+              const stageArtifact = stageDefaults[latestHistory.stage] || `${latestHistory.stage}.md`;
+              setActiveStreamingFile((prev) => prev || stageArtifact);
+              // Ensure target file appears in file explorer tree
+              setFiles((prev) => (prev.includes(stageArtifact) ? prev : [...prev, stageArtifact]));
+
+              const STAGE_INFLOW_SUMMARY: Record<string, string> = {
+                Queen: 'User Prompt',
+                Planner: '[plan.md, User Prompt]',
+                Architect: '[requirements.md, plan.md]',
+                System: '[architecture.md, requirements.md]',
+                Designer: '[requirements.md, architecture.md]',
+                Blueprinter: '[architecture.md, backend_spec.md, ui_spec.md]',
+                Coder: '[blueprint.md, architecture.md]',
+                Tester: 'Workspace Source Code Files',
+                Debugger: '[test_report.md, Workspace Source Files]',
+                Security: '[workspace.manifest.json, Source Files]',
+                Reviewer: '[workspace.manifest.json, System Specs]',
+              };
+              setInflowDetail((prev) => prev || STAGE_INFLOW_SUMMARY[latestHistory.stage] || 'Upstream Stage Specifications');
+            }
+          }
+
           const mappedLogs: LogMessage[] = data.history.map((h: any) => {
             let type = 'AGENT_LOG';
             const logMsg = h.logs || '';
@@ -764,8 +804,22 @@ export default function WorkspaceContent() {
 
       if (data.type === 'AGENT_START') {
         setStreamProgress(null);
-        setActiveStreamingFile(null);
         setAgentActivityState('reading_inflow');
+        const stageDefaults: Record<string, string> = {
+          Queen: 'plan.md',
+          Planner: 'requirements.md',
+          Architect: 'architecture.md',
+          System: 'backend_spec.md',
+          Designer: 'ui_spec.md',
+          Blueprinter: 'blueprint.md',
+          Coder: 'index.html',
+          Debugger: 'debug_report.md',
+          Security: 'security_report.md',
+          Reviewer: 'review_report.md',
+        };
+        const target = stageDefaults[data.agent] || `${data.agent}.md`;
+        setActiveStreamingFile(target);
+        setFiles((prev) => (prev.includes(target) ? prev : [...prev, target]));
       }
 
       addLog({
@@ -1101,6 +1155,9 @@ export default function WorkspaceContent() {
     } else {
       const isSelected = selectedFile === node.path;
       const isStreaming = activeStreamingFile === node.path;
+      const isOutflow = isStreaming && agentActivityState === 'synthesizing_outflow';
+      const isInflow = isStreaming && agentActivityState === 'reading_inflow';
+
       return (
         <button
           key={node.path}
@@ -1116,10 +1173,16 @@ export default function WorkspaceContent() {
               {node.name}
             </span>
           </div>
-          {isStreaming && (
+          {isOutflow && (
             <span className="flex items-center gap-1 text-[9px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-1 py-0.2 rounded animate-pulse">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
-              LIVE
+              OUTFLOW
+            </span>
+          )}
+          {isInflow && (
+            <span className="flex items-center gap-1 text-[9px] font-bold text-sky-400 bg-sky-500/10 border border-sky-500/30 px-1 py-0.2 rounded animate-pulse">
+              <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-ping"></span>
+              INFLOW
             </span>
           )}
         </button>
