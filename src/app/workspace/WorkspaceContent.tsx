@@ -40,16 +40,16 @@ interface FileNode {
 function extractLiveStreamingCode(raw: string): string {
   if (!raw) return '';
 
-  // 1. Tool call with <parameter=content> or <parameter name="content">
-  const paramMatches = [...raw.matchAll(/<parameter(?:=|\s+name=)["']?content["']?>\r?\n?([\s\S]*)/gi)];
+  // 1. Tool call with <parameter=content>, <parameter=new_content>, <parameter=code>, etc.
+  const paramMatches = [...raw.matchAll(/<parameter(?:=|\s+name=)["']?(?:content|new_content|code|file_content)["']?>\r?\n?([\s\S]*)/gi)];
   if (paramMatches.length > 0) {
     let content = paramMatches[paramMatches.length - 1][1];
     content = content.replace(/<\/parameter>[\s\S]*$/i, '');
     return content;
   }
 
-  // 2. JSON tool call arguments with "content": "..."
-  const jsonContentMatches = [...raw.matchAll(/"content"\s*:\s*"([\s\S]*)/gi)];
+  // 2. JSON tool call arguments with "content": "..." or "new_content": "..."
+  const jsonContentMatches = [...raw.matchAll(/"(?:content|new_content|code|file_content)"\s*:\s*"([\s\S]*)/gi)];
   if (jsonContentMatches.length > 0) {
     let jsonStr = jsonContentMatches[jsonContentMatches.length - 1][1];
     jsonStr = jsonStr.replace(/"\s*,?\s*"[^"]+"\s*:[\s\S]*$/i, '');
@@ -66,9 +66,9 @@ function extractLiveStreamingCode(raw: string): string {
     return content;
   }
 
-  // 4. If raw starts with tool call opening tags but hasn't reached content parameter yet:
+  // 4. If raw contains tool call opening tags but has no code parameter yet (e.g. list_files, read_file, check_syntax):
   if (/^\s*<(?:function|tool_call)/i.test(raw)) {
-    return '// Synthesizing file code...';
+    return '';
   }
 
   return raw;
@@ -809,16 +809,14 @@ export default function WorkspaceContent() {
               setSelectedFile(targetFile);
             }
             // Fetch live content for open file (preserve live character-by-character stream while actively synthesizing)
-            if (agentActivityState === 'synthesizing_outflow' && (activeStreamingFile === targetFile || currentStage === 'Coder')) {
-              if (streamingFileContent && streamingFileContent.trim().length > 0) {
-                setFileContent(streamingFileContent);
-              }
+            if (agentActivityState === 'synthesizing_outflow' && (activeStreamingFile === targetFile || currentStage === 'Coder') && streamingFileContent && streamingFileContent.trim().length > 0) {
+              setFileContent(streamingFileContent);
             } else {
               const diskRes = await fetch(`/api/conversations/${id}/files/read?file=${encodeURIComponent(targetFile)}`);
               if (diskRes.ok) {
                 const fileData = await diskRes.json();
-                if (fileData.content !== undefined) {
-                  if (agentActivityState !== 'synthesizing_outflow') {
+                if (fileData.content !== undefined && fileData.content.trim().length > 0) {
+                  if (!streamingFileContent || streamingFileContent.trim().length === 0) {
                     setFileContent(fileData.content);
                   }
                 }
@@ -1029,7 +1027,18 @@ export default function WorkspaceContent() {
           setFiles((prev) => (prev.includes(tf) ? prev : [...prev, tf]));
           selectedFileRef.current = tf;
           setSelectedFile(tf);
-          setFileContent(`// [Coder] Implementing file: "${tf}" (${fIdx || 1} of ${total || 1})...\n// Analyzing blueprint and architecture specifications...`);
+          fetch(`/api/conversations/${conversationId}/files/read?file=${encodeURIComponent(tf)}`)
+            .then((r) => r.ok ? r.json() : null)
+            .then((fd) => {
+              if (fd && fd.content && fd.content.trim().length > 0) {
+                setFileContent(fd.content);
+              } else {
+                setFileContent(`// [Coder] Implementing file: "${tf}" (${fIdx || 1} of ${total || 1})...\n// Analyzing blueprint and architecture specifications...`);
+              }
+            })
+            .catch(() => {
+              setFileContent(`// [Coder] Implementing file: "${tf}" (${fIdx || 1} of ${total || 1})...\n// Analyzing blueprint and architecture specifications...`);
+            });
         }
 
         addLog({
@@ -1138,7 +1147,18 @@ export default function WorkspaceContent() {
           if (isPriorStageFile || agentName === 'Coder') {
             selectedFileRef.current = target;
             setSelectedFile(target);
-            setFileContent(`// [${agentName}] Synthesizing outflow for ${target}...`);
+            fetch(`/api/conversations/${conversationId}/files/read?file=${encodeURIComponent(target)}`)
+              .then((r) => r.ok ? r.json() : null)
+              .then((fd) => {
+                if (fd && fd.content && fd.content.trim().length > 0) {
+                  setFileContent(fd.content);
+                } else {
+                  setFileContent(`// [${agentName}] Synthesizing outflow for ${target}...`);
+                }
+              })
+              .catch(() => {
+                setFileContent(`// [${agentName}] Synthesizing outflow for ${target}...`);
+              });
           }
         }
         addLog({
@@ -1180,9 +1200,9 @@ export default function WorkspaceContent() {
         if (currentTarget) {
           setActiveStreamingFile(currentTarget);
           const rawFullText = progressData?.fullText || progressData?.latestText || '';
-          const liveCode = progressData?.liveCode || extractLiveStreamingCode(rawFullText);
-          const liveDisplay = liveCode.trim().length > 0 ? liveCode : rawFullText;
-          setStreamingFileContent(liveDisplay);
+          const liveCode = progressData?.liveCode !== undefined && progressData.liveCode.trim().length > 0
+            ? progressData.liveCode
+            : extractLiveStreamingCode(rawFullText);
 
           // Ensure target file appears in file explorer tree immediately
           setFiles((prev) => (prev.includes(currentTarget) ? prev : [...prev, currentTarget]));
@@ -1192,12 +1212,31 @@ export default function WorkspaceContent() {
             !selectedFileRef.current ||
             (selectedFileRef.current in STAGE_FILE_TO_AGENT && selectedFileRef.current !== currentTarget);
 
-          if (isPriorStageFile || selectedFileRef.current === currentTarget || agentName === 'Coder') {
+          if (isPriorStageFile || (!selectedFileRef.current && agentName === 'Coder')) {
             if (selectedFileRef.current !== currentTarget) {
               selectedFileRef.current = currentTarget;
               setSelectedFile(currentTarget);
             }
-            setFileContent(liveDisplay);
+          }
+
+          if (liveCode && liveCode.trim().length > 0) {
+            setStreamingFileContent(liveCode);
+            if (selectedFileRef.current === currentTarget) {
+              setFileContent(liveCode);
+            }
+          } else {
+            // No code in stream yet (e.g. model is running tool calls like list_files or check_syntax)
+            // Fetch and render the existing VFS file content if not already loaded with code
+            if (!fileContent || fileContent.startsWith('//') || fileContent.trim().length === 0) {
+              fetch(`/api/conversations/${conversationId}/files/read?file=${encodeURIComponent(currentTarget)}`)
+                .then((r) => r.ok ? r.json() : null)
+                .then((fd) => {
+                  if (fd && fd.content && fd.content.trim().length > 0) {
+                    setFileContent(fd.content);
+                  }
+                })
+                .catch(() => {});
+            }
           }
         }
         return;

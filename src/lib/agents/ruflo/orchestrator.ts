@@ -1432,17 +1432,17 @@ function isParserValid(content: string, ext: string): boolean {
 export function extractLiveStreamingCode(raw: string): string {
   if (!raw) return '';
 
-  // 1. Tool call with <parameter=content> or <parameter name="content">
+  // 1. Tool call with <parameter=content>, <parameter=new_content>, <parameter=code>, etc.
   // Match the last occurrence in case earlier tool calls already completed in the same stream
-  const paramMatches = [...raw.matchAll(/<parameter(?:=|\s+name=)["']?content["']?>\r?\n?([\s\S]*)/gi)];
+  const paramMatches = [...raw.matchAll(/<parameter(?:=|\s+name=)["']?(?:content|new_content|code|file_content)["']?>\r?\n?([\s\S]*)/gi)];
   if (paramMatches.length > 0) {
     let content = paramMatches[paramMatches.length - 1][1];
     content = content.replace(/<\/parameter>[\s\S]*$/i, '');
     return content;
   }
 
-  // 2. JSON tool call arguments with "content": "..."
-  const jsonContentMatches = [...raw.matchAll(/"content"\s*:\s*"([\s\S]*)/gi)];
+  // 2. JSON tool call arguments with "content": "..." or "new_content": "..."
+  const jsonContentMatches = [...raw.matchAll(/"(?:content|new_content|code|file_content)"\s*:\s*"([\s\S]*)/gi)];
   if (jsonContentMatches.length > 0) {
     let jsonStr = jsonContentMatches[jsonContentMatches.length - 1][1];
     jsonStr = jsonStr.replace(/"\s*,?\s*"[^"]+"\s*:[\s\S]*$/i, '');
@@ -1459,9 +1459,9 @@ export function extractLiveStreamingCode(raw: string): string {
     return content;
   }
 
-  // 4. If raw starts with tool call opening tags but hasn't reached content parameter yet:
+  // 4. If raw contains tool call opening tags but has no code parameter yet (e.g. list_files, read_file, check_syntax):
   if (/^\s*<(?:function|tool_call)/i.test(raw)) {
-    return '// Synthesizing file code...';
+    return '';
   }
 
   return raw;
@@ -1816,11 +1816,13 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
       const runId =
         runtimeOptions?.pipelineRunId ||
         'system-run';
-      const flushContent = liveCode.trim().length > 0 ? liveCode : fullAccumulatedText;
-      writeVirtualFile(conversationId, canonicalTargetFile, flushContent, {
-        pipelineRunId: runId,
-        allowControlPlane: true,
-      }).catch(() => {});
+      const flushContent = liveCode.trim().length > 0 ? liveCode : '';
+      if (flushContent) {
+        writeVirtualFile(conversationId, canonicalTargetFile, flushContent, {
+          pipelineRunId: runId,
+          allowControlPlane: true,
+        }).catch(() => {});
+      }
     }
 
     if (now - lastEmittedTime > 80) {
