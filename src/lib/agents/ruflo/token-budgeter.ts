@@ -13,17 +13,17 @@ export interface TokenBudgetResult {
 }
 
 export const DEFAULT_STAGE_TIMEOUT_MS: Record<string, number> = {
-  Queen: 600_000,       // 10 minutes
-  Planner: 600_000,     // 10 minutes
-  Architect: 900_000,   // 15 minutes
-  System: 900_000,      // 15 minutes
-  Designer: 900_000,    // 15 minutes
-  Blueprinter: 1800_000, // 30 minutes
-  Coder: 3600_000,      // 60 minutes
-  Tester: 900_000,      // 15 minutes
-  Debugger: 7200_000,   // 120 minutes (large CPU context prefill & repair)
-  Security: 1800_000,    // 30 minutes
-  Reviewer: 1800_000,    // 30 minutes
+  Queen: 3600_000,       // 60 minutes (CPU local inference prefill + generation on 30B models)
+  Planner: 3600_000,     // 60 minutes
+  Architect: 3600_000,   // 60 minutes
+  System: 3600_000,      // 60 minutes
+  Designer: 3600_000,    // 60 minutes
+  Blueprinter: 3600_000, // 60 minutes
+  Coder: 7200_000,       // 120 minutes
+  Tester: 1800_000,      // 30 minutes
+  Debugger: 7200_000,    // 120 minutes (large CPU context prefill & repair)
+  Security: 3600_000,    // 60 minutes
+  Reviewer: 3600_000,    // 60 minutes
 };
 
 export function countSectionItems(markdown: string, sectionName: string): number {

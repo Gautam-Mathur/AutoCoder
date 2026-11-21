@@ -1,9 +1,9 @@
 import { randomUUID } from 'crypto';
 import { prisma } from '../../db';
 
-// Stage timeout is up to 600_000ms (10 minutes) for heavy models (e.g. qwen3-coder:30b).
-// Keep lease comfortably active for 10 minutes per renewal.
-const LEASE_MS = 600_000;
+// Stage timeout is up to 7200_000ms (120 minutes) for heavy models (e.g. qwen3-coder:30b on CPU).
+// Keep lease comfortably active for 120 minutes per renewal.
+const LEASE_MS = 7200_000;
 
 export interface PipelineLease {
   conversationId: string;

@@ -100,15 +100,19 @@ export async function abortPipelineExecution(conversationId: string): Promise<vo
 export function isAbortError(err: any, signal?: AbortSignal): boolean {
   if (signal?.aborted) return true;
   if (!err) return false;
-  if (err.name === 'AbortError') return true;
-  if (err.name === 'DOMException' && String(err.message || '').toLowerCase().includes('abort')) return true;
+  // TimeoutError (e.g. from AbortSignal.timeout) is an inference timeout, not a user cancellation
+  if (err.name === 'TimeoutError') return false;
+  if (err.name === 'DOMException' && String(err.message || '').toLowerCase().includes('timeout')) return false;
   const msg = String(err.message || '').toLowerCase();
+  if (msg.includes('timeout') || msg.includes('timed out')) return false;
+  if (err.name === 'AbortError') return true;
+  if (err.name === 'DOMException' && msg.includes('abort')) return true;
   return (
-    msg.includes('operation was aborted') ||
     msg.includes('aborted by signal') ||
     msg.includes('the user aborted a request') ||
     msg.includes('aborted during tool execution') ||
-    msg.includes('aborted before inference')
+    msg.includes('aborted before inference') ||
+    (msg.includes('operation was aborted') && !msg.includes('timeout'))
   );
 }
 
