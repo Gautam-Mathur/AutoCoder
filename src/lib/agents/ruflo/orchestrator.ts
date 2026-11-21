@@ -1481,6 +1481,9 @@ export interface RunAgentRuntimeOptions {
   maxToolIterations?: number;
   enableTools?: boolean;
   inferenceTurnFn?: (messages: Message[], options?: InferenceOptions) => Promise<InferenceTurnResult>;
+  fileIndex?: number;
+  totalFiles?: number;
+  allFiles?: string[];
 }
 
 export async function runAgent(
@@ -1502,11 +1505,21 @@ export async function runAgent(
     throw new Error(`Unknown agent: ${agentName}`);
   }
 
+  const canonicalTargetFile = targetFile || VFS_OUTPUT_MAP[agentName] || undefined;
+
   const onEvent: PipelineEventCallback = (event) => rawOnEvent(event);
   onEvent({
     type: 'AGENT_START',
     agent: agentName,
-    message: `Agent ${agentName} started (Attempt ${attempt}/3)...`,
+    message: canonicalTargetFile
+      ? `Agent ${agentName} started targeting "${canonicalTargetFile}"${runtimeOptions?.fileIndex && runtimeOptions?.totalFiles ? ` (${runtimeOptions.fileIndex} of ${runtimeOptions.totalFiles})` : ''} (Attempt ${attempt}/3)...`
+      : `Agent ${agentName} started (Attempt ${attempt}/3)...`,
+    data: {
+      targetFile: canonicalTargetFile,
+      fileIndex: runtimeOptions?.fileIndex,
+      totalFiles: runtimeOptions?.totalFiles,
+      allFiles: runtimeOptions?.allFiles,
+    },
   });
 
   const startTime = Date.now();
@@ -1651,22 +1664,23 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
     `Agent ${agentName} started (Attempt ${attempt}/3)... Estimated tokens: ${budget}`
   );
 
-  const canonicalTargetFile = targetFile || VFS_OUTPUT_MAP[agentName] || undefined;
-
-  if (canonicalTargetFile && persistOutput) {
+  if (canonicalTargetFile && (persistOutput || agentName === 'Coder')) {
     const runId =
       runtimeOptions?.pipelineRunId ||
       (await prisma.pipelineRun.findUnique({ where: { conversationId } }))?.id ||
       'system-run';
-    await writeVirtualFile(
-      conversationId,
-      canonicalTargetFile,
-      `<!-- Stage: ${agentName} (${canonicalTargetFile}) in progress... -->\n`,
-      {
-        pipelineRunId: runId,
-        allowControlPlane: true,
-      }
-    ).catch(() => {});
+    const existing = await readVirtualFile(conversationId, canonicalTargetFile).catch(() => null);
+    if (!existing || existing.trim().length === 0) {
+      await writeVirtualFile(
+        conversationId,
+        canonicalTargetFile,
+        `<!-- Stage: ${agentName} (${canonicalTargetFile}) in progress... -->\n`,
+        {
+          pipelineRunId: runId,
+          allowControlPlane: true,
+        }
+      ).catch(() => {});
+    }
   }
 
   const resolvedInflowArtifacts = requiredArtifactNames.map((art) => ({
@@ -1691,11 +1705,18 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
   const evtReadingInflow = {
     type: 'AGENT_INFLOW_READING',
     agent: agentName,
-    message: `📥 Reading Inflow Context: ${inflowDesc}`,
+    message: canonicalTargetFile && runtimeOptions?.fileIndex && runtimeOptions?.totalFiles
+      ? `📥 Reading Inflow Context for "${canonicalTargetFile}" (${runtimeOptions.fileIndex}/${runtimeOptions.totalFiles}): ${inflowDesc}`
+      : canonicalTargetFile
+      ? `📥 Reading Inflow Context for "${canonicalTargetFile}": ${inflowDesc}`
+      : `📥 Reading Inflow Context: ${inflowDesc}`,
     data: {
       inflow: inflowDesc,
       inflowArtifacts: inflowItemsList,
       targetFile: canonicalTargetFile,
+      fileIndex: runtimeOptions?.fileIndex,
+      totalFiles: runtimeOptions?.totalFiles,
+      allFiles: runtimeOptions?.allFiles,
       model: config.ollamaModel,
     },
   };
@@ -1728,9 +1749,14 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
       const evtOutflow = {
         type: 'AGENT_OUTFLOW_STARTING',
         agent: agentName,
-        message: `📤 Synthesizing Outflow into ${canonicalTargetFile || agentName}...`,
+        message: canonicalTargetFile && runtimeOptions?.fileIndex && runtimeOptions?.totalFiles
+          ? `📤 Synthesizing Outflow into "${canonicalTargetFile}" (${runtimeOptions.fileIndex}/${runtimeOptions.totalFiles})...`
+          : `📤 Synthesizing Outflow into ${canonicalTargetFile || agentName}...`,
         data: {
           targetFile: canonicalTargetFile,
+          fileIndex: runtimeOptions?.fileIndex,
+          totalFiles: runtimeOptions?.totalFiles,
+          allFiles: runtimeOptions?.allFiles,
         },
       };
       onEvent(evtOutflow);
@@ -1738,7 +1764,7 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
     }
 
     const now = Date.now();
-    if (canonicalTargetFile && persistOutput && now - lastVfsFlushTime > 2500) {
+    if (canonicalTargetFile && (persistOutput || agentName === 'Coder') && now - lastVfsFlushTime > 2500) {
       lastVfsFlushTime = now;
       const runId =
         runtimeOptions?.pipelineRunId ||
@@ -1762,13 +1788,18 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
       const evt = {
         type: 'AGENT_STREAM_PROGRESS',
         agent: agentName,
-        message: 'Streaming agent output...',
+        message: canonicalTargetFile && runtimeOptions?.fileIndex && runtimeOptions?.totalFiles
+          ? `Streaming agent output for "${canonicalTargetFile}" (${runtimeOptions.fileIndex}/${runtimeOptions.totalFiles})...`
+          : `Streaming agent output for ${canonicalTargetFile || agentName}...`,
         data: {
           tokenCount,
           maxTokens: budget,
           latestText: chunkBuffer,
           fullText: fullAccumulatedText,
           targetFile: canonicalTargetFile,
+          fileIndex: runtimeOptions?.fileIndex,
+          totalFiles: runtimeOptions?.totalFiles,
+          allFiles: runtimeOptions?.allFiles,
           apis: speculativeApis.slice(-5),
           entities: Array.from(new Set(speculativeEntities)).slice(-6),
           files: Array.from(new Set(speculativeFiles)).slice(-8),

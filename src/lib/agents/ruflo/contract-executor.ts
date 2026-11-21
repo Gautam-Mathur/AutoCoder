@@ -142,6 +142,9 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
           : authorized.authorizedFiles;
 
         for (const tf of targetFilesToBuild) {
+          const fileIndex = targetFilesToBuild.indexOf(tf) + 1;
+          const totalFiles = targetFilesToBuild.length;
+
           if (isControlPlaneArtifact(tf)) {
             throw new Error(`Authorization Exception: Coder stage cannot target control plane artifact "${tf}".`);
           }
@@ -163,11 +166,30 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
                   type: 'AGENT_LOG',
                   agent: 'Coder',
                   message: `⏩ Target file "${tf}" already generated and verified in VFS (${existingContent.length} bytes). Resuming next target...`,
+                  data: {
+                    targetFile: tf,
+                    fileIndex,
+                    totalFiles,
+                    allFiles: targetFilesToBuild,
+                    status: 'completed',
+                  },
                 });
                 continue;
               }
             }
           }
+
+          onEvent({
+            type: 'CODER_TARGET_FILE',
+            agent: 'Coder',
+            message: `💻 [Coder] Implementing file: "${tf}" (${fileIndex} of ${totalFiles})`,
+            data: {
+              targetFile: tf,
+              fileIndex,
+              totalFiles,
+              allFiles: targetFilesToBuild,
+            },
+          });
 
           const agentResult = await runAgent(
             conversationId,
@@ -187,6 +209,9 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
               stageExecutionId: stageExecution.id,
               isSetupOperation: isSetupFile,
               allowedMutationPaths: [tf],
+              fileIndex,
+              totalFiles,
+              allFiles: targetFilesToBuild,
             }
           );
 
@@ -223,6 +248,9 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
                   stageExecutionId: stageExecution.id,
                   isSetupOperation: isSetupFile,
                   allowedMutationPaths: [tf],
+                  fileIndex,
+                  totalFiles,
+                  allFiles: targetFilesToBuild,
                 }
               );
 
@@ -232,6 +260,17 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
                 ((await readVirtualFile(conversationId, tf)) || '').trim().length > 0;
 
               if (persistedOnRetry) {
+                onEvent({
+                  type: 'CODER_FILE_COMPLETE',
+                  agent: 'Coder',
+                  message: `✅ [Coder] Completed file: "${tf}" (${fileIndex} of ${totalFiles})`,
+                  data: {
+                    targetFile: tf,
+                    fileIndex,
+                    totalFiles,
+                    allFiles: targetFilesToBuild,
+                  },
+                });
                 continue;
               }
 
@@ -253,6 +292,18 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
               isSetupOperation: isSetupFile,
             });
           }
+
+          onEvent({
+            type: 'CODER_FILE_COMPLETE',
+            agent: 'Coder',
+            message: `✅ [Coder] Completed file: "${tf}" (${fileIndex} of ${totalFiles})`,
+            data: {
+              targetFile: tf,
+              fileIndex,
+              totalFiles,
+              allFiles: targetFilesToBuild,
+            },
+          });
         }
 
         const manifest = await generateWorkspaceManifest(conversationId, stageExecution.id, authorized);

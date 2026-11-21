@@ -392,6 +392,13 @@ export default function WorkspaceContent() {
   const [selectedConflictOption, setSelectedConflictOption] = useState<string>('');
   const [detailsLoaded, setDetailsLoaded] = useState(false);
   const [streamProgress, setStreamProgress] = useState<any>(null);
+  const [coderFileProgress, setCoderFileProgress] = useState<{
+    currentFile?: string;
+    fileIndex?: number;
+    totalFiles?: number;
+    allFiles?: string[];
+    completedFiles?: string[];
+  }>({});
 
   // SSE Stream controller
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -474,7 +481,13 @@ export default function WorkspaceContent() {
             const latestHistory = data.history[0]; // first item is newest in history
             if (latestHistory && (latestHistory.status === 'Started' || latestHistory.status === 'Running')) {
               setAgentActivityState((prev) => (prev === 'idle' ? 'reading_inflow' : prev));
-              const stageArtifact = STAGE_OUTPUT_FILES[latestHistory.stage] || `${latestHistory.stage}.md`;
+              let stageArtifact = STAGE_OUTPUT_FILES[latestHistory.stage] || `${latestHistory.stage}.md`;
+              if (latestHistory.stage === 'Coder' && latestHistory.logs) {
+                const coderMatch = latestHistory.logs.match(/(?:Implementing file:|targeting)\s+"([^"]+)"/i);
+                if (coderMatch && coderMatch[1]) {
+                  stageArtifact = coderMatch[1];
+                }
+              }
               setActiveStreamingFile(stageArtifact);
               // Ensure target file appears in file explorer tree
               setFiles((prev) => (prev.includes(stageArtifact) ? prev : [...prev, stageArtifact]));
@@ -496,9 +509,26 @@ export default function WorkspaceContent() {
             }
           }
 
+          let lastCoderFile: string | undefined;
+          let lastCoderIdx: number | undefined;
+          let lastCoderTotal: number | undefined;
+          const completedCoderFiles: string[] = [];
+
           const mappedLogs: LogMessage[] = data.history.map((h: any) => {
             let type = 'AGENT_LOG';
             const logMsg = h.logs || '';
+
+            // Extract Coder file progress across historic logs
+            const coderMatch = logMsg.match(/(?:Implementing file:|targeting)\s+"([^"]+)"(?:\s+\((\d+)\s+(?:of|\/)\s+(\d+)\))?/i);
+            if (coderMatch && coderMatch[1]) {
+              lastCoderFile = coderMatch[1];
+              if (coderMatch[2]) lastCoderIdx = parseInt(coderMatch[2], 10);
+              if (coderMatch[3]) lastCoderTotal = parseInt(coderMatch[3], 10);
+            }
+            const completedMatch = logMsg.match(/(?:Completed file:|Target file)\s+"([^"]+)"/i);
+            if (completedMatch && completedMatch[1] && (logMsg.includes('Completed') || logMsg.includes('already generated') || logMsg.includes('verified'))) {
+              completedCoderFiles.push(completedMatch[1]);
+            }
             
             if (logMsg.trim().startsWith('{') && logMsg.includes('"telemetryType":"rich_step_log"')) {
               try {
@@ -540,6 +570,16 @@ export default function WorkspaceContent() {
               timestamp: new Date(h.createdAt).toLocaleTimeString(),
             };
           });
+
+          if (lastCoderFile || completedCoderFiles.length > 0) {
+            setCoderFileProgress((prev) => ({
+              ...prev,
+              currentFile: lastCoderFile || prev.currentFile,
+              fileIndex: lastCoderIdx ?? prev.fileIndex,
+              totalFiles: lastCoderTotal ?? prev.totalFiles,
+              completedFiles: Array.from(new Set([...(prev.completedFiles || []), ...completedCoderFiles])),
+            }));
+          }
           // Restore chronological order
           setLogs(mappedLogs.reverse());
         }
@@ -786,6 +826,56 @@ export default function WorkspaceContent() {
         return;
       }
 
+      if (data.type === 'CODER_TARGET_FILE') {
+        const tf = data.data?.targetFile || data.targetFile;
+        const fIdx = data.data?.fileIndex;
+        const total = data.data?.totalFiles;
+        const all = data.data?.allFiles || [];
+
+        setCurrentStage('Coder');
+        setCoderFileProgress((prev) => ({
+          ...prev,
+          currentFile: tf,
+          fileIndex: fIdx,
+          totalFiles: total,
+          allFiles: all.length > 0 ? all : prev.allFiles,
+        }));
+
+        if (tf) {
+          setActiveStreamingFile(tf);
+          setFiles((prev) => (prev.includes(tf) ? prev : [...prev, tf]));
+          selectedFileRef.current = tf;
+          setSelectedFile(tf);
+          setFileContent(`// [Coder] Implementing file: "${tf}" (${fIdx || 1} of ${total || 1})...\n// Analyzing blueprint and architecture specifications...`);
+        }
+
+        addLog({
+          type: 'AGENT_LOG',
+          agent: 'Coder',
+          message: data.message || `💻 [Coder] Implementing file: "${tf}" (${fIdx} of ${total})`,
+          data: data.data,
+        });
+        return;
+      }
+
+      if (data.type === 'CODER_FILE_COMPLETE') {
+        const tf = data.data?.targetFile || data.targetFile;
+        if (tf) {
+          setCoderFileProgress((prev) => ({
+            ...prev,
+            completedFiles: Array.from(new Set([...(prev.completedFiles || []), tf])),
+          }));
+          fetchConversationDetails(conversationId);
+        }
+        addLog({
+          type: 'AGENT_LOG',
+          agent: 'Coder',
+          message: data.message || `✅ [Coder] Completed file: "${tf}"`,
+          data: data.data,
+        });
+        return;
+      }
+
       if (data.type === 'AGENT_INFLOW_READING') {
         setAgentActivityState('reading_inflow');
         setStreamProgress(null);
@@ -795,17 +885,33 @@ export default function WorkspaceContent() {
         if (data.data?.inflow) {
           setInflowDetail(data.data.inflow);
         }
-        const target = data.data?.targetFile || (agentName && STAGE_OUTPUT_FILES[agentName]) || `${agentName}.md`;
+        const target =
+          data.data?.targetFile ||
+          data.targetFile ||
+          (agentName === 'Coder' ? (coderFileProgress.currentFile || 'index.html') : (agentName && STAGE_OUTPUT_FILES[agentName])) ||
+          `${agentName}.md`;
+
+        if (agentName === 'Coder' && (data.data?.targetFile || data.targetFile)) {
+          const tf = data.data?.targetFile || data.targetFile;
+          setCoderFileProgress((prev) => ({
+            ...prev,
+            currentFile: tf,
+            fileIndex: data.data?.fileIndex ?? prev.fileIndex,
+            totalFiles: data.data?.totalFiles ?? prev.totalFiles,
+            allFiles: data.data?.allFiles || prev.allFiles,
+          }));
+        }
+
         if (target) {
           setActiveStreamingFile(target);
           setFiles((prev) => (prev.includes(target) ? prev : [...prev, target]));
           const isPriorStageFile =
             !selectedFileRef.current ||
             (selectedFileRef.current in STAGE_FILE_TO_AGENT && selectedFileRef.current !== target);
-          if (isPriorStageFile) {
+          if (isPriorStageFile || agentName === 'Coder') {
             selectedFileRef.current = target;
             setSelectedFile(target);
-            setFileContent(`// [${agentName}] Reading inflow context:\n// ${data.data?.inflow || 'Upstream specifications'}`);
+            setFileContent(`// [${agentName}] Reading inflow context for ${target}:\n// ${data.data?.inflow || 'Upstream specifications'}`);
           }
         }
         addLog({
@@ -823,14 +929,30 @@ export default function WorkspaceContent() {
         setStreamingFileContent('');
         const agentName = data.agent || data.stage || currentStage;
         if (agentName) setCurrentStage(agentName);
-        const target = data.data?.targetFile || (agentName && STAGE_OUTPUT_FILES[agentName]) || `${agentName}.md`;
+        const target =
+          data.data?.targetFile ||
+          data.targetFile ||
+          (agentName === 'Coder' ? (coderFileProgress.currentFile || 'index.html') : (agentName && STAGE_OUTPUT_FILES[agentName])) ||
+          `${agentName}.md`;
+
+        if (agentName === 'Coder' && (data.data?.targetFile || data.targetFile)) {
+          const tf = data.data?.targetFile || data.targetFile;
+          setCoderFileProgress((prev) => ({
+            ...prev,
+            currentFile: tf,
+            fileIndex: data.data?.fileIndex ?? prev.fileIndex,
+            totalFiles: data.data?.totalFiles ?? prev.totalFiles,
+            allFiles: data.data?.allFiles || prev.allFiles,
+          }));
+        }
+
         if (target) {
           setActiveStreamingFile(target);
           setFiles((prev) => (prev.includes(target) ? prev : [...prev, target]));
           const isPriorStageFile =
             !selectedFileRef.current ||
             (selectedFileRef.current in STAGE_FILE_TO_AGENT && selectedFileRef.current !== target);
-          if (isPriorStageFile) {
+          if (isPriorStageFile || agentName === 'Coder') {
             selectedFileRef.current = target;
             setSelectedFile(target);
             setFileContent(`// [${agentName}] Synthesizing outflow for ${target}...`);
@@ -856,9 +978,21 @@ export default function WorkspaceContent() {
 
         const currentTarget =
           progressData?.targetFile ||
-          (agentName && STAGE_OUTPUT_FILES[agentName]) ||
+          data.data?.targetFile ||
+          data.targetFile ||
+          (agentName === 'Coder' ? (coderFileProgress.currentFile || 'index.html') : (agentName && STAGE_OUTPUT_FILES[agentName])) ||
           (currentStage && STAGE_OUTPUT_FILES[currentStage]) ||
           `${agentName || 'outflow'}.md`;
+
+        if (agentName === 'Coder' && progressData?.targetFile) {
+          setCoderFileProgress((prev) => ({
+            ...prev,
+            currentFile: progressData.targetFile,
+            fileIndex: progressData.fileIndex ?? prev.fileIndex,
+            totalFiles: progressData.totalFiles ?? prev.totalFiles,
+            allFiles: progressData.allFiles || prev.allFiles,
+          }));
+        }
 
         if (currentTarget) {
           setActiveStreamingFile(currentTarget);
@@ -873,7 +1007,7 @@ export default function WorkspaceContent() {
             !selectedFileRef.current ||
             (selectedFileRef.current in STAGE_FILE_TO_AGENT && selectedFileRef.current !== currentTarget);
 
-          if (isPriorStageFile || selectedFileRef.current === currentTarget) {
+          if (isPriorStageFile || selectedFileRef.current === currentTarget || agentName === 'Coder') {
             if (selectedFileRef.current !== currentTarget) {
               selectedFileRef.current = currentTarget;
               setSelectedFile(currentTarget);
@@ -890,7 +1024,25 @@ export default function WorkspaceContent() {
         setAgentActivityState('reading_inflow');
         const agentName = data.agent || data.stage;
         if (agentName) setCurrentStage(agentName);
-        const target = (agentName && STAGE_OUTPUT_FILES[agentName]) || `${agentName}.md`;
+        const target =
+          data.data?.targetFile ||
+          data.targetFile ||
+          (agentName === 'Coder' ? (coderFileProgress.currentFile || 'index.html') : (agentName && STAGE_OUTPUT_FILES[agentName])) ||
+          `${agentName}.md`;
+
+        if (agentName === 'Coder') {
+          const tf = data.data?.targetFile || data.targetFile;
+          if (tf) {
+            setCoderFileProgress((prev) => ({
+              ...prev,
+              currentFile: tf,
+              fileIndex: data.data?.fileIndex ?? prev.fileIndex,
+              totalFiles: data.data?.totalFiles ?? prev.totalFiles,
+              allFiles: data.data?.allFiles || prev.allFiles,
+            }));
+          }
+        }
+
         setActiveStreamingFile(target);
         setFiles((prev) => (prev.includes(target) ? prev : [...prev, target]));
 
@@ -898,10 +1050,10 @@ export default function WorkspaceContent() {
           !selectedFileRef.current ||
           (selectedFileRef.current in STAGE_FILE_TO_AGENT && selectedFileRef.current !== target);
 
-        if (isPriorStageFile) {
+        if (isPriorStageFile || agentName === 'Coder') {
           selectedFileRef.current = target;
           setSelectedFile(target);
-          setFileContent(`// [${agentName}] Agent started. Analyzing specifications...`);
+          setFileContent(`// [${agentName}] Agent started targeting ${target}...`);
         }
       }
 
@@ -1248,6 +1400,8 @@ export default function WorkspaceContent() {
       const isOutflow = activeStreamingFile === node.path && agentActivityState === 'synthesizing_outflow';
       const isInflow = pipelineStatus === 'Active' && agentActivityState === 'reading_inflow' && (STAGE_INFLOW_FILES[currentStage] || []).includes(node.path);
       const isTargetPreparing = activeStreamingFile === node.path && agentActivityState === 'reading_inflow';
+      const isCoderActive = (currentStage === 'Coder' || pipelineStatus === 'Active') && (coderFileProgress.currentFile === node.path || (currentStage === 'Coder' && activeStreamingFile === node.path));
+      const isCoderDone = (coderFileProgress.completedFiles || []).some((cf) => cf === node.path || normalizeFilePath(cf) === node.path);
 
       return (
         <button
@@ -1267,19 +1421,29 @@ export default function WorkspaceContent() {
           {isOutflow && (
             <span className="flex items-center gap-1 text-[9px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-1 py-0.2 rounded animate-pulse">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
-              OUTFLOW
+              {currentStage === 'Coder' && coderFileProgress.fileIndex && coderFileProgress.totalFiles
+                ? `CODING (${coderFileProgress.fileIndex}/${coderFileProgress.totalFiles})`
+                : 'OUTFLOW'}
+            </span>
+          )}
+          {!isOutflow && isTargetPreparing && (
+            <span className="flex items-center gap-1 text-[9px] font-bold text-indigo-400 bg-indigo-500/10 border border-indigo-500/30 px-1 py-0.2 rounded">
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></span>
+              {currentStage === 'Coder' && coderFileProgress.fileIndex && coderFileProgress.totalFiles
+                ? `TARGET (${coderFileProgress.fileIndex}/${coderFileProgress.totalFiles})`
+                : 'TARGET'}
+            </span>
+          )}
+          {!isOutflow && !isTargetPreparing && isCoderDone && (
+            <span className="flex items-center gap-1 text-[9px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-1 py-0.2 rounded">
+              <span>✓</span>
+              DONE
             </span>
           )}
           {isInflow && (
             <span className="flex items-center gap-1 text-[9px] font-bold text-sky-400 bg-sky-500/10 border border-sky-500/30 px-1 py-0.2 rounded animate-pulse">
               <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-ping"></span>
               INFLOW
-            </span>
-          )}
-          {isTargetPreparing && (
-            <span className="flex items-center gap-1 text-[9px] font-bold text-indigo-400 bg-indigo-500/10 border border-indigo-500/30 px-1 py-0.2 rounded">
-              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></span>
-              TARGET
             </span>
           )}
         </button>
@@ -1797,10 +1961,17 @@ export default function WorkspaceContent() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-sky-300">
                 <span className="w-2 h-2 rounded-full bg-sky-400 animate-ping" />
-                <span className="font-bold">📥 {currentStage} Reading Inflow:</span>
+                <span className="font-bold">
+                  📥 {currentStage} Reading Inflow
+                  {currentStage === 'Coder' && (coderFileProgress.currentFile || activeStreamingFile)
+                    ? ` for "${coderFileProgress.currentFile || activeStreamingFile}"${coderFileProgress.fileIndex && coderFileProgress.totalFiles ? ` (${coderFileProgress.fileIndex} of ${coderFileProgress.totalFiles})` : ''}:`
+                    : ':'}
+                </span>
               </div>
               <span className="text-[9px] bg-sky-900/60 border border-sky-700/50 text-sky-200 px-1.5 py-0.5 rounded font-mono">
-                Context Ingestion
+                {currentStage === 'Coder' && (coderFileProgress.currentFile || activeStreamingFile)
+                  ? `File: ${coderFileProgress.currentFile || activeStreamingFile}`
+                  : 'Context Ingestion'}
               </span>
             </div>
             <div className="text-slate-300 bg-slate-900/80 border border-sky-900/50 rounded p-1.5 text-[9.5px] leading-relaxed break-words font-mono">
@@ -1818,11 +1989,21 @@ export default function WorkspaceContent() {
                 <span className="font-bold">📤 {currentStage} Synthesizing Outflow:</span>
               </div>
               <span className="text-[9px] bg-amber-900/60 border border-amber-700/50 text-amber-200 px-1.5 py-0.5 rounded font-mono">
-                Target: {activeStreamingFile || (currentStage && STAGE_OUTPUT_FILES[currentStage]) || 'Outflow Artifact'}
+                {currentStage === 'Coder' && (coderFileProgress.currentFile || activeStreamingFile)
+                  ? `File ${coderFileProgress.fileIndex || 1} of ${coderFileProgress.totalFiles || 1}: ${coderFileProgress.currentFile || activeStreamingFile}`
+                  : `Target: ${activeStreamingFile || (currentStage && STAGE_OUTPUT_FILES[currentStage]) || 'Outflow Artifact'}`}
               </span>
             </div>
             <div className="text-amber-200/90 bg-slate-900/80 border border-amber-900/50 rounded p-1.5 text-[9.5px] leading-relaxed break-words font-mono flex items-center justify-between">
-              <span>Streaming live tokens into <strong className="text-amber-400 font-bold">{activeStreamingFile || (currentStage && STAGE_OUTPUT_FILES[currentStage])}</strong></span>
+              <span>
+                {currentStage === 'Coder' ? '💻 Coder Building: ' : 'Streaming live tokens into '}
+                <strong className="text-amber-400 font-bold">{activeStreamingFile || coderFileProgress.currentFile || (currentStage && STAGE_OUTPUT_FILES[currentStage])}</strong>
+                {currentStage === 'Coder' && coderFileProgress.fileIndex && coderFileProgress.totalFiles && (
+                  <span className="text-amber-300 font-semibold ml-1.5">
+                    ({coderFileProgress.fileIndex} of {coderFileProgress.totalFiles})
+                  </span>
+                )}
+              </span>
               {streamingFileContent && <span className="text-[9px] text-slate-400 font-normal">{streamingFileContent.length.toLocaleString()} bytes</span>}
             </div>
           </div>
@@ -2325,11 +2506,19 @@ export default function WorkspaceContent() {
                     <div className="flex items-center gap-2">
                       <span className="text-slate-500">Active:</span>
                       <span className="text-slate-200 font-semibold">{selectedFile}</span>
+                      {currentStage === 'Coder' && (selectedFile === coderFileProgress.currentFile || selectedFile === activeStreamingFile) && (
+                        <span className="px-1.5 py-0.5 bg-emerald-500/10 border border-emerald-500/30 rounded text-[9.5px] text-emerald-400 font-bold flex items-center gap-1">
+                          💻 Current Coder Target
+                          {coderFileProgress.fileIndex && coderFileProgress.totalFiles && (
+                            <span className="text-emerald-300">({coderFileProgress.fileIndex} of {coderFileProgress.totalFiles})</span>
+                          )}
+                        </span>
+                      )}
                     </div>
                     {activeStreamingFile === selectedFile && agentActivityState === 'synthesizing_outflow' ? (
                       <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded animate-pulse">
                         <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
-                        LIVE OUTFLOW GENERATING...
+                        {currentStage === 'Coder' ? '💻 CODER LIVE STREAMING...' : 'LIVE OUTFLOW GENERATING...'}
                       </div>
                     ) : activeStreamingFile && activeStreamingFile !== selectedFile && agentActivityState === 'synthesizing_outflow' ? (
                       <button
