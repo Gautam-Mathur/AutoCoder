@@ -444,6 +444,7 @@ export default function WorkspaceContent() {
   const logEndRef = useRef<HTMLDivElement | null>(null);
   const didConnectRef = useRef(false);
   const reconnectAttemptsRef = useRef(0);
+  const lastEventIdRef = useRef<number>(0);
 
   // Sync conversation ID to global context
   useEffect(() => {
@@ -479,7 +480,7 @@ export default function WorkspaceContent() {
 
   // Live polling effect during active pipeline execution to keep file tree and active code view updated without manual reloads
   useEffect(() => {
-    if (!conversationId || pipelineStatus !== 'Active') return;
+    if (!conversationId || (pipelineStatus !== 'Active' && pipelineStatus !== 'Paused')) return;
 
     const pollInterval = setInterval(() => {
       fetchConversationDetails(conversationId);
@@ -577,6 +578,12 @@ export default function WorkspaceContent() {
   const fetchConversationDetails = async (id: string) => {
     try {
       let data: any = null;
+      let lastCoderFile: string | undefined;
+      let lastCoderIdx: number | undefined;
+      let lastCoderTotal: number | undefined;
+      let latestHistory: any = null;
+      const completedCoderFiles: string[] = [];
+
       const res = await fetch(`/api/conversations/${id}`);
       if (res.ok) {
         data = await res.json();
@@ -589,49 +596,81 @@ export default function WorkspaceContent() {
           setPromptText(data.originalPrompt);
         }
 
+        // Auto-reconnect SSE if database indicates Active but SSE is disconnected
+        if (data.status === 'Active' && (!eventSourceRef.current || eventSourceRef.current.readyState === EventSource.CLOSED)) {
+          handleStartPipeline(true);
+        }
+
         // Load SML data if exists
         loadSMLData(data.outputs);
+
+        // Inspect latest pipelineEvents if returned by backend API
+        if (Array.isArray(data.pipelineEvents) && data.pipelineEvents.length > 0) {
+          for (const ev of data.pipelineEvents) {
+            let pPayload: any = {};
+            try {
+              pPayload = typeof ev.payload === 'string' ? JSON.parse(ev.payload) : ev.payload;
+            } catch (err) {
+              pPayload = {};
+            }
+
+            const pTarget = pPayload?.data?.targetFile || pPayload?.targetFile;
+            const pIdx = pPayload?.data?.fileIndex ?? pPayload?.fileIndex;
+            const pTotal = pPayload?.data?.totalFiles ?? pPayload?.totalFiles;
+
+            if (pTarget) {
+              if (!lastCoderFile && (ev.eventType === 'CODER_TARGET_FILE' || ev.eventType === 'AGENT_STREAM_PROGRESS' || ev.eventType === 'CODER_FILE_COMPLETE')) {
+                lastCoderFile = pTarget;
+                if (pIdx) lastCoderIdx = pIdx;
+                if (pTotal) lastCoderTotal = pTotal;
+              }
+              if (ev.eventType === 'CODER_FILE_COMPLETE' && !completedCoderFiles.includes(pTarget)) {
+                completedCoderFiles.push(pTarget);
+              }
+            }
+          }
+        }
+
+        latestHistory = data.history && data.history.length > 0 ? data.history[0] : null;
 
         // Populate logs from database execution history
         if (data.history && data.history.length > 0) {
           // If the pipeline is currently Active and we don't have stream progress yet,
           // infer the current stage activity state and inflow from the latest history item
-          if (data.status === 'Active') {
-            const latestHistory = data.history[0]; // first item is newest in history
-            if (latestHistory && (latestHistory.status === 'Started' || latestHistory.status === 'Running')) {
-              setAgentActivityState((prev) => (prev === 'idle' ? 'reading_inflow' : prev));
-              let stageArtifact = STAGE_OUTPUT_FILES[latestHistory.stage] || `${latestHistory.stage}.md`;
-              if (latestHistory.stage === 'Coder' && latestHistory.logs) {
+          if (data.status === 'Active' && latestHistory && (latestHistory.status === 'Started' || latestHistory.status === 'Running')) {
+            setAgentActivityState((prev) => (prev === 'idle' ? 'reading_inflow' : prev));
+            let stageArtifact = STAGE_OUTPUT_FILES[latestHistory.stage] || `${latestHistory.stage}.md`;
+            if (latestHistory.stage === 'Coder') {
+              if (lastCoderFile) {
+                stageArtifact = lastCoderFile;
+              } else if (coderFileProgress.currentFile) {
+                stageArtifact = coderFileProgress.currentFile;
+              } else if (latestHistory.logs) {
                 const coderMatch = latestHistory.logs.match(/(?:Implementing file:|targeting)\s+"([^"]+)"/i);
                 if (coderMatch && coderMatch[1]) {
                   stageArtifact = coderMatch[1];
                 }
               }
-              setActiveStreamingFile(stageArtifact);
-              // Ensure target file appears in file explorer tree
-              setFiles((prev) => (prev.includes(stageArtifact) ? prev : [...prev, stageArtifact]));
-
-              const STAGE_INFLOW_SUMMARY: Record<string, string> = {
-                Queen: 'User Prompt',
-                Planner: '[plan.md, User Prompt]',
-                Architect: '[requirements.md, plan.md]',
-                System: '[architecture.md, requirements.md]',
-                Designer: '[requirements.md, architecture.md]',
-                Blueprinter: '[architecture.md, backend_spec.md, ui_spec.md]',
-                Coder: '[blueprint.md, architecture.md]',
-                Tester: 'Workspace Source Code Files',
-                Debugger: '[test_report.md, Workspace Source Files]',
-                Security: '[workspace.manifest.json, Source Files]',
-                Reviewer: '[workspace.manifest.json, System Specs]',
-              };
-              setInflowDetail((prev) => prev || STAGE_INFLOW_SUMMARY[latestHistory.stage] || 'Upstream Stage Specifications');
             }
-          }
+            setActiveStreamingFile(stageArtifact);
+            // Ensure target file appears in file explorer tree
+            setFiles((prev) => (prev.includes(stageArtifact) ? prev : [...prev, stageArtifact]));
 
-          let lastCoderFile: string | undefined;
-          let lastCoderIdx: number | undefined;
-          let lastCoderTotal: number | undefined;
-          const completedCoderFiles: string[] = [];
+            const STAGE_INFLOW_SUMMARY: Record<string, string> = {
+              Queen: 'User Prompt',
+              Planner: '[plan.md, User Prompt]',
+              Architect: '[requirements.md, plan.md]',
+              System: '[architecture.md, requirements.md]',
+              Designer: '[requirements.md, architecture.md]',
+              Blueprinter: '[architecture.md, backend_spec.md, ui_spec.md]',
+              Coder: '[blueprint.md, architecture.md]',
+              Tester: 'Workspace Source Code Files',
+              Debugger: '[test_report.md, Workspace Source Files]',
+              Security: '[workspace.manifest.json, Source Files]',
+              Reviewer: '[workspace.manifest.json, System Specs]',
+            };
+            setInflowDetail((prev) => prev || STAGE_INFLOW_SUMMARY[latestHistory.stage] || 'Upstream Stage Specifications');
+          }
 
           const mappedLogs: LogMessage[] = data.history.map((h: any) => {
             let type = 'AGENT_LOG';
@@ -640,13 +679,15 @@ export default function WorkspaceContent() {
             // Extract Coder file progress across historic logs
             const coderMatch = logMsg.match(/(?:Implementing file:|targeting)\s+"([^"]+)"(?:\s+\((\d+)\s+(?:of|\/)\s+(\d+)\))?/i);
             if (coderMatch && coderMatch[1]) {
-              lastCoderFile = coderMatch[1];
-              if (coderMatch[2]) lastCoderIdx = parseInt(coderMatch[2], 10);
-              if (coderMatch[3]) lastCoderTotal = parseInt(coderMatch[3], 10);
+              if (!lastCoderFile) lastCoderFile = coderMatch[1];
+              if (coderMatch[2] && !lastCoderIdx) lastCoderIdx = parseInt(coderMatch[2], 10);
+              if (coderMatch[3] && !lastCoderTotal) lastCoderTotal = parseInt(coderMatch[3], 10);
             }
             const completedMatch = logMsg.match(/(?:Completed file:|Target file)\s+"([^"]+)"/i);
             if (completedMatch && completedMatch[1] && (logMsg.includes('Completed') || logMsg.includes('already generated') || logMsg.includes('verified'))) {
-              completedCoderFiles.push(completedMatch[1]);
+              if (!completedCoderFiles.includes(completedMatch[1])) {
+                completedCoderFiles.push(completedMatch[1]);
+              }
             }
             
             if (logMsg.trim().startsWith('{') && logMsg.includes('"telemetryType":"rich_step_log"')) {
@@ -742,8 +783,17 @@ export default function WorkspaceContent() {
           const activeStageName = currentStage || (data?.pipelineRun?.currentStage) || (data?.currentStage);
           const activeStageFile = activeStageName ? STAGE_OUTPUT_FILES[activeStageName] : null;
 
+          const activeCoderTarget = lastCoderFile || coderFileProgress.currentFile || (activeStreamingFile && activeStreamingFile !== 'index.html' ? activeStreamingFile : null);
+          const isCoderStage = (activeStageName === 'Coder' || latestHistory?.stage === 'Coder' || currentStage === 'Coder');
+
           let targetFile = selectedFileRef.current;
-          if (!targetFile) {
+          const isCurrentSelectedCompletedOrStageOutput = !targetFile ||
+            targetFile in STAGE_FILE_TO_AGENT ||
+            completedCoderFiles.includes(targetFile);
+
+          if (isCoderStage && activeCoderTarget && isCurrentSelectedCompletedOrStageOutput && normalizedDiskFiles.includes(activeCoderTarget)) {
+            targetFile = activeCoderTarget;
+          } else if (!targetFile) {
             if (activeStreamingFile && agentActivityState === 'synthesizing_outflow') {
               targetFile = activeStreamingFile;
             } else if (data?.status === 'Active' && activeStageFile) {
@@ -928,12 +978,22 @@ export default function WorkspaceContent() {
 
     // Establish SSE stream (omit large prompt from URL to avoid HTTP 431 header limits)
     const promptQuery = promptText && promptText.length < 500 ? `&prompt=${encodeURIComponent(promptText)}` : '';
-    const url = `/api/pipeline/stream?conversationId=${conversationId}${promptQuery}`;
+    const lastIdQuery = lastEventIdRef.current > 0 ? `&lastEventId=${lastEventIdRef.current}` : '';
+    const url = `/api/pipeline/stream?conversationId=${conversationId}${promptQuery}${lastIdQuery}${isResume ? '&resume=true' : ''}`;
     const eventSource = new EventSource(url);
     eventSourceRef.current = eventSource;
 
     eventSource.onmessage = (event) => {
+      if (event.lastEventId) {
+        const parsedId = parseInt(event.lastEventId, 10);
+        if (!isNaN(parsedId) && parsedId > lastEventIdRef.current) {
+          lastEventIdRef.current = parsedId;
+        }
+      }
       const data = JSON.parse(event.data);
+      if (data.sequence && typeof data.sequence === 'number' && data.sequence > lastEventIdRef.current) {
+        lastEventIdRef.current = data.sequence;
+      }
 
       if (data.type === 'PING') return;
       reconnectAttemptsRef.current = 0;
@@ -1237,8 +1297,44 @@ export default function WorkspaceContent() {
         eventSource.close();
       }
 
-      if (data.type === 'PIPELINE_COMPLETE' || data.type === 'PIPELINE_SUCCESS' || data.type === 'PIPELINE_ERROR') {
-        setPipelineStatus(data.type === 'PIPELINE_ERROR' ? 'Failed' : 'Completed');
+      if (data.type === 'PIPELINE_COMPLETE' || data.type === 'PIPELINE_SUCCESS') {
+        setPipelineStatus('Completed');
+        fetchConversationDetails(conversationId);
+        eventSource.close();
+      }
+
+      if (data.type === 'PIPELINE_ERROR') {
+        const isInterruption =
+          data.message?.includes('INFRASTRUCTURE INTERRUPTION') ||
+          data.message?.includes('Pipeline paused') ||
+          data.message?.includes('fetch failed');
+
+        if (isInterruption) {
+          setPipelineStatus('Paused');
+          addLog({
+            type: 'PIPELINE_ERROR',
+            message: data.message || 'Pipeline paused due to infrastructure interruption.',
+          });
+          eventSource.close();
+          const attempts = reconnectAttemptsRef.current + 1;
+          reconnectAttemptsRef.current = attempts;
+          const backoffMs = Math.min(2000 * attempts, 10000);
+          setTimeout(async () => {
+            try {
+              const checkRes = await fetch(`/api/conversations/${conversationId}`);
+              if (checkRes.ok) {
+                const conv = await checkRes.json();
+                if (conv.status === 'Active' || conv.status === 'Running') {
+                  setPipelineStatus('Active');
+                  handleStartPipeline(true);
+                }
+              }
+            } catch (err) {}
+          }, backoffMs);
+          return;
+        }
+
+        setPipelineStatus('Failed');
         fetchConversationDetails(conversationId);
         eventSource.close();
       }

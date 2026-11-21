@@ -20,6 +20,11 @@ export async function GET(
       where: { id, ownerId: session!.user.id },
       include: {
         outputs: true,
+        pipelineRun: true,
+        pipelineEvents: {
+          orderBy: { sequence: 'desc' },
+          take: 25,
+        },
         history: {
           orderBy: { createdAt: 'desc' },
         },

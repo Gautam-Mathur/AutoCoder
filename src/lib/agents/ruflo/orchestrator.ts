@@ -1704,7 +1704,9 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
     conversationId,
     agentName,
     'Started',
-    `Agent ${agentName} started (Attempt ${attempt}/3)... Estimated tokens: ${budget}`
+    canonicalTargetFile
+      ? `Agent ${agentName} started targeting "${canonicalTargetFile}"${runtimeOptions?.fileIndex && runtimeOptions?.totalFiles ? ` (${runtimeOptions.fileIndex} of ${runtimeOptions.totalFiles})` : ''} (Attempt ${attempt}/3)... Estimated tokens: ${budget}`
+      : `Agent ${agentName} started (Attempt ${attempt}/3)... Estimated tokens: ${budget}`
   );
 
   if (canonicalTargetFile && (persistOutput || agentName === 'Coder')) {
@@ -2017,7 +2019,9 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
     conversationId,
     agentName,
     'Completed',
-    `Agent ${agentName} completed in ${durationMs}ms (${finalContent.length} bytes generated${toolExecutions.length > 0 ? `, ${toolExecutions.length} tool call(s)` : ''}). Estimated tokens: ${estimatedTokens}`
+    canonicalTargetFile
+      ? `Agent ${agentName} completed file "${canonicalTargetFile}"${runtimeOptions?.fileIndex && runtimeOptions?.totalFiles ? ` (${runtimeOptions.fileIndex} of ${runtimeOptions.totalFiles})` : ''} in ${durationMs}ms (${finalContent.length} bytes generated${toolExecutions.length > 0 ? `, ${toolExecutions.length} tool call(s)` : ''}). Estimated tokens: ${estimatedTokens}`
+      : `Agent ${agentName} completed in ${durationMs}ms (${finalContent.length} bytes generated${toolExecutions.length > 0 ? `, ${toolExecutions.length} tool call(s)` : ''}). Estimated tokens: ${estimatedTokens}`
   );
 
   onEvent({

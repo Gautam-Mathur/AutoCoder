@@ -63,9 +63,13 @@ export async function GET(request: NextRequest) {
               { sequence: { gte: streamProgressThreshold } },
             ],
           },
-          orderBy: { sequence: 'asc' },
+          orderBy: { sequence: lastSeq > 0 ? 'asc' : 'desc' },
           take: 500,
         });
+
+        if (lastSeq === 0) {
+          events.reverse();
+        }
 
         if (events.length > 0) {
           for (const ev of events) {
