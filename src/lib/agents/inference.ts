@@ -826,16 +826,18 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
                 (m.tool_calls ? JSON.stringify(m.tool_calls).length : 0),
               0
             ) + (hasTools ? JSON.stringify(options.tools).length : 0);
-          const needed = Math.ceil(promptChars / 4) + (options.maxTokens || 4096) + 512;
-          const maxAllowed = parseInt(process.env.OLLAMA_MAX_CTX || '32768', 10);
-          return Math.min(maxAllowed, Math.max(16384, needed));
+          const promptTokens = Math.ceil(promptChars / 4);
+          const expectedOutputTokens = Math.min(options.maxTokens || 4096, 8192);
+          const needed = promptTokens + expectedOutputTokens + 512;
+          const maxAllowed = parseInt(process.env.OLLAMA_MAX_CTX || '16384', 10);
+          return Math.min(maxAllowed, Math.max(4096, needed));
         })(),
       },
       stream: true,
     };
 
     if (options.maxTokens) {
-      payload.options.num_predict = options.maxTokens;
+      payload.options.num_predict = Math.min(options.maxTokens, 8192);
     }
 
     if (hasTools) {
@@ -856,11 +858,15 @@ function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
         msg.includes('fetch failed') ||
         msg.includes('socket hung up') ||
         msg.includes('econnreset') ||
+        msg.includes('econnrefused') ||
         causeMsg.includes('terminated') ||
         causeMsg.includes('other side closed') ||
         causeMsg.includes('und_err_socket') ||
+        causeMsg.includes('fetch failed') ||
+        causeMsg.includes('econnrefused') ||
         code === 'und_err_socket' ||
-        code === 'econnreset'
+        code === 'econnreset' ||
+        code === 'econnrefused'
       );
     };
 
