@@ -126,7 +126,12 @@ export async function assertPipelineLease(
   }
 
   if (run.leaseExpiresAt && run.leaseExpiresAt.getTime() <= now.getTime()) {
-    throw new Error(`Pipeline lease assertion failed: lease for worker ${ownerId} expired at ${run.leaseExpiresAt.toISOString()}`);
+    // Self-healing renewal attempt: if the current worker is still running and is the designated leaseOwner,
+    // extend the lease instead of throwing a fatal error.
+    const renewed = await renewPipelineLease(conversationId, ownerId);
+    if (!renewed) {
+      throw new Error(`Pipeline lease assertion failed: lease for worker ${ownerId} expired at ${run.leaseExpiresAt.toISOString()}`);
+    }
   }
 }
 
