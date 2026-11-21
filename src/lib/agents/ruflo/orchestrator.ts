@@ -1659,11 +1659,14 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
 
   let tokenCount = 0;
   let chunkBuffer = '';
+  let fullAccumulatedText = '';
   let lastEmittedTime = Date.now();
+  const canonicalTargetFile = targetFile || VFS_OUTPUT_MAP[agentName] || undefined;
 
   const onChunkHandler = (chunk: string) => {
     tokenCount += Math.max(1, Math.round(chunk.length / 4));
     chunkBuffer += chunk;
+    fullAccumulatedText += chunk;
     if (chunkBuffer.length > 4000) {
       chunkBuffer = chunkBuffer.slice(-4000); // rolling 4000-char window of live generated code/markdown
     }
@@ -1687,7 +1690,8 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
           tokenCount,
           maxTokens: budget,
           latestText: chunkBuffer,
-          targetFile: targetFile || undefined,
+          fullText: fullAccumulatedText,
+          targetFile: canonicalTargetFile,
           apis: speculativeApis.slice(-5),
           entities: Array.from(new Set(speculativeEntities)).slice(-6),
           files: Array.from(new Set(speculativeFiles)).slice(-8),

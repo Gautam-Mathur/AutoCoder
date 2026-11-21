@@ -342,7 +342,10 @@ export default function WorkspaceContent() {
   const [componentsList, setComponentsList] = useState<any[]>([]);
   const [files, setFiles] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const selectedFileRef = useRef<string | null>(null);
   const [fileContent, setFileContent] = useState<string>('// Select a file to view content');
+  const [activeStreamingFile, setActiveStreamingFile] = useState<string | null>(null);
+  const [streamingFileContent, setStreamingFileContent] = useState<string>('');
   const [agentOutputs, setAgentOutputs] = useState<Record<string, any>>({});
   const [expandedDirs, setExpandedDirs] = useState<Record<string, boolean>>({});
 
@@ -498,17 +501,20 @@ export default function WorkspaceContent() {
           setExpandedDirs((prev) => ({ ...autoExpand, ...prev }));
           
           // Auto-select first file if none selected, or restore from localStorage / refresh open file
-          const targetFile = selectedFile || localStorage.getItem(`selectedFile_${id}`) || normalizedDiskFiles[0];
+          const targetFile = selectedFileRef.current || localStorage.getItem(`selectedFile_${id}`) || normalizedDiskFiles[0];
           if (targetFile && normalizedDiskFiles.includes(targetFile)) {
-            if (selectedFile !== targetFile) {
+            if (selectedFileRef.current !== targetFile) {
+              selectedFileRef.current = targetFile;
               setSelectedFile(targetFile);
             }
-            // Fetch live content for open file
-            const diskRes = await fetch(`/api/conversations/${id}/files/read?file=${encodeURIComponent(targetFile)}`);
-            if (diskRes.ok) {
-              const fileData = await diskRes.json();
-              if (fileData.content !== undefined) {
-                setFileContent(fileData.content);
+            // Fetch live content for open file (unless actively streaming into this same file)
+            if (activeStreamingFile !== targetFile) {
+              const diskRes = await fetch(`/api/conversations/${id}/files/read?file=${encodeURIComponent(targetFile)}`);
+              if (diskRes.ok) {
+                const fileData = await diskRes.json();
+                if (fileData.content !== undefined) {
+                  setFileContent(fileData.content);
+                }
               }
             }
           }
@@ -667,11 +673,49 @@ export default function WorkspaceContent() {
 
       if (data.type === 'AGENT_STREAM_PROGRESS') {
         setStreamProgress(data.data);
+
+        // Determine active target file being written or generated
+        const stageDefaults: Record<string, string> = {
+          Queen: 'plan.md',
+          Planner: 'requirements.md',
+          Architect: 'architecture.md',
+          System: 'backend_spec.md',
+          Designer: 'ui_spec.md',
+          Blueprinter: 'blueprint.md',
+          Coder: 'index.html',
+          Debugger: 'debug_report.md',
+          Security: 'security_report.md',
+          Reviewer: 'review_report.md',
+        };
+        const currentTarget =
+          data.data?.targetFile ||
+          (data.agent && stageDefaults[data.agent]) ||
+          (currentStage && stageDefaults[currentStage]) ||
+          'index.html';
+
+        if (currentTarget) {
+          setActiveStreamingFile(currentTarget);
+          const liveText = data.data?.fullText || data.data?.latestText || '';
+          setStreamingFileContent(liveText);
+
+          // Ensure target file appears in file explorer tree
+          setFiles((prev) => (prev.includes(currentTarget) ? prev : [...prev, currentTarget]));
+
+          // If no file selected or selectedFile is this streaming file, update Monaco editor content live!
+          if (!selectedFileRef.current || selectedFileRef.current === currentTarget) {
+            if (selectedFileRef.current !== currentTarget) {
+              selectedFileRef.current = currentTarget;
+              setSelectedFile(currentTarget);
+            }
+            setFileContent(liveText);
+          }
+        }
         return;
       }
 
       if (data.type === 'AGENT_START') {
         setStreamProgress(null);
+        setActiveStreamingFile(null);
       }
 
       addLog({
@@ -688,6 +732,7 @@ export default function WorkspaceContent() {
       if (data.type === 'AGENT_COMPLETE' || data.type === 'AGENT_LOG') {
         if (data.type === 'AGENT_COMPLETE') {
           setStreamProgress(null);
+          setActiveStreamingFile(null);
           if (data.agent && data.data) {
             setAgentOutputs((prev) => ({
               ...prev,
@@ -1004,19 +1049,28 @@ export default function WorkspaceContent() {
       );
     } else {
       const isSelected = selectedFile === node.path;
+      const isStreaming = activeStreamingFile === node.path;
       return (
         <button
           key={node.path}
           onClick={() => handleSelectFile(node.path)}
           style={{ paddingLeft: `${depth * 12 + 20}px` }}
-          className={`w-full py-1 pr-3 flex items-center gap-1.5 text-[11px] font-mono hover:bg-slate-800/60 transition-colors text-left group cursor-pointer ${
+          className={`w-full py-1 pr-3 flex items-center justify-between text-[11px] font-mono hover:bg-slate-800/60 transition-colors text-left group cursor-pointer ${
             isSelected ? 'bg-slate-800 text-electric-indigo font-semibold border-r-2 border-electric-indigo' : 'text-slate-400'
           }`}
         >
-          {getFileIcon(node.name)}
-          <span className={`truncate group-hover:text-slate-200 transition-colors ${isSelected ? 'text-electric-indigo' : ''}`}>
-            {node.name}
-          </span>
+          <div className="flex items-center gap-1.5 truncate">
+            {getFileIcon(node.name)}
+            <span className={`truncate group-hover:text-slate-200 transition-colors ${isSelected ? 'text-electric-indigo' : ''}`}>
+              {node.name}
+            </span>
+          </div>
+          {isStreaming && (
+            <span className="flex items-center gap-1 text-[9px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-1 py-0.2 rounded animate-pulse">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
+              LIVE
+            </span>
+          )}
         </button>
       );
     }
@@ -1026,10 +1080,18 @@ export default function WorkspaceContent() {
   const handleSelectFile = async (filepath: any) => {
     const pathStr = normalizeFilePath(filepath);
     if (!pathStr) return;
+    selectedFileRef.current = pathStr;
     setSelectedFile(pathStr);
     if (conversationId) {
       localStorage.setItem(`selectedFile_${conversationId}`, pathStr);
     }
+
+    // If this file is currently streaming live, display current streaming content immediately
+    if (activeStreamingFile === pathStr && streamingFileContent) {
+      setFileContent(streamingFileContent);
+      return;
+    }
+
     setFileContent('// Loading file content...');
 
     try {
@@ -1466,8 +1528,10 @@ export default function WorkspaceContent() {
     if (!pathStr) return 'plaintext';
     if (pathStr.endsWith('.tsx') || pathStr.endsWith('.jsx')) return 'typescript';
     if (pathStr.endsWith('.ts') || pathStr.endsWith('.js')) return 'typescript';
+    if (pathStr.endsWith('.html') || pathStr.endsWith('.htm')) return 'html';
     if (pathStr.endsWith('.css')) return 'css';
     if (pathStr.endsWith('.json')) return 'json';
+    if (pathStr.endsWith('.md')) return 'markdown';
     return 'plaintext';
   };
 
@@ -1980,8 +2044,17 @@ export default function WorkspaceContent() {
               {/* Editor Right container */}
               <div className="flex-1 h-full overflow-hidden flex flex-col bg-slate-950">
                 {selectedFile && (
-                  <div className="p-2 border-b border-slate-800 text-[11px] font-mono text-slate-500 bg-slate-950">
-                    Active: {selectedFile}
+                  <div className="p-2 border-b border-slate-800 text-[11px] font-mono text-slate-400 bg-slate-950 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-500">Active:</span>
+                      <span className="text-slate-200 font-semibold">{selectedFile}</span>
+                    </div>
+                    {activeStreamingFile === selectedFile && (
+                      <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded">
+                        <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+                        LIVE GENERATING...
+                      </div>
+                    )}
                   </div>
                 )}
                 <div className="flex-1 w-full h-full overflow-hidden">
