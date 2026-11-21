@@ -392,6 +392,8 @@ export default function WorkspaceContent() {
   const [selectedConflictOption, setSelectedConflictOption] = useState<string>('');
   const [detailsLoaded, setDetailsLoaded] = useState(false);
   const [streamProgress, setStreamProgress] = useState<any>(null);
+  const [previewDoc, setPreviewDoc] = useState<string>('');
+  const [previewLoading, setPreviewLoading] = useState<boolean>(false);
   const [coderFileProgress, setCoderFileProgress] = useState<{
     currentFile?: string;
     fileIndex?: number;
@@ -453,6 +455,86 @@ export default function WorkspaceContent() {
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
+
+  // Load and bundle live app DOM preview
+  const loadLivePreview = async () => {
+    if (!conversationId) return;
+    setPreviewLoading(true);
+    try {
+      // 1. Fetch index.html from VFS
+      let htmlContent = '';
+      const htmlRes = await fetch(`/api/conversations/${conversationId}/files/read?file=index.html`);
+      if (htmlRes.ok) {
+        const d = await htmlRes.json();
+        htmlContent = d.content || '';
+      }
+
+      // If index.html is currently being streamed in memory and not yet flushed to VFS
+      if (!htmlContent && activeStreamingFile === 'index.html' && streamingFileContent.trim().length > 0) {
+        htmlContent = streamingFileContent;
+      }
+
+      if (!htmlContent) {
+        setPreviewDoc('');
+        setPreviewLoading(false);
+        return;
+      }
+
+      // 2. Fetch style.css if present
+      let cssContent = '';
+      const cssRes = await fetch(`/api/conversations/${conversationId}/files/read?file=style.css`);
+      if (cssRes.ok) {
+        const d = await cssRes.json();
+        cssContent = d.content || '';
+      } else if (activeStreamingFile === 'style.css' && streamingFileContent.trim().length > 0) {
+        cssContent = streamingFileContent;
+      }
+
+      // 3. Fetch script.js if present
+      let jsContent = '';
+      const jsRes = await fetch(`/api/conversations/${conversationId}/files/read?file=script.js`);
+      if (jsRes.ok) {
+        const d = await jsRes.json();
+        jsContent = d.content || '';
+      } else if (activeStreamingFile === 'script.js' && streamingFileContent.trim().length > 0) {
+        jsContent = streamingFileContent;
+      }
+
+      // In-line styles and scripts if referenced externally
+      let doc = htmlContent;
+      if (cssContent) {
+        if (doc.includes('<link rel="stylesheet"') || doc.includes('style.css')) {
+          doc = doc.replace(/<link[^>]+href=["'][^"']*style\.css["'][^>]*>/gi, `<style>\n${cssContent}\n</style>`);
+        } else if (doc.includes('</head>')) {
+          doc = doc.replace('</head>', `<style>\n${cssContent}\n</style>\n</head>`);
+        } else {
+          doc = `<style>\n${cssContent}\n</style>\n` + doc;
+        }
+      }
+
+      if (jsContent) {
+        if (doc.includes('<script src="script.js"') || doc.includes('script.js')) {
+          doc = doc.replace(/<script[^>]+src=["'][^"']*script\.js["'][^>]*><\/script>/gi, `<script>\n${jsContent}\n</script>`);
+        } else if (doc.includes('</body>')) {
+          doc = doc.replace('</body>', `<script>\n${jsContent}\n</script>\n</body>`);
+        } else {
+          doc = doc + `\n<script>\n${jsContent}\n</script>`;
+        }
+      }
+
+      setPreviewDoc(doc);
+    } catch (e) {
+      console.error('Failed to load preview doc:', e);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'preview' && conversationId) {
+      loadLivePreview();
+    }
+  }, [activeTab, conversationId]);
 
   // Load details from DB
   const fetchConversationDetails = async (id: string) => {
@@ -2563,33 +2645,65 @@ export default function WorkspaceContent() {
 
           {/* Live Preview Tab */}
           {activeTab === 'preview' && (
-            <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center">
-              {pipelineStatus !== 'Completed' ? (
-                <div className="text-xs text-slate-500 flex flex-col items-center gap-2">
-                  <Eye className="w-12 h-12 text-slate-800 animate-pulse" />
-                  <span>Waiting for pipeline execution to complete code generation before rendering app preview.</span>
-                </div>
-              ) : (
-                <div className="w-full h-full bg-slate-900 border border-slate-700 rounded-lg flex flex-col overflow-hidden">
-                  {/* Frame Header Browser bar */}
-                  <div className="bg-slate-950 border-b border-slate-800 p-2 flex items-center gap-2 text-xs text-slate-400">
+            <div className="w-full h-full flex flex-col p-4">
+              <div className="w-full h-full bg-slate-900 border border-slate-700 rounded-lg flex flex-col overflow-hidden shadow-2xl">
+                {/* Frame Header Browser bar */}
+                <div className="bg-slate-950 border-b border-slate-800 p-2.5 flex items-center justify-between text-xs text-slate-400">
+                  <div className="flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full bg-red-500/80"></span>
                     <span className="w-2.5 h-2.5 rounded-full bg-yellow-500/80"></span>
                     <span className="w-2.5 h-2.5 rounded-full bg-green-500/80"></span>
-                    <div className="bg-slate-900 border border-slate-800 rounded px-4 py-0.5 text-[10px] w-64 truncate mx-auto">
-                      http://localhost:8080/preview
-                    </div>
+                    <span className="text-[10px] font-mono text-slate-400 ml-2">Live DOM Preview</span>
                   </div>
-                  <div className="flex-1 bg-white flex flex-col relative">
-                    <iframe
-                      src="http://localhost:8080"
-                      className="w-full h-full border-0 bg-white"
-                      title="Live Preview"
-                      sandbox="allow-scripts allow-same-origin allow-forms allow-modals"
-                    />
+                  <div className="bg-slate-900 border border-slate-800 rounded px-4 py-0.5 text-[10px] w-72 truncate text-center font-mono text-slate-300 flex items-center justify-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>hollowmere-lanterns.local/index.html</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={loadLivePreview}
+                      disabled={previewLoading}
+                      className="px-2.5 py-0.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded text-[10px] font-mono text-slate-200 transition-colors cursor-pointer flex items-center gap-1"
+                      title="Reload DOM Preview"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${previewLoading ? 'animate-spin' : ''}`} />
+                      <span>Reload</span>
+                    </button>
+                    {pipelineStatus === 'Active' && (
+                      <span className="px-2 py-0.5 bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[9.5px] font-mono font-bold rounded flex items-center gap-1 animate-pulse">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
+                        LIVE COMPILING
+                      </span>
+                    )}
                   </div>
                 </div>
-              )}
+                {previewDoc ? (
+                  <div className="flex-1 bg-white flex flex-col relative overflow-hidden">
+                    <iframe
+                      srcDoc={previewDoc}
+                      className="w-full h-full border-0 bg-white"
+                      title="Live DOM Preview"
+                      sandbox="allow-scripts allow-modals allow-forms"
+                    />
+                  </div>
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center p-6 text-center bg-slate-950">
+                    <Eye className="w-10 h-10 text-slate-700 animate-pulse mb-3" />
+                    <span className="text-xs font-mono text-slate-300 font-bold mb-1">
+                      Awaiting index.html generation
+                    </span>
+                    <span className="text-[11px] font-mono text-slate-500 max-w-sm">
+                      Coder is currently constructing project assets. The DOM preview will render immediately once index.html is available.
+                    </span>
+                    <button
+                      onClick={loadLivePreview}
+                      className="mt-4 px-3 py-1 bg-electric-indigo/20 border border-electric-indigo/50 hover:bg-electric-indigo/30 text-electric-indigo rounded text-[11px] font-mono cursor-pointer transition-colors"
+                    >
+                      Check for Generated Files
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
