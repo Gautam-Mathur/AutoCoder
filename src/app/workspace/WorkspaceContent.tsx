@@ -732,12 +732,18 @@ export default function WorkspaceContent() {
           });
 
           if (lastCoderFile || completedCoderFiles.length > 0) {
+            const filteredCompleted = lastCoderFile
+              ? completedCoderFiles.filter((f) => f !== lastCoderFile)
+              : completedCoderFiles;
             setCoderFileProgress((prev) => ({
               ...prev,
               currentFile: lastCoderFile || prev.currentFile,
               fileIndex: lastCoderIdx ?? prev.fileIndex,
               totalFiles: lastCoderTotal ?? prev.totalFiles,
-              completedFiles: Array.from(new Set([...(prev.completedFiles || []), ...completedCoderFiles])),
+              completedFiles: Array.from(new Set([
+                ...(prev.completedFiles || []).filter((f) => f !== lastCoderFile),
+                ...filteredCompleted,
+              ])),
             }));
           }
           // Restore chronological order

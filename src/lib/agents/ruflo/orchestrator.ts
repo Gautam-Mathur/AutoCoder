@@ -1636,12 +1636,29 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
       targetSection = `### File: ${targetFile}\n- **Purpose**: Configuration and build manifest for ${targetFile}\n- **Dependencies**: Grounded from Architecture Tech Stack: ${techStackSummary.replace(/\n+/g, ' ').trim() || 'Required project dependencies'}\n- **Exports**: None`;
     }
 
-    const coderContext = await buildCoderContext(conversationId, targetSection, dependencyInterfaces);
+    let coderContext = await buildCoderContext(conversationId, targetSection, dependencyInterfaces);
+
+    const existingFileInVfs = await readVirtualFile(conversationId, targetFile);
+    let partialInflowBlock = '';
+    if (existingFileInVfs && existingFileInVfs.trim().length > 50) {
+      const existingClean = sanitizeCoderOutputForFile(existingFileInVfs, targetFile);
+      const isComplete = existingClean.trim().length > 0;
+      if (!isComplete) {
+        partialInflowBlock = `\n\n=== EXISTING PARTIAL / REPAIR IMPLEMENTATION FOR "${targetFile}" ===\n` +
+          `A partial implementation (${existingFileInVfs.length} bytes) was generated prior to interruption:\n` +
+          `\`\`\`\n${existingFileInVfs.slice(0, 8000)}\n\`\`\`\n` +
+          `CRITICAL INSTRUCTION: Inspect this existing partial code. Fix any syntax errors (e.g. unclosed functions or braces), complete any missing sections, and output or write the COMPLETE, VALID file. Do NOT start from scratch unless the partial logic is completely invalid.`;
+      }
+    }
+
+    const inflowDesc = partialInflowBlock
+      ? `Blueprint + dependencies + Inflow Partial Attempt (${existingFileInVfs?.length} bytes)`
+      : `Blueprint section + tech stack dependencies (${coderContext.length.toLocaleString()} chars)`;
 
     onEvent({
       type: 'AGENT_LOG',
       agent: 'Coder',
-      message: `📥 Inflow Context for ${targetFile}: Blueprint section + tech stack dependencies (${coderContext.length.toLocaleString()} chars)`,
+      message: `📥 Inflow Context for ${targetFile}: ${inflowDesc}`,
     });
     const retryPrefix =
       attempt > 1
@@ -1654,7 +1671,7 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
     const langPolicyBlock = `### Target Language Policy (${langPolicy.language.toUpperCase()})\n` +
       langPolicy.rules.map(r => `- ${r}`).join('\n');
 
-    userContent = `${retryPrefix}TARGET FILE TO IMPLEMENT: ${targetFile}\nOutput ONLY the complete raw source code for "${targetFile}". Do NOT output markdown code fences or headers.\n\n${langPolicyBlock}\n\n${coderContext}${
+    userContent = `${retryPrefix}TARGET FILE TO IMPLEMENT: ${targetFile}\nOutput ONLY the complete raw source code for "${targetFile}". Do NOT output markdown code fences or headers.\n\n${langPolicyBlock}\n\n${coderContext}${partialInflowBlock}${
       customUserContent ? `\n\n${customUserContent}` : ''
     }`;
   } else {

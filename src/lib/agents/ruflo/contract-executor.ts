@@ -175,6 +175,19 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
                   },
                 });
                 continue;
+              } else if (existingContent.trim().length > 50) {
+                onEvent({
+                  type: 'AGENT_LOG',
+                  agent: 'Coder',
+                  message: `🔧 Target file "${tf}" has prior unverified/partial content (${existingContent.length} bytes) in VFS. Ingesting as inflow context to complete/repair...`,
+                  data: {
+                    targetFile: tf,
+                    fileIndex,
+                    totalFiles,
+                    allFiles: targetFilesToBuild,
+                    status: 'repairing',
+                  },
+                });
               }
             }
           }
@@ -215,10 +228,12 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
             }
           );
 
+          const rawVfsContent = (await readVirtualFile(conversationId, tf)) || '';
+          const sanitizedVfs = sanitizeCoderOutputForFile(rawVfsContent, tf);
           const alreadyPersistedViaTool =
             Boolean(agentResult?.mutatedViaTool) &&
-            typeof (await readVirtualFile(conversationId, tf)) === 'string' &&
-            ((await readVirtualFile(conversationId, tf)) || '').trim().length > 0;
+            rawVfsContent.trim().length > 0 &&
+            sanitizedVfs.trim().length > 0;
 
           if (!alreadyPersistedViaTool) {
             let codeContent = sanitizeCoderOutputForFile(agentResult?.content || '', tf);
@@ -254,10 +269,12 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
                 }
               );
 
+              const rawRetryVfs = (await readVirtualFile(conversationId, tf)) || '';
+              const sanitizedRetryVfs = sanitizeCoderOutputForFile(rawRetryVfs, tf);
               const persistedOnRetry =
                 Boolean(retryResult?.mutatedViaTool) &&
-                typeof (await readVirtualFile(conversationId, tf)) === 'string' &&
-                ((await readVirtualFile(conversationId, tf)) || '').trim().length > 0;
+                rawRetryVfs.trim().length > 0 &&
+                sanitizedRetryVfs.trim().length > 0;
 
               if (persistedOnRetry) {
                 onEvent({
