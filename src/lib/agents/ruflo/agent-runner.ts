@@ -13,9 +13,10 @@ import { writeAgentOutput } from "../sml";
 import { AGENT_DEFS } from "./agents";
 import { StageLedger, writeExecutiveMemoryRecord, OWNERSHIP } from "./memory";
 import { calculateTokenBudget } from "./token-budgeter";
-import { writeVirtualFile, readVirtualFile } from "./vfs";
+import { writeVirtualFile, readVirtualFile, listVirtualFiles } from "./vfs";
 import { getStageContract } from "./contracts/registry";
 import { normalizeProjectPath } from "./workspace-policy";
+import { resolveModule, parseTsConfigOptions } from "./module-resolver";
 import {
   pipelineEvents,
   writeHistoryLog,
@@ -32,7 +33,7 @@ import {
   buildCoderContext,
   composeAgentUserContent,
 } from "./coder-context";
-import { parseBlueprintFiles } from "./blueprint-graph";
+import { parseBlueprintFiles, classifyBlueprintDependency } from "./blueprint-graph";
 import {
   sanitizeStageOutput,
   sanitizeCoderOutputForFile,
@@ -129,11 +130,15 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
     }
   }
 
+  const isInProgressPlaceholder = (content: string | null | undefined): boolean =>
+    !content || /^<!--\s*Stage:\s*[\s\S]*?in progress\.\.\.\s*-->$/i.test(content.trim());
+
   let userContent: string;
   if (agentName === 'Coder' && targetFile) {
     const blueprintText = await readVirtualFile(conversationId, 'blueprint.md');
     let targetSection = '';
     let dependencyInterfaces = '';
+    const includedDepPaths = new Set<string>();
 
     if (blueprintText) {
       const parsedSections = parseBlueprintFiles(blueprintText);
@@ -143,11 +148,71 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
       );
       if (match) {
         targetSection = match.rawSection;
+        const workspaceFiles = await listVirtualFiles(conversationId);
+        const tsConfigContent = (await readVirtualFile(conversationId, 'tsconfig.json')) || '';
+        const tsOptions = parseTsConfigOptions(tsConfigContent);
+        const allKnownFiles = Array.from(
+          new Set([
+            ...workspaceFiles.map((f) => normalizeProjectPath(f)),
+            ...parsedSections.map((s) => normalizeProjectPath(s.file)),
+          ])
+        );
+        const moduleContext = {
+          files: allKnownFiles,
+          baseUrl: tsOptions.baseUrl || '.',
+          paths: tsOptions.paths || {
+            '@/*': ['./src/*', './*'],
+            '~/*': ['./src/*', './*'],
+          },
+        };
+        const isHtmlTarget = normalizedTarget.endsWith('.html');
+
         for (const dep of match.dependencies) {
-          const depContent = await readVirtualFile(conversationId, dep);
-          if (depContent) {
-            const iface = extractDependencyInterface(dep, depContent);
-            dependencyInterfaces += `${dep}:\n${iface}\n`;
+          if (classifyBlueprintDependency(dep) !== 'LOCAL_FILE') continue;
+
+          const resolvedDependency = resolveModule(targetFile, dep, moduleContext);
+          if (!resolvedDependency) {
+            throw new Error(
+              `Coder preflight failed for "${targetFile}": local dependency "${dep}" could not be resolved from the Blueprint.`
+            );
+          }
+
+          const depContent = await readVirtualFile(conversationId, resolvedDependency);
+          if (isInProgressPlaceholder(depContent)) {
+            // Static HTML entry templates run before their linked .css/.js assets so they can establish DOM IDs;
+            // forward asset mount references in HTML must not trigger missing-dependency failures.
+            if (isHtmlTarget) {
+              continue;
+            }
+            throw new Error(
+              `Coder preflight failed for "${targetFile}": required dependency "${resolvedDependency}" is not present in the VFS.`
+            );
+          }
+
+          const normResolved = normalizeProjectPath(resolvedDependency);
+          includedDepPaths.add(normResolved.toLowerCase());
+          const iface = extractDependencyInterface(normResolved, depContent!);
+          dependencyInterfaces += `${normResolved}:\n${iface}\n`;
+        }
+
+        // For static HTML CSS/JS targets, also surface the already-generated HTML host entry's DOM contract
+        // even when Blueprinter declared the asset link on index.html rather than on style.css/script.js.
+        if (!isHtmlTarget && /\.(?:css|scss|js|mjs)$/i.test(normalizedTarget)) {
+          for (const htmlSection of parsedSections) {
+            const normHtml = normalizeProjectPath(htmlSection.file);
+            if (!normHtml.toLowerCase().endsWith('.html')) continue;
+            if (includedDepPaths.has(normHtml.toLowerCase())) continue;
+            const referencesTarget = htmlSection.dependencies.some(
+              (d) => normalizeProjectPath(d).toLowerCase() === normalizedTarget
+            );
+            if (referencesTarget || normHtml.toLowerCase() === 'index.html') {
+              const htmlContent = await readVirtualFile(conversationId, normHtml);
+              if (htmlContent && !isInProgressPlaceholder(htmlContent)) {
+                includedDepPaths.add(normHtml.toLowerCase());
+                const htmlIface = extractDependencyInterface(normHtml, htmlContent);
+                dependencyInterfaces += `${normHtml}:\n${htmlIface}\n`;
+              }
+            }
           }
         }
       }
@@ -163,14 +228,27 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
 
     const existingFileInVfs = await readVirtualFile(conversationId, targetFile);
     let partialInflowBlock = '';
-    if (existingFileInVfs && existingFileInVfs.trim().length > 50) {
+    const repairInstructionsAlreadyHaveTarget = Boolean(
+      customUserContent && customUserContent.includes('(TARGET_FILE:')
+    );
+
+    if (existingFileInVfs && !isInProgressPlaceholder(existingFileInVfs) && existingFileInVfs.trim().length > 0) {
       const existingClean = sanitizeCoderOutputForFile(existingFileInVfs, targetFile);
-      const isComplete = existingClean.trim().length > 0;
-      if (!isComplete) {
+      const isCompleteValidSource = existingClean.trim().length > 0;
+
+      if (!isCompleteValidSource && existingFileInVfs.trim().length > 50) {
         partialInflowBlock = `\n\n=== EXISTING PARTIAL / REPAIR IMPLEMENTATION FOR "${targetFile}" ===\n` +
           `A partial implementation (${existingFileInVfs.length} bytes) was generated prior to interruption:\n` +
           `\`\`\`\n${existingFileInVfs.slice(0, 8000)}\n\`\`\`\n` +
           `CRITICAL INSTRUCTION: Inspect this existing partial code. Fix any syntax errors (e.g. unclosed functions or braces), complete any missing sections, and output or write the COMPLETE, VALID file. Do NOT start from scratch unless the partial logic is completely invalid.`;
+      } else if (isCompleteValidSource && !repairInstructionsAlreadyHaveTarget) {
+        const targetSnapshot = existingClean.slice(0, 24000);
+        const wasTruncated = existingClean.length > targetSnapshot.length;
+        coderContext +=
+          `\n\n=== EXISTING TARGET FILE: ${targetFile} ===\n` +
+          `${targetSnapshot}` +
+          (wasTruncated ? '\n[Existing target snapshot truncated at 24,000 characters.]' : '') +
+          `\n=== END EXISTING TARGET FILE ===\n`;
       }
     }
 
@@ -194,9 +272,13 @@ You have access to authorized workspace tools (${permittedTools.map((t) => t.nam
     const langPolicyBlock = `### Target Language Policy (${langPolicy.language.toUpperCase()})\n` +
       langPolicy.rules.map(r => `- ${r}`).join('\n');
 
-    userContent = `${retryPrefix}TARGET FILE TO IMPLEMENT: ${targetFile}\nOutput ONLY the complete raw source code for "${targetFile}". Do NOT output markdown code fences or headers.\n\n${langPolicyBlock}\n\n${coderContext}${partialInflowBlock}${
-      customUserContent ? `\n\n${customUserContent}` : ''
-    }`;
+    userContent =
+      `${retryPrefix}TARGET FILE TO IMPLEMENT: ${targetFile}\n` +
+      `Output ONLY the complete raw source code for "${targetFile}". Do NOT output markdown code fences or headers.\n\n` +
+      `${langPolicyBlock}\n\n` +
+      `${coderContext}${partialInflowBlock}\n\n` +
+      `=== ORIGINAL USER REQUEST ===\nOriginal Request:\n"${userPromptText}"` +
+      `${customUserContent ? `\n\n=== ADDITIONAL DIRECTIVES ===\n${customUserContent}` : ''}`;
   } else {
     userContent = composeAgentUserContent({
       upstreamContext,

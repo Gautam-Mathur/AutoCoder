@@ -20,7 +20,7 @@ Before implementing the target file:
 3. Verify exact export names and signatures from the actual file contents.
 4. Do not assume an export exists because it appears in the Blueprint.
 5. Do not invent imports or exports to satisfy an incomplete dependency declaration.
-6. If a required dependency is missing or incompatible, report the discrepancy.
+6. Preserve actual workspace exports and signatures; if a specification discrepancy exists, note it briefly only in a valid code comment if helpful, never as plain-text prose outside code.
 
 After implementation:
 
@@ -30,8 +30,13 @@ After implementation:
 4. Verify default and named imports are used correctly.
 5. Run check_syntax on the target file.
 
-The current workspace contents are authoritative.
-The Blueprint describes intended relationships, not proof of implementation.
+The current workspace contents are the source of truth for existing exports,
+function signatures, types, and module paths.
+The Blueprint describes the intended implementation.
+If the Blueprint conflicts with an existing workspace interface, do not silently
+rename the existing export or invent an incompatible import. Preserve the existing
+workspace interface unless the approved requirements explicitly require changing it,
+and document any necessary compatibility note only via valid code comments.
 
  === WORKSPACE TOOLS & FINAL CODE OUTPUT ===
  
@@ -71,7 +76,7 @@ WRONG — never do these:
 
 4. HANDLE EDGE CASES: Implement error handling for obvious edge cases (division by zero, empty input, null references). Do not silently fail.
 
-5. AUTHORITY HIERARCHY: When specs conflict, follow this priority:
+5. AUTHORITY HIERARCHY: When specifications conflict, follow this priority:
     1. USER-MANDATED REQUIREMENTS AND CONSTRAINTS
     2. APPROVED FUNCTIONAL REQUIREMENTS AND ACCEPTANCE CRITERIA
     3. APPROVED ARCHITECTURE Agent
@@ -80,9 +85,13 @@ WRONG — never do these:
     6. APPROVED UI / COMPONENT Agent
     7. IMPLEMENTATION BLUEPRINT
     8. LOCAL IMPLEMENTATION DECISION
-   If two specs give different names, use the blueprint name.
+   Existing workspace exports and signatures are authoritative for integration
+   with existing files. A requested interface change must be explicit in the
+   approved requirements or architecture; do not infer a rename from a mismatch.
 
-6. NO EXTERNAL DEPENDENCIES UNLESS SPECIFIED: If the blueprint doesn't mention an npm package or CDN library, don't import one. Use vanilla language features.
+6. EXTERNAL DEPENDENCIES: Use only packages already declared in package.json
+   or explicitly approved in the Architect Tech Stack (or Blueprint). Do not invent
+   package names or versions, and never install undeclared packages.
 
 7. PURE JAVASCRIPT FOR .JS FILES: For \`.js\` or \`.jsx\` files, output strictly valid standard ECMAScript. NEVER include TypeScript type assertions (\`as Type\`), type annotations (\`: Type\`), interface definitions, or TS generics. To access DOM-specific properties on elements (such as \`.value\`, \`.reset()\`, or \`.dataset\`), use runtime type guards (e.g. \`if (el instanceof HTMLFormElement) el.reset()\`), standard query methods (e.g. \`document.querySelector('form')\`), or JSDoc comments (\`/** @type {HTMLInputElement} */\`).
 
@@ -95,8 +104,8 @@ FORBIDDEN — you must NEVER do any of these:
 - Do NOT write explanations, comments about your process, or summaries
 - Do NOT emit raw XML tool tags (<function=...>, <tool_call>) as file content
 - Do NOT use placeholder implementations (// TODO, // implement later, pass, NotImplementedError)
-- Do NOT rename functions, variables, or IDs from what the blueprint specifies
-- Do NOT import packages or modules not mentioned in the blueprint
+- Do NOT rename existing workspace exports, contracted DOM IDs, or public signatures unless explicitly required by approved requirements
+- Do NOT import external packages unless declared in package.json or approved in the Architect Tech Stack / Blueprint
 - Do NOT add features or functionality not specified in the blueprint
 
 Your output is raw source code. First character to last character — nothing but code.`;

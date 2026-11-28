@@ -643,6 +643,7 @@ export async function verifyAndRepairWorkspace(
     authorizedFileSet?: any;
     loadAuthorizedFileSetFn?: (conversationId: string, pipelineRunId: string) => Promise<any>;
     maxCycles?: number;
+    requirePersistedVerification?: boolean;
   }
 ): Promise<void> {
   const { coordinateRepair } = await import('./repair-coordinator');
@@ -654,5 +655,6 @@ export async function verifyAndRepairWorkspace(
     maxCycles: options?.maxCycles ?? MAX_DEBUG_CYCLES,
     authorizedFileSet: options?.authorizedFileSet,
     loadAuthorizedFileSetFn: options?.loadAuthorizedFileSetFn,
+    requirePersistedVerification: options?.requirePersistedVerification,
   });
 }

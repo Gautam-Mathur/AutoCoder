@@ -8,6 +8,7 @@ import {
   classifyArchitectureFile,
 } from './architecture-file-policy';
 import { WorkspaceManifest } from './contracts/schemas/coder';
+import { resolveModule } from './module-resolver';
 
 export type WorkspaceFileClass = 'project' | 'pipeline-artifact';
 
@@ -84,8 +85,13 @@ export function parseBlueprintContract(blueprintContent: string): ParsedBlueprin
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
-    if (line.startsWith('### File:')) {
-      const pathPart = line.substring('### File:'.length).trim().replace(/[*`'"]/g, '');
+    const headerMatch = line.match(/^###\s*File:\s*(.*)$/i);
+    if (headerMatch) {
+      const pathPart = headerMatch[1]
+        .trim()
+        .replace(/[*`'"]/g, '')
+        .split(/\s+[\(\[\{]/)[0]
+        .trim();
       const normPath = normalizeProjectPath(pathPart);
       if (!normPath) {
         parserErrors.push(`Blueprint Parser Error: Invalid empty file path heading at line ${i + 1}.`);
@@ -109,27 +115,70 @@ export function parseBlueprintContract(blueprintContent: string): ParsedBlueprin
 
     let ownerModule = '';
     const dependencies: string[] = [];
+    let collectingDependencies = false;
+
+    const appendDependencies = (rawValue: string) => {
+      const cleaned = rawValue.replace(/\s*\(.*?\)\s*/g, '').trim();
+      if (!cleaned || /^none\b/i.test(cleaned)) return;
+
+      dependencies.push(
+        ...cleaned
+          .split(/[,;]/)
+          .map((value) => {
+            const stripped = value
+              .replace(/\s*\(.*?\)\s*/g, '')
+              .trim()
+              .replace(/[*`'"]/g, '')
+              .trim();
+            if (!stripped || /^none\b/i.test(stripped)) return '';
+            // Preserve parent-relative (../) and alias (@/, ~/) prefixes; strip leading ./ and /
+            return stripped.replace(/^\.\//, '').replace(/^\/+/, '').trim();
+          })
+          .filter(Boolean)
+      );
+    };
 
     for (const rawLine of secLines) {
       const line = rawLine.trim();
-      const ownerMatch = line.match(/^-\s*(?:\*\*)?Owner Module(?:\*\*)?:\s*(.*)$/i);
+      const ownerMatch = line.match(/^(?:[-*]\s*)?(?:\*\*)?Owner Module(?:\*\*)?:\s*(.*)$/i);
       if (ownerMatch) {
         ownerModule = ownerMatch[1].trim().replace(/[*`'"]/g, '');
+        collectingDependencies = false;
+        continue;
       }
 
-      const depMatch = line.match(/^-\s*(?:\*\*)?Dependencies(?:\*\*)?:\s*(.*)$/i);
+      const depMatch = line.match(/^(?:[-*]\s*)?(?:\*\*)?Dependencies(?:\*\*)?:\s*(.*)$/i);
       if (depMatch) {
-        const rawDeps = depMatch[1].trim();
-        const cleanedDeps = rawDeps.replace(/\s*\(.*?\)\s*/g, '').trim();
-        if (cleanedDeps && !/^none\b/i.test(cleanedDeps)) {
-          const parts = cleanedDeps
-            .split(/[,;]/)
-            .map((d) => d.replace(/\s*\(.*?\)\s*/g, '').trim().replace(/[*`'"]/g, ''))
-            .filter(Boolean);
-          dependencies.push(...parts);
-        }
+        collectingDependencies = true;
+        appendDependencies(depMatch[1]);
+        continue;
+      }
+
+      if (!collectingDependencies) continue;
+      if (!line) continue;
+
+      // Check whether this line starts a new metadata field (including hyphenated headers like Implementation-Details)
+      // BEFORE treating indented bullets as dependency continuations.
+      if (/^\s*(?:[-*]\s*)?(?:\*\*)?[A-Za-z][\w -]*(?:\*\*)?:\s*/.test(rawLine)) {
+        collectingDependencies = false;
+        continue;
+      }
+
+      // Indented continuation bullets (1 or more leading spaces) belong to Dependencies.
+      const continuationMatch = rawLine.match(/^\s+[-*]\s+(.+)$/);
+      if (continuationMatch) {
+        appendDependencies(continuationMatch[1]);
+        continue;
+      }
+
+      // Any unindented non-bullet line ends the dependency block.
+      if (!/^\s/.test(rawLine)) {
+        collectingDependencies = false;
       }
     }
+
+    const uniqueDependencies = Array.from(new Set(dependencies));
+    dependencies.splice(0, dependencies.length, ...uniqueDependencies);
 
     if (!ownerModule) {
       parserErrors.push(`Blueprint Parser Error: File "${sec.path}" missing "- Owner Module:" metadata.`);
@@ -187,14 +236,36 @@ export function validateBlueprintAgainstArchitecture(
     }
 
     // Validate dependencies
+    const archModuleContext = {
+      files: architecture.files.map((f) => normalizeProjectPath(f.path)),
+      baseUrl: '.',
+      paths: {
+        '@/*': ['./src/*', './*'],
+        '~/*': ['./src/*', './*'],
+      },
+    };
+
     for (const dep of bf.dependencies) {
       const cleanedDep = dep.replace(/\s*\(.*?\)\s*/g, '').trim();
       const normDep = normalizeProjectPath(cleanedDep).toLowerCase();
-      if (
-        (cleanedDep.includes('/') || /\.(?:tsx?|jsx?|css|scss|html|json|prisma|sql|mjs|cjs)$/i.test(cleanedDep)) &&
-        !archFilesSet.has(normDep)
-      ) {
-        errors.push(`Blueprint Contract Error: File "${bf.path}" references unknown file dependency "${dep}".`);
+      const isScopedNpmPackage =
+        /^@[a-z0-9_.-]+\/[a-z0-9_.-]+/i.test(cleanedDep) &&
+        !cleanedDep.startsWith('@/');
+      const looksLikeLocalDep =
+        !isScopedNpmPackage &&
+        (cleanedDep.startsWith('.') ||
+          cleanedDep.startsWith('@/') ||
+          cleanedDep.startsWith('~/') ||
+          cleanedDep.includes('/') ||
+          /\.(?:tsx?|jsx?|css|scss|html|json|prisma|sql|mjs|cjs)$/i.test(cleanedDep));
+
+      if (looksLikeLocalDep && !archFilesSet.has(normDep)) {
+        const resolvedArchDep = resolveModule(bf.path, cleanedDep, archModuleContext);
+        if (!resolvedArchDep || !archFilesSet.has(normalizeProjectPath(resolvedArchDep).toLowerCase())) {
+          errors.push(
+            `Blueprint Contract Error [ARCHITECTURE_REVISION_REQUIRED]: File "${bf.path}" references unknown file dependency "${dep}" absent from approved architecture.md.`
+          );
+        }
       }
     }
   }
