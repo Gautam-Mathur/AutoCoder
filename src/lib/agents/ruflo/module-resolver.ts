@@ -4,11 +4,18 @@ export interface ModuleResolutionContext {
   paths?: Record<string, string[]>;
 }
 
+const DEFAULT_TS_PATHS: Record<string, string[]> = {
+  '@/*': ['./src/*', './*'],
+  '~/*': ['./src/*', './*'],
+};
+
 /**
  * Parses compilerOptions from a raw tsconfig.json or jsconfig.json content string.
  */
 export function parseTsConfigOptions(tsConfigContent: string): { baseUrl?: string; paths?: Record<string, string[]> } {
-  if (!tsConfigContent) return {};
+  if (!tsConfigContent) {
+    return { baseUrl: '.', paths: { ...DEFAULT_TS_PATHS } };
+  }
   try {
     // Strip trailing commas and comments before parsing
     const cleaned = tsConfigContent
@@ -19,10 +26,10 @@ export function parseTsConfigOptions(tsConfigContent: string): { baseUrl?: strin
     const opts = parsed.compilerOptions || {};
     return {
       baseUrl: opts.baseUrl || '.',
-      paths: opts.paths || { '@/*': ['./src/*', './*'] },
+      paths: opts.paths ? { ...DEFAULT_TS_PATHS, ...opts.paths } : { ...DEFAULT_TS_PATHS },
     };
   } catch (e) {
-    return { baseUrl: '.', paths: { '@/*': ['./src/*', './*'] } };
+    return { baseUrl: '.', paths: { ...DEFAULT_TS_PATHS } };
   }
 }
 
@@ -34,7 +41,7 @@ export function resolveModule(
   specifier: string,
   context: ModuleResolutionContext
 ): string | null {
-  const { files, baseUrl = '.', paths = { '@/*': ['./src/*', './*'] } } = context;
+  const { files, baseUrl = '.', paths = DEFAULT_TS_PATHS } = context;
   const fileSet = new Set(files.map(f => f.replace(/\\/g, '/').replace(/^[/\\]+/, '').toLowerCase()));
 
   const resolvePathCandidates = (basePath: string): string | null => {
@@ -100,6 +107,15 @@ export function resolveModule(
     const directPath = cleanBase && cleanBase !== '.' ? `${cleanBase}/${specifier}` : specifier;
     const resolved = resolvePathCandidates(directPath);
     if (resolved) return resolved;
+  }
+
+  // 4. Sibling-directory fallback for bare local asset references (e.g. style.css from public/index.html)
+  if (!specifier.includes('/') && /\.[a-z0-9]+$/i.test(specifier)) {
+    const importerDir = importer.replace(/\\/g, '/').split('/').slice(0, -1).join('/');
+    if (importerDir) {
+      const siblingResolved = resolvePathCandidates(`${importerDir}/${specifier}`);
+      if (siblingResolved) return siblingResolved;
+    }
   }
 
   return null;

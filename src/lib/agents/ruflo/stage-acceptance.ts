@@ -15,6 +15,7 @@ import {
   isControlPlaneArtifact,
   AuthorizedFileSet,
 } from './workspace-policy';
+import { parseBlueprintFiles, validateBlueprintGraph } from './blueprint-graph';
 
 import { parseTesterOutput } from './contracts/schemas/tester';
 import { parseSecurityOutput } from './contracts/schemas/security';
@@ -344,7 +345,26 @@ function validateBlueprinter(content: string, ctx?: StageAcceptanceContext): Acc
     return { accepted: false, errors, warnings };
   }
 
-  return { accepted: true, errors: [], warnings: [] };
+  const blueprintSections = parseBlueprintFiles(content);
+  const extractedContract = extractProjectContract({
+    'plan.md': ctx?.upstreamContext?.['plan.md'] || '',
+    'requirements.md': ctx?.upstreamContext?.['requirements.md'] || '',
+    'architecture.md': archContent,
+    'backend_spec.md': ctx?.upstreamContext?.['backend_spec.md'] || '',
+    'ui_spec.md': ctx?.upstreamContext?.['ui_spec.md'] || '',
+  });
+  const graphVal = validateBlueprintGraph(blueprintSections, undefined, extractedContract);
+  if (graphVal.warnings.length > 0) {
+    warnings.push(...graphVal.warnings);
+  }
+  if (!graphVal.valid) {
+    for (const err of graphVal.errors) {
+      errors.push(`Blueprinter Dependency Graph Error: ${err}`);
+    }
+    return { accepted: false, errors, warnings };
+  }
+
+  return { accepted: true, errors: [], warnings };
 }
 
 function validateCoder(content: string, ctx?: StageAcceptanceContext): AcceptanceResult {
@@ -387,11 +407,15 @@ function validateTester(content: string, ctx?: StageAcceptanceContext): Acceptan
   const warnings: string[] = [];
 
   if (output.result === 'FAIL') {
-    warnings.push('Tester reported FAIL; workspace verification loop will route to Debugger for repair.');
+    warnings.push(
+      'Tester report artifact accepted for repair routing only. Verification outcome is FAIL; ACCEPTED does not mean PASS.'
+    );
   }
 
   if (output.result === 'INCOMPLETE') {
-    warnings.push('Tester reported INCOMPLETE; mandatory verification stages could not be executed.');
+    warnings.push(
+      'Tester report artifact accepted for diagnostic routing only. Verification is INCOMPLETE and must not be treated as PASS.'
+    );
   }
 
   if (ctx?.evidence?.currentWorkspaceHash && output.workspaceHash !== ctx.evidence.currentWorkspaceHash) {
@@ -410,6 +434,9 @@ function validateDebugger(content: string, ctx?: StageAcceptanceContext): Accept
   }
 
   const extraErrors: string[] = [];
+  const warnings: string[] = [
+    'Debugger report accepted as repair documentation only. Test success is determined exclusively by a fresh deterministic Tester VerificationRun.',
+  ];
 
   // Check if patches mention any control plane artifacts
   if (output.patchesApplied) {
@@ -425,7 +452,7 @@ function validateDebugger(content: string, ctx?: StageAcceptanceContext): Accept
     }
   }
 
-  return { accepted: extraErrors.length === 0, errors: extraErrors, warnings: [] };
+  return { accepted: extraErrors.length === 0, errors: extraErrors, warnings };
 }
 
 function extractExternalResourceUrls(workspaceFiles: Record<string, string>): string[] {

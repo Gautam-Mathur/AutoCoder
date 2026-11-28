@@ -1,6 +1,8 @@
 import { ProjectContract } from './contracts';
+import { extractProjectContract } from './spec-contract';
 import { resolveModule, parseTsConfigOptions } from './module-resolver';
 import { parseSpecsRequired } from './coder-context';
+import { normalizeProjectPath, parseBlueprintContract } from './workspace-policy';
 
 function escapeRegex(val: string): string {
   return val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -19,6 +21,18 @@ export interface BlueprintFileSection {
 export function parseBlueprintFiles(blueprintText: string): BlueprintFileSection[] {
   const sections: BlueprintFileSection[] = [];
   const fileBlocks = blueprintText.split(/###\s*File:\s*/i).slice(1);
+  const parsedContract = parseBlueprintContract(blueprintText);
+  const dependenciesByFile = new Map<string, string[]>();
+  for (const contractFile of parsedContract.files) {
+    const key = normalizeProjectPath(contractFile.path).toLowerCase();
+    const existingDeps = dependenciesByFile.get(key) || [];
+    for (const dep of contractFile.dependencies) {
+      if (!existingDeps.includes(dep)) {
+        existingDeps.push(dep);
+      }
+    }
+    dependenciesByFile.set(key, existingDeps);
+  }
 
   const seenFileMap = new Map<string, number>();
 
@@ -37,22 +51,14 @@ export function parseBlueprintFiles(blueprintText: string): BlueprintFileSection
 
     if (!file || rawFile.trim().endsWith('/') || rawFile.trim().endsWith('/`')) continue;
 
-    const normKey = file.toLowerCase();
+    const normKey = normalizeProjectPath(file).toLowerCase();
 
     const rawSection = '### File: ' + block.trim();
     const purposeMatch = block.match(/\*\*Purpose\*\*:\s*(.+)/i);
-    const depsMatch = block.match(/\*\*Dependencies\*\*:\s*(.+)/i);
     const exportsMatch = block.match(/\*\*Exports\*\*:\s*(.+)/i);
 
     const purpose = purposeMatch ? purposeMatch[1].trim() : '';
-    const depsRaw = depsMatch ? depsMatch[1].trim() : 'None';
-    const dependencies =
-      depsRaw.toLowerCase() === 'none'
-        ? []
-        : depsRaw
-            .split(',')
-            .map((d) => d.trim().replace(/[*`'"]/g, '').replace(/^\.\//, '').replace(/^\//, ''))
-            .filter(Boolean);
+    const dependencies = [...(dependenciesByFile.get(normKey) || [])];
     const specsRequired = parseSpecsRequired(rawSection).map((s) => `${s.file}#${s.section}`);
     const exportsRaw = exportsMatch ? exportsMatch[1].trim() : 'None';
     const exportsList =
@@ -92,9 +98,17 @@ export function parseBlueprintFiles(blueprintText: string): BlueprintFileSection
   const hasHtmlEntryPoint = sections.some(
     (s) => s.file === 'index.html' || s.file === 'public/index.html' || s.file.endsWith('.html')
   );
-  const isFrameworkApp = sections.some(
-    (s) => s.file.startsWith('pages/') || s.file.startsWith('app/') || s.file === 'next.config.js' || s.file === 'vite.config.js'
-  );
+  const isFrameworkApp = sections.some((s) => {
+    const norm = normalizeProjectPath(s.file);
+    return (
+      norm.startsWith('pages/') ||
+      norm.startsWith('app/') ||
+      norm.startsWith('src/app/') ||
+      norm.startsWith('src/pages/') ||
+      /^next\.config\.(?:js|mjs|ts)$/i.test(norm) ||
+      /^vite\.config\.(?:js|mjs|ts)$/i.test(norm)
+    );
+  });
 
   if (isWebProject && !hasHtmlEntryPoint && !isFrameworkApp) {
     const cssFiles = sections.filter((s) => s.file.endsWith('.css')).map((s) => s.file);
@@ -133,7 +147,12 @@ export function classifyBlueprintDependency(dep: string): 'LOCAL_FILE' | 'PACKAG
   if (!dep || dep === 'None') return 'EXTERNAL';
   const clean = dep.trim();
 
-  if (clean.startsWith('.') || clean.startsWith('@/') || clean.startsWith('~/') || /\.(ts|tsx|js|jsx|css|json|prisma)$/i.test(clean)) {
+  if (
+    clean.startsWith('.') ||
+    clean.startsWith('@/') ||
+    clean.startsWith('~/') ||
+    /\.(ts|tsx|js|jsx|mjs|cjs|css|scss|html|json|prisma|sql)$/i.test(clean)
+  ) {
     return 'LOCAL_FILE';
   }
 
@@ -227,7 +246,9 @@ export function validateBlueprintGraph(
     errors.push(`Dependency cycle detected in blueprint file graph.`);
   }
 
-  const framework = contract?.framework || 'STATIC_HTML';
+  // Without a project contract, validate graph structure and universal HTML boundaries only.
+  // Do not silently assume every project without a contract argument is STATIC_HTML.
+  const framework = contract?.framework;
 
   for (const [, section] of fileMap.entries()) {
     const srcFile = section.file.replace(/\\/g, '/').replace(/^\.\//, '');
@@ -318,6 +339,80 @@ export function validateBlueprintGraph(
     errors,
     warnings,
     order,
+  };
+}
+
+export function computeCoderExecutionOrder(params: {
+  authorizedFiles: string[];
+  blueprintContent: string;
+  tsConfigContent?: string;
+  architectureContent?: string;
+}): {
+  orderedFiles: string[];
+  validation: BlueprintGraphValidation;
+  isStaticHtml: boolean;
+} {
+  const { authorizedFiles, blueprintContent, tsConfigContent, architectureContent } = params;
+  const blueprintSections = parseBlueprintFiles(blueprintContent);
+  const extractedContract = architectureContent
+    ? extractProjectContract({ 'architecture.md': architectureContent })
+    : undefined;
+
+  const validation = validateBlueprintGraph(
+    blueprintSections,
+    tsConfigContent || undefined,
+    extractedContract
+  );
+
+  const normalizedAuthorized = authorizedFiles.map((f) => normalizeProjectPath(f));
+  const hasHtmlEntry = normalizedAuthorized.some((f) => /\.html$/i.test(f));
+  const hasBundlerOrFrameworkSignals =
+    (extractedContract?.framework && extractedContract.framework !== 'STATIC_HTML') ||
+    normalizedAuthorized.some(
+      (f) =>
+        /\.(?:tsx|jsx|ts)$/i.test(f) ||
+        /^(?:src\/)?(?:app|pages)\//i.test(f) ||
+        /^(?:package\.json|tsconfig\.json|(?:next|vite|webpack)\.config\.(?:js|mjs|cjs|ts))$/i.test(f)
+    );
+
+  const isStaticHtml = hasHtmlEntry && !hasBundlerOrFrameworkSignals;
+
+  const authorizedByLower = new Map<string, string>(
+    normalizedAuthorized.map((file) => [file.toLowerCase(), file])
+  );
+
+  const orderedBlueprintFiles = validation.order
+    .map((file) => authorizedByLower.get(normalizeProjectPath(file).toLowerCase()))
+    .filter((file): file is string => Boolean(file));
+
+  const orderedSet = new Set(orderedBlueprintFiles.map((file) => file.toLowerCase()));
+  const remainingAuthorizedFiles = normalizedAuthorized
+    .filter((file) => !orderedSet.has(file.toLowerCase()))
+    .sort((a, b) => a.localeCompare(b));
+
+  let orderedFiles = [...orderedBlueprintFiles, ...remainingAuthorizedFiles];
+
+  // Static HTML exception: generate HTML entry templates first so CSS and vanilla JS
+  // receive the authoritative HTML DOM IDs/classes rather than coding blindly.
+  if (isStaticHtml) {
+    const htmlPriority = (f: string): number => {
+      const lower = f.toLowerCase();
+      if (lower === 'index.html') return 0;
+      if (lower === 'public/index.html') return 1;
+      if (lower.endsWith('.html')) return 2;
+      return 3;
+    };
+    const htmlFiles = orderedFiles
+      .filter((f) => f.toLowerCase().endsWith('.html'))
+      .sort((a, b) => htmlPriority(a) - htmlPriority(b) || a.localeCompare(b));
+    const nonHtmlFiles = orderedFiles.filter((f) => !f.toLowerCase().endsWith('.html'));
+    orderedFiles = [...htmlFiles, ...nonHtmlFiles];
+  }
+
+  return {
+    orderedFiles,
+    validation,
+    isStaticHtml,
   };
 }
 
