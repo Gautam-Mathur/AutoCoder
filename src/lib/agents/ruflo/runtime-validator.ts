@@ -689,6 +689,7 @@ export async function executeStaticFrontendSmokeTest(
 
   // 2. Ephemeral User Profile & Chrome Process Spawn
   const tmpUserDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'autocoder-chrome-'));
+  const startupTimeoutMs = Number(process.env.CHROME_STARTUP_TIMEOUT_MS) || (process.env.CI ? 15000 : 8000);
   const chromeProcess = spawn('google-chrome', [
     '--headless=new',
     '--remote-debugging-port=0',
@@ -699,6 +700,7 @@ export async function executeStaticFrontendSmokeTest(
     '--disable-background-networking',
     '--disable-sync',
     '--disable-default-apps',
+    '--no-first-run',
     '--mute-audio',
   ], {
     detached: true,
@@ -718,7 +720,10 @@ export async function executeStaticFrontendSmokeTest(
 
   try {
     cdpWsUrl = await new Promise<string>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Headless Chrome startup timed out after 5000ms.')), 5000);
+      const timeout = setTimeout(
+        () => reject(new Error(`Headless Chrome startup timed out after ${startupTimeoutMs}ms.`)),
+        startupTimeoutMs
+      );
       let stderrBuffer = '';
       chromeProcess.stderr?.on('data', (chunk) => {
         stderrBuffer += chunk.toString();
