@@ -59,6 +59,9 @@ jobs:
       - name: Install Chrome for headless runtime smoke tests
         uses: browser-actions/setup-chrome@v1
 
+      - name: Warm Chrome fontconfig & shared libraries cache
+        run: google-chrome --headless=new --disable-gpu --dump-dom about:blank >/dev/null 2>&1 || true
+
       - name: Install dependencies
         run: npm ci
 
