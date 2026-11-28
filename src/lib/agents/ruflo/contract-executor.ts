@@ -12,6 +12,7 @@ import { validateStageCandidate } from './stage-acceptance';
 import { assertPipelineLease } from './pipeline-lease';
 import { appendPipelineEvent } from './pipeline-events';
 import { runAgent, RunAgentRuntimeOptions, sanitizeCoderOutputForFile } from './orchestrator';
+import { computeCoderExecutionOrder } from './blueprint-graph';
 import { StageLedger } from './memory';
 import {
   generateWorkspaceManifest,
@@ -137,9 +138,51 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
       // Stage-specific candidate generation logic
       if (stageName === 'Coder') {
         const authorized = await loadAuthorizedFileSet(conversationId, pipelineRunId);
+        const blueprintContent =
+          (await readVirtualFile(conversationId, 'blueprint.md')) ||
+          resolvedInputs.inputs['blueprint.md'];
+        const archContent =
+          (await readVirtualFile(conversationId, 'architecture.md')) ||
+          resolvedInputs.inputs['architecture.md'];
+
+        let dependencyOrderedFiles = authorized.authorizedFiles;
+        if (!targetFile) {
+          if (!blueprintContent) {
+            throw new Error('Coder preflight failed: blueprint.md is missing from the VFS.');
+          }
+          const tsConfigContent = await readVirtualFile(conversationId, 'tsconfig.json');
+          const { orderedFiles, validation: graphValidation } = computeCoderExecutionOrder({
+            authorizedFiles: authorized.authorizedFiles,
+            blueprintContent,
+            tsConfigContent: tsConfigContent || undefined,
+            architectureContent: archContent || undefined,
+          });
+
+          if (!graphValidation.valid) {
+            throw new Error(
+              `Coder preflight failed: invalid Blueprint dependency graph. ${graphValidation.errors.join('; ')}`
+            );
+          }
+
+          dependencyOrderedFiles = orderedFiles;
+        } else if (blueprintContent) {
+          const tsConfigContent = await readVirtualFile(conversationId, 'tsconfig.json');
+          const { validation: graphValidation } = computeCoderExecutionOrder({
+            authorizedFiles: authorized.authorizedFiles,
+            blueprintContent,
+            tsConfigContent: tsConfigContent || undefined,
+            architectureContent: archContent || undefined,
+          });
+          if (!graphValidation.valid) {
+            throw new Error(
+              `Coder preflight failed: invalid Blueprint dependency graph. ${graphValidation.errors.join('; ')}`
+            );
+          }
+        }
+
         const targetFilesToBuild = targetFile
           ? [normalizeProjectPath(targetFile)]
-          : authorized.authorizedFiles;
+          : dependencyOrderedFiles;
 
         for (const tf of targetFilesToBuild) {
           const fileIndex = targetFilesToBuild.indexOf(tf) + 1;
@@ -556,7 +599,16 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
         break;
       }
 
-      retryFeedback = `[CRITICAL CORRECTION REQUIRED FROM PREVIOUS FAILED VALIDATION ATTEMPT]:\nYour previous response failed contract validation with the following errors:\n${validationResult.errors.map((e: string) => `- ${e}`).join('\n')}\nYou MUST fix all of the above errors while strictly preserving all required sections and formatting.`;
+      const needsArchRevisionHint =
+        stageName === 'Blueprinter' &&
+        validationResult.errors.some(
+          (e: string) => e.includes('ARCHITECTURE_REVISION_REQUIRED') || e.includes('UNAUTHORIZED_BLUEPRINT_FILE')
+        );
+      retryFeedback =
+        `[CRITICAL CORRECTION REQUIRED FROM PREVIOUS FAILED VALIDATION ATTEMPT]:\nYour previous response failed contract validation with the following errors:\n${validationResult.errors.map((e: string) => `- ${e}`).join('\n')}\nYou MUST fix all of the above errors while strictly preserving all required sections and formatting.` +
+        (needsArchRevisionHint
+          ? `\nIMPORTANT: Do NOT invent or reference files absent from approved architecture.md. Map every ### File: section and Dependencies entry strictly to the approved architecture project files.`
+          : '');
 
       if (genAttempt < MAX_STAGE_ATTEMPTS) {
         onEvent({
@@ -579,12 +631,16 @@ export async function executeContractStage(params: ExecuteContractStageParams) {
         },
       });
 
+      const requiresArchRevision =
+        stageName === 'Blueprinter' &&
+        validationResult.errors.some((e: string) => e.includes('ARCHITECTURE_REVISION_REQUIRED'));
+
       await prisma.gateDecision.create({
         data: {
           conversationId,
           pipelineRunId,
           stageName,
-          gateName: 'STAGE_VALIDATION',
+          gateName: requiresArchRevision ? 'ARCHITECTURE_REVISION_REQUIRED' : 'STAGE_VALIDATION',
           decision: 'FAIL',
           actor: 'SYSTEM',
           reason: errMessage,

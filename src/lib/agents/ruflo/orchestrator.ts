@@ -125,6 +125,7 @@ export {
   validateBlueprintImports,
   classifyBlueprintDependency,
   validateBlueprintGraph,
+  computeCoderExecutionOrder,
   extractFilesFromArchitecture,
   syncHtmlAssetLinks,
 } from "./blueprint-graph";
@@ -440,7 +441,8 @@ export async function runOrchestrator(
             }
             return res;
           },
-          emit
+          emit,
+          { requirePersistedVerification: true }
         );
 
         await flushVfsToDisk(conversationId);
@@ -789,6 +791,20 @@ export async function runOrchestrator(
 
     if (isInfrastructureError(err)) {
       await handleInfrastructurePause(conversationId, emit, err.message);
+      return;
+    }
+
+    if (typeof err?.message === 'string' && err.message.includes('ARCHITECTURE_REVISION_REQUIRED')) {
+      finalPipelineState = 'PAUSED';
+      await prisma.conversation.update({
+        where: { id: conversationId },
+        data: { status: 'Paused', currentStage: 'Architect' },
+      }).catch(() => {});
+      emit({
+        type: 'ARCHITECTURE_REVISION_REQUIRED',
+        agent: 'Blueprinter',
+        message: `📐 Pipeline paused: Blueprint requires a file absent from the approved architecture (${err.message}). Please review and approve an architecture revision rather than silently modifying approved architecture.md.`,
+      });
       return;
     }
     emit({
