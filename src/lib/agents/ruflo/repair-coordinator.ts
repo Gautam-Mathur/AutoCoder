@@ -662,6 +662,11 @@ export interface CoordinateRepairParams {
    * Optional repair budget to enforce limits.
    */
   budget?: RepairBudget;
+  /**
+   * When true (enabled in production pipeline orchestration), requires a persisted
+   * Prisma VerificationRun matching the active workspace hash and report status on every Tester cycle.
+   */
+  requirePersistedVerification?: boolean;
 }
 
 export interface RepairHistoryRecord {
@@ -983,7 +988,17 @@ export function analyzeRepairTrajectory(
  * The Canonical Repair Coordinator owning Tester -> Debugger -> Coder -> Tester lifecycle.
  */
 export async function coordinateRepair(params: CoordinateRepairParams): Promise<void> {
-  const { conversationId, pipelineRunId, executeStageFn, emit, maxCycles = 10 } = params;
+  const {
+    conversationId,
+    pipelineRunId,
+    executeStageFn,
+    emit,
+    maxCycles = 10,
+    requirePersistedVerification = false,
+  } = params;
+  if (maxCycles < 1) {
+    throw new Error(`Invalid maxCycles (${maxCycles}): repair coordinator requires at least 1 verification cycle.`);
+  }
   const repairHistory: RepairHistoryRecord[] = [];
   const diagnosticHistory: DiagnosticFingerprint[] = [];
   const priorDiffsByFile = new Map<string, string>();
@@ -1005,9 +1020,67 @@ export async function coordinateRepair(params: CoordinateRepairParams): Promise<
       throw new Error(`Tester execution failed on cycle ${cycle}.`);
     }
 
-    const isPass =
+    const reportPass =
       /###\s*Result\s*\r?\n\s*PASS\b/i.test(testerResult.content || '') &&
-      !/###\s*Result\s*\r?\n\s*FAIL\b/i.test(testerResult.content || '');
+      !/###\s*Result\s*\r?\n\s*FAIL\b/i.test(testerResult.content || '') &&
+      !/###\s*Result\s*\r?\n\s*INCOMPLETE\b/i.test(testerResult.content || '');
+
+    const embeddedRunIdMatch = (testerResult.content || '').match(
+      /###\s*Verification Run ID\s*\r?\n\s*(\S+)/i
+    );
+    const expectedRunId: string | undefined =
+      testerResult.verificationRunId || (embeddedRunIdMatch ? embeddedRunIdMatch[1].trim() : undefined);
+
+    const latestVerification = await prisma.verificationRun.findFirst({
+      where: { conversationId, pipelineRunId },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const mustEnforcePersistedVerification =
+      requirePersistedVerification || Boolean(expectedRunId) || Boolean(latestVerification);
+
+    let isPass = reportPass;
+
+    if (mustEnforcePersistedVerification) {
+      if (!latestVerification) {
+        throw new Error(
+          `Tester integrity error on cycle ${cycle}: no persisted VerificationRun exists for pipeline ${pipelineRunId}.`
+        );
+      }
+
+      if (expectedRunId && latestVerification.id !== expectedRunId) {
+        throw new Error(
+          `Tester integrity error on cycle ${cycle}: latest VerificationRun (${latestVerification.id}) does not match report Verification Run ID (${expectedRunId}).`
+        );
+      }
+
+      const currentWorkspaceVersion = await computeWorkspaceFingerprint(conversationId);
+      if (latestVerification.workspaceHash !== currentWorkspaceVersion) {
+        throw new Error(
+          `Tester integrity error on cycle ${cycle}: VerificationRun workspace hash is stale.`
+        );
+      }
+
+      if (reportPass !== latestVerification.success) {
+        throw new Error(
+          `Tester integrity error on cycle ${cycle}: report result does not match persisted VerificationRun.success.`
+        );
+      }
+
+      const repairEvidenceOk = isRepairSuccessful({
+        planValid: true,
+        allChangesAuthorized: true,
+        testerWorkspaceVersion: latestVerification.workspaceHash,
+        postRepairWorkspaceVersion: currentWorkspaceVersion,
+        requiredChecks: [{ name: 'deterministic_tester', status: latestVerification.success ? 'passed' : 'failed' }],
+        unresolvedOriginalFailureIds: latestVerification.success ? [] : ['UNRESOLVED_VERIFICATION_FAILURE'],
+        acceptedRunId: latestVerification.pipelineRunId,
+        pipelineRunId,
+        acceptedWorkspaceVersion: currentWorkspaceVersion,
+      });
+
+      isPass = reportPass && latestVerification.success && repairEvidenceOk;
+    }
 
     if (isPass) {
       emit({
