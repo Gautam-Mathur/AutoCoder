@@ -197,6 +197,32 @@ async function acquireLock(conversationId: string, filePath: string): Promise<()
  * Safely writes a file to physical disk.
  * Guards against directory collisions (EISDIR) and ensures parent directory exists.
  */
+function resolveConfinedProjectDir(conversationId: string): string {
+  assertValidConversationId(conversationId);
+  const projectsRoot = path.resolve(process.cwd(), 'projects');
+  const projectDir = path.resolve(projectsRoot, conversationId);
+  if (fs.existsSync(projectDir)) {
+    const realRoot = fs.realpathSync(projectsRoot);
+    const realProject = fs.realpathSync(projectDir);
+    if (realProject !== realRoot && !realProject.startsWith(realRoot + path.sep)) {
+      throw new Error('Security Exception: Project directory resolves outside workspace root.');
+    }
+  }
+  return projectDir;
+}
+
+function mirrorVirtualFileToDisk(conversationId: string, safePath: string, content: string): void {
+  const projectDir = resolveConfinedProjectDir(conversationId);
+  const fullPath = path.join(projectDir, safePath);
+  const normalizedContent = safePath.endsWith('.html')
+    ? content.replace(/UTF-[\u4e00-\u9fa5]8/g, 'UTF-8')
+    : content;
+  const written = safeWriteFileSync(fullPath, normalizedContent);
+  if (!written) {
+    throw new Error(`VFS disk mirror failed for "${safePath}": target path is obstructed.`);
+  }
+}
+
 export function safeWriteFileSync(fullPath: string, content: string): boolean {
   try {
     const cleanFullPath = fullPath.replace(/\\/g, '/').replace(/\/+$/, '');
@@ -291,15 +317,9 @@ export async function writeVirtualFile(
       create: { conversationId, filePath: safePath, content },
     });
 
-    // Instant Physical Disk Sync
+    // Instant Physical Disk Sync (best-effort; flushVfsToDisk enforces strict parity before execution/export)
     try {
-      const projectDir = path.join(process.cwd(), 'projects', conversationId);
-      const fullPath = path.join(projectDir, safePath);
-      let normalizedContent = content;
-      if (safePath.endsWith('.html')) {
-        normalizedContent = normalizedContent.replace(/UTF-[\u4e00-\u9fa5]8/g, 'UTF-8');
-      }
-      safeWriteFileSync(fullPath, normalizedContent);
+      mirrorVirtualFileToDisk(conversationId, safePath, content);
     } catch (diskErr) {
       console.error(`Failed instant disk write for ${safePath}:`, diskErr);
     }
@@ -400,15 +420,9 @@ export async function applyDiff(
       data: { content: updatedContent },
     });
 
-    // Instant Physical Disk Sync
+    // Instant Physical Disk Sync (best-effort; flushVfsToDisk enforces strict parity before execution/export)
     try {
-      const projectDir = path.join(process.cwd(), 'projects', conversationId);
-      const fullPath = path.join(projectDir, safePath);
-      let normalizedContent = updatedContent;
-      if (safePath.endsWith('.html')) {
-        normalizedContent = normalizedContent.replace(/UTF-[\u4e00-\u9fa5]8/g, 'UTF-8');
-      }
-      safeWriteFileSync(fullPath, normalizedContent);
+      mirrorVirtualFileToDisk(conversationId, safePath, updatedContent);
     } catch (diskErr) {
       console.error(`Failed instant disk write for diff on ${safePath}:`, diskErr);
     }
@@ -417,27 +431,67 @@ export async function applyDiff(
   }
 }
 
+export interface VfsDiskParityReport {
+  inSync: boolean;
+  checkedCount: number;
+  missingOnDisk: string[];
+  drifted: string[];
+}
+
+/**
+ * Verifies SHA-256 content parity between authoritative VirtualFile DB rows
+ * and the derived physical workspace under projects/<conversationId>/.
+ */
+export async function verifyVfsDiskParity(conversationId: string): Promise<VfsDiskParityReport> {
+  const projectDir = resolveConfinedProjectDir(conversationId);
+  const records = await prisma.virtualFile.findMany({
+    where: { conversationId },
+    orderBy: { filePath: 'asc' },
+  });
+
+  const missingOnDisk: string[] = [];
+  const drifted: string[] = [];
+
+  for (const record of records) {
+    let safePath: string;
+    try {
+      safePath = sanitizePath(record.filePath);
+    } catch {
+      continue;
+    }
+    const fullPath = path.join(projectDir, safePath);
+    if (!fs.existsSync(fullPath) || fs.statSync(fullPath).isDirectory()) {
+      missingOnDisk.push(safePath);
+      continue;
+    }
+    const diskContent = fs.readFileSync(fullPath, 'utf8');
+    const expected = safePath.endsWith('.html')
+      ? record.content.replace(/UTF-[\u4e00-\u9fa5]8/g, 'UTF-8')
+      : record.content;
+    if (createContentHash(diskContent) !== createContentHash(expected)) {
+      drifted.push(safePath);
+    }
+  }
+
+  return {
+    inSync: missingOnDisk.length === 0 && drifted.length === 0,
+    checkedCount: records.length,
+    missingOnDisk,
+    drifted,
+  };
+}
+
 /**
  * Flushes all virtual workspace files for a conversation to the physical disk under projects/<conversationId>/
  * Used before launching a preview server or exporting a zip download archive.
  */
 export async function flushVfsToDisk(conversationId: string): Promise<number> {
-  assertValidConversationId(conversationId);
+  resolveConfinedProjectDir(conversationId);
   const records = await prisma.virtualFile.findMany({
     where: { conversationId },
   });
 
   if (records.length === 0) return 0;
-
-  const projectsRoot = path.resolve(process.cwd(), 'projects');
-  const projectDir = path.resolve(projectsRoot, conversationId);
-  if (fs.existsSync(projectDir)) {
-    const realRoot = fs.realpathSync(projectsRoot);
-    const realProject = fs.realpathSync(projectDir);
-    if (realProject !== realRoot && !realProject.startsWith(realRoot + path.sep)) {
-      throw new Error('Security Exception: Project directory resolves outside workspace root.');
-    }
-  }
 
   for (const record of records) {
     let safePath: string;
@@ -447,12 +501,7 @@ export async function flushVfsToDisk(conversationId: string): Promise<number> {
       // Skip invalid legacy paths cleanly
       continue;
     }
-    const fullPath = path.join(projectDir, safePath);
-    let normalizedContent = record.content;
-    if (safePath.endsWith('.html')) {
-      normalizedContent = normalizedContent.replace(/UTF-[\u4e00-\u9fa5]8/g, 'UTF-8');
-    }
-    safeWriteFileSync(fullPath, normalizedContent);
+    mirrorVirtualFileToDisk(conversationId, safePath, record.content);
   }
 
   return records.length;

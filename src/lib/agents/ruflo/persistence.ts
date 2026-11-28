@@ -1,5 +1,11 @@
 import { prisma } from '../../db';
 
+/**
+ * @deprecated Legacy 10-table stage output persistence kept only for historical schema compatibility.
+ * Authoritative stage artifacts must be persisted through `artifact-store.ts` (`ArtifactVersion`)
+ * and `vfs.ts` (`VirtualFile`). Do not introduce new callers to `StagePersistence`.
+ */
+
 function safeJsonStringify(val: any): string | null {
   if (val === null || val === undefined) return null;
   if (typeof val === 'string') return val;
