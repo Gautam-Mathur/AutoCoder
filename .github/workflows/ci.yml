@@ -1,0 +1,71 @@
+name: AutoCoder CI Verification
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  hygiene-and-typecheck:
+    name: Hygiene, Typecheck & Invariants
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify no tracked secrets, local DBs, or generated artifacts
+        run: |
+          FORBIDDEN=$(git ls-files .env '.env.*' settings.json '*.db' 'prisma/*.db*' 'projects/' 'generated projects/' 'autocoder-project-*' | grep -vE '^\.env\.example$' || true)
+          if [ -n "$FORBIDDEN" ]; then
+            echo "ERROR: Forbidden runtime/secret files are tracked in git:"
+            echo "$FORBIDDEN"
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+
+      - name: Static pipeline & contract invariant check
+        run: npm run pipeline:check
+
+  contract-and-unit-tests:
+    name: Contract & Unit Test Suite
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: "file:./dev.db"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install Chrome for headless runtime smoke tests
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client & initialize ephemeral SQLite DB
+        run: |
+          npx prisma generate
+          npx prisma db push
+
+      - name: Run full contract and integration suite
+        run: npm test
