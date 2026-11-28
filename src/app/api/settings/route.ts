@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
       anthropicModel: typeof body.anthropicModel === 'string' ? body.anthropicModel : existing.anthropicModel,
     };
 
-    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { encoding: 'utf8', mode: 0o600 });
     return NextResponse.json({ success: true, settings: toPublicLLMSettings(settings) });
   } catch (err: any) {
     return NextResponse.json({ error: 'Failed to update LLM settings' }, { status: 500 });

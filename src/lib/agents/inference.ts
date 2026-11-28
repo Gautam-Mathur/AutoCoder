@@ -102,11 +102,18 @@ export async function getLLMConfig() {
   };
 
   const settingsPath = path.join(process.cwd(), 'settings.json');
-  let config = { ...defaults };
+  const config = { ...defaults };
   if (fs.existsSync(settingsPath)) {
     try {
       const data = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      config = { ...defaults, ...data };
+      if (data && typeof data === 'object') {
+        for (const key of Object.keys(defaults) as Array<keyof typeof defaults>) {
+          const val = data[key];
+          if (typeof val === 'string' && val.trim().length > 0) {
+            config[key] = val.trim();
+          }
+        }
+      }
     } catch (e) {
       console.error('Error reading settings.json, using defaults:', e);
     }

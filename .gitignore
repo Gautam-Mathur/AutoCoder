@@ -30,8 +30,13 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
+# env files (never commit real secrets; keep safe template)
+.env
+.env.*
+!.env.example
+
+# runtime settings & secrets
+settings.json
 
 # vercel
 .vercel
@@ -42,10 +47,13 @@ next-env.d.ts
 
 /src/generated/prisma
 
-# local test workspaces
+# local databases & runtime workspaces
 /module/
 dev.db*
+prisma/*.db*
 /projects/
+/generated projects/
+/autocoder-project-*/
 /scratch/
 
 
