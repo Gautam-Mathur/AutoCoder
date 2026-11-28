@@ -30,7 +30,7 @@ interface SystemStats {
 }
 
 export default function SystemHealth() {
-  const { ollamaConnected } = useApp();
+  const { provider, providerConnected, providerHost } = useApp();
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [healthData, setHealthData] = useState<any>(null);
   const [cpuHistory, setCpuHistory] = useState<number[]>(Array.from({ length: 15 }, () => 0));
@@ -77,22 +77,24 @@ export default function SystemHealth() {
     };
   }, []);
 
+  const isOllamaActive = Boolean(healthData?.ollamaConnected ?? (provider === 'ollama' && providerConnected));
+  const isCloudActive = provider !== 'ollama' && providerConnected;
   const connections = [
     {
       name: 'Ollama (Local Inference)',
-      host: 'localhost:11434',
+      host: healthData?.provider === 'ollama' ? (healthData?.host || providerHost || '127.0.0.1:11434') : '127.0.0.1:11434',
       icon: Cpu,
-      status: ollamaConnected ? 'Connected' : 'Disconnected',
-      statusClass: ollamaConnected ? 'text-emerald-400' : 'text-red-400',
-      connected: ollamaConnected,
+      status: provider !== 'ollama' ? 'Standby' : isOllamaActive ? 'Connected' : 'Disconnected',
+      statusClass: provider !== 'ollama' ? 'text-slate-400' : isOllamaActive ? 'text-emerald-400' : 'text-red-400',
+      connected: isOllamaActive,
     },
     {
-      name: 'API Cloud Services',
-      host: 'api.anthropic.com',
+      name: `Cloud LLM (${provider === 'openai' ? 'OpenAI' : provider === 'anthropic' ? 'Anthropic' : 'OpenAI / Anthropic'})`,
+      host: provider !== 'ollama' ? (healthData?.host || providerHost || 'api') : 'Configured in Settings',
       icon: Cloud,
-      status: 'Connected',
-      statusClass: 'text-emerald-400',
-      connected: true,
+      status: provider === 'ollama' ? 'Standby' : isCloudActive ? 'Configured' : 'Unconfigured',
+      statusClass: provider === 'ollama' ? 'text-slate-400' : isCloudActive ? 'text-emerald-400' : 'text-red-400',
+      connected: isCloudActive,
     },
   ];
 
@@ -101,11 +103,23 @@ export default function SystemHealth() {
   const localTps = healthData?.realLatency?.tps || '24.5';
 
   const scorecards = [
-    { name: 'claude-3-5-sonnet', provider: 'Anthropic Cloud API', ttft: '245ms', tps: '85.4', active: true },
-    { name: 'gpt-4o-mini', provider: 'OpenAI Cloud API', ttft: '180ms', tps: '112.1', active: true },
+    {
+      name: provider === 'anthropic' ? activeModel : 'claude-3-5-sonnet',
+      provider: 'Anthropic Cloud API',
+      ttft: '245ms',
+      tps: '85.4',
+      active: provider === 'anthropic' && providerConnected,
+    },
+    {
+      name: provider === 'openai' ? activeModel : 'gpt-4o-mini',
+      provider: 'OpenAI Cloud API',
+      ttft: '180ms',
+      tps: '112.1',
+      active: provider === 'openai' && providerConnected,
+    },
   ];
 
-  if (healthData && Array.isArray(healthData.models) && healthData.models.length > 0) {
+  if (healthData && provider === 'ollama' && Array.isArray(healthData.models) && healthData.models.length > 0) {
     healthData.models.forEach((mName: string) => {
       // Find real stats for this specific model
       const stats = healthData.modelStats?.[mName] || healthData.modelStats?.[mName.replace('ollama/', '')];
@@ -142,17 +156,16 @@ export default function SystemHealth() {
         provider: 'Ollama Local Runner',
         ttft,
         tps,
-        active: ollamaConnected
+        active: isOllamaActive
       });
     });
   } else {
-    // Default fallback if loading/unconnected
     scorecards.push({
-      name: activeModel,
+      name: provider === 'ollama' ? activeModel : 'qwen3-coder:30b',
       provider: 'Ollama Local Runner',
       ttft: localTtft,
       tps: localTps,
-      active: ollamaConnected
+      active: isOllamaActive
     });
   }
 

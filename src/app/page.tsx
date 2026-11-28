@@ -28,7 +28,8 @@ interface Conversation {
 
 export default function LandingDashboard() {
   const router = useRouter();
-  const { ollamaConnected, ollamaModels, activeModel, setActiveModel, setActiveId, setActivePrompt } = useApp();
+  const { provider, providerConnected, providerHost, healthReason, availableModels, activeModel, setActiveModel, setActiveId, setActivePrompt } = useApp();
+  const providerLabel = provider === 'openai' ? 'OpenAI' : provider === 'anthropic' ? 'Anthropic' : 'Ollama';
   const [promptText, setPromptText] = useState('');
   const [pipelines, setPipelines] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,8 +59,8 @@ export default function LandingDashboard() {
   }, []);
 
   const handleInitialize = async (title: string, customPromptText?: string) => {
-    if (!ollamaConnected) {
-      alert('Please connect and run Ollama on localhost:11434 before starting the pipeline.');
+    if (!providerConnected) {
+      alert(healthReason || `Please configure or start your active LLM provider (${providerLabel}) before starting the pipeline.`);
       return;
     }
 
@@ -117,14 +118,18 @@ export default function LandingDashboard() {
 
   return (
     <main className="flex-1 overflow-y-auto bg-slate-950 p-6 flex flex-col gap-6">
-      {/* Alert if Ollama is disconnected */}
-      {!ollamaConnected && (
+      {/* Alert if active LLM provider is disconnected / unconfigured */}
+      {!providerConnected && (
         <div className="bg-amber-500/10 border border-amber-500/30 text-amber-300 p-4 rounded flex items-center gap-3 shadow-[0_0_15px_rgba(245,158,11,0.1)]">
           <AlertTriangle className="w-5 h-5 flex-shrink-0 animate-bounce" />
           <div>
-            <div className="font-bold">Ollama Connection Warning</div>
+            <div className="font-bold">{providerLabel} Connection Warning</div>
             <div className="text-xs">
-              Local Ollama endpoint (<code className="bg-slate-900 px-1 py-0.5 rounded text-amber-200">http://localhost:11434</code>) is currently offline. Please start Ollama locally and pull the target model (e.g. <code className="bg-slate-900 px-1 py-0.5 rounded text-amber-200">llama3:8b-instruct</code>) to execute real prompt compilation.
+              {healthReason || (
+                provider === 'ollama'
+                  ? `Local Ollama endpoint (${providerHost || 'http://127.0.0.1:11434'}) is currently offline. Please start Ollama locally or switch providers in Settings.`
+                  : `${providerLabel} provider is missing valid credentials. Update your API key in Settings.`
+              )}
             </div>
           </div>
         </div>
@@ -139,13 +144,13 @@ export default function LandingDashboard() {
           <textarea
             value={promptText}
             onChange={(e) => setPromptText(e.target.value)}
-            disabled={!ollamaConnected}
+            disabled={!providerConnected}
             style={{ height: '96px', minHeight: '96px' }}
             className="bg-transparent border-none text-on-surface text-sm placeholder-slate-400 focus:ring-0 resize-none p-2 outline-none disabled:opacity-50 w-full"
             placeholder={
-              ollamaConnected
+              providerConnected
                 ? "Describe the application you want to build. E.g., 'A full-stack CRM dashboard with React, Tailwind, and Supabase...'"
-                : "Initialize Ollama connection to start prompting..."
+                : `Configure or connect ${providerLabel} in Settings to start prompting...`
             }
           />
 
@@ -250,7 +255,7 @@ export default function LandingDashboard() {
               >
                 <Database className="w-5 h-5" />
               </button>
-              {ollamaConnected && ollamaModels.length > 0 ? (
+              {providerConnected && availableModels.length > 0 ? (
                 <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-2 py-1 rounded text-xs font-mono text-slate-355 ml-2">
                   <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wide">Model:</span>
                   <select
@@ -258,7 +263,7 @@ export default function LandingDashboard() {
                     onChange={(e) => setActiveModel(e.target.value)}
                     className="bg-transparent border-none text-xs font-bold text-on-surface focus:outline-none cursor-pointer"
                   >
-                    {ollamaModels.map((m) => (
+                    {availableModels.map((m) => (
                       <option key={m} value={m} className="bg-slate-900 text-slate-300">
                         {m}
                       </option>
@@ -282,7 +287,7 @@ export default function LandingDashboard() {
                 const titleWithTimestamp = `${trimmedName} - ${new Date().toISOString()}`;
                 handleInitialize(titleWithTimestamp);
               }}
-              disabled={!ollamaConnected || !promptText.trim()}
+              disabled={!providerConnected || !promptText.trim()}
               className="bg-electric-indigo text-white px-6 py-2 rounded text-xs font-bold hover:bg-indigo-500 transition-colors shadow-[0_0_12px_rgba(129,140,248,0.5)] flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Initialize Pipeline <ArrowRight className="w-4 h-4" />
@@ -300,7 +305,7 @@ export default function LandingDashboard() {
                 <div
                   key={bp.title}
                   onClick={() => {
-                    if (ollamaConnected) {
+                    if (providerConnected) {
                       setPromptText(bp.prompt);
                       const nameInput = window.prompt(`Enter a name for your ${bp.title} project:`, bp.title);
                       if (nameInput === null) return; // user cancelled
@@ -314,7 +319,7 @@ export default function LandingDashboard() {
                     }
                   }}
                   className={`bg-slate-900 border border-slate-700 hover:border-electric-indigo/50 p-4 rounded cursor-pointer group transition-all relative overflow-hidden ${
-                    !ollamaConnected && 'opacity-50 cursor-not-allowed'
+                    !providerConnected && 'opacity-50 cursor-not-allowed'
                   }`}
                 >
                   <div className="absolute top-0 right-0 w-24 h-24 bg-electric-indigo/5 blur-[30px] group-hover:bg-electric-indigo/10 transition-all pointer-events-none"></div>

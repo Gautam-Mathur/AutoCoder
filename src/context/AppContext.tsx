@@ -15,10 +15,19 @@ interface AppContextType {
   activeTitle: string;
   setActiveId: (id: string | null) => void;
   setActiveTitle: (title: string) => void;
+  provider: string;
+  providerConnected: boolean;
+  providerHost: string;
+  healthReason: string;
+  availableModels: string[];
+  /** @deprecated Use providerConnected instead */
   ollamaConnected: boolean;
+  /** @deprecated Use availableModels instead */
   ollamaModels: string[];
   activeModel: string;
   setActiveModel: (model: string) => Promise<void>;
+  checkProviderHealth: (verifyRemote?: boolean) => Promise<boolean>;
+  /** @deprecated Use checkProviderHealth instead */
   checkOllama: () => Promise<boolean>;
   logs: LogMessage[];
   setLogs: (logs: LogMessage[]) => void;
@@ -37,8 +46,11 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeTitle, setActiveTitle] = useState<string>('No Active Project');
-  const [ollamaConnected, setOllamaConnected] = useState<boolean>(false);
-  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [provider, setProvider] = useState<string>('ollama');
+  const [providerConnected, setProviderConnected] = useState<boolean>(false);
+  const [providerHost, setProviderHost] = useState<string>('http://127.0.0.1:11434');
+  const [healthReason, setHealthReason] = useState<string>('');
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [activeModel, setActiveModel] = useState<string>('');
   const [logs, setLogs] = useState<LogMessage[]>([]);
   const [activePrompt, setActivePrompt] = useState<string>('');
@@ -69,24 +81,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('activeTitle', title);
   };
 
-  const checkOllama = async () => {
+  const checkProviderHealth = async (verifyRemote = false) => {
     try {
-      const res = await fetch('/api/health');
+      const url = verifyRemote ? '/api/health?verify=true' : '/api/health';
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
-        setOllamaConnected(data.connected);
-        setOllamaModels(data.models || []);
+        const isConnected = Boolean(data.providerConnected ?? data.connected);
+        setProvider(data.provider || 'ollama');
+        setProviderConnected(isConnected);
+        setProviderHost(data.host || '');
+        setHealthReason(data.reason || '');
+        setAvailableModels(data.models || []);
         if (data.model) setActiveModel(data.model);
-        return data.connected;
+        return isConnected;
       }
-    } catch (e) {
-      setOllamaConnected(false);
+    } catch {
+      setProviderConnected(false);
     }
     return false;
   };
 
+  const checkOllama = () => checkProviderHealth(false);
+
   const handleSetActiveModel = async (model: string) => {
     setActiveModel(model);
+    const modelField =
+      provider === 'openai'
+        ? 'openaiModel'
+        : provider === 'anthropic'
+        ? 'anthropicModel'
+        : 'ollamaModel';
     try {
       const res = await fetch('/api/settings');
       if (res.ok) {
@@ -96,7 +121,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             ...currentSettings,
-            ollamaModel: model,
+            [modelField]: model,
           }),
         });
       }
@@ -106,11 +131,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
-    checkOllama();
-    const interval = setInterval(checkOllama, 5000); // Check every 5s for rapid UI status updates
+    checkProviderHealth();
+    const interval = setInterval(() => checkProviderHealth(), 5000); // Check every 5s for rapid UI status updates
 
     const handleFocus = () => {
-      checkOllama();
+      checkProviderHealth();
     };
 
     window.addEventListener('focus', handleFocus);
@@ -142,10 +167,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         activeTitle,
         setActiveId: handleSetActiveId,
         setActiveTitle: handleSetActiveTitle,
-        ollamaConnected,
-        ollamaModels,
+        provider,
+        providerConnected,
+        providerHost,
+        healthReason,
+        availableModels,
+        ollamaConnected: providerConnected,
+        ollamaModels: availableModels,
         activeModel,
         setActiveModel: handleSetActiveModel,
+        checkProviderHealth,
         checkOllama,
         logs,
         setLogs,

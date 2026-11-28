@@ -19,7 +19,9 @@ import {
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const { activeId, setActiveId, ollamaConnected } = useApp();
+  const { activeId, setActiveId, provider, providerConnected } = useApp();
+  const providerLabel =
+    provider === 'openai' ? 'OpenAI' : provider === 'anthropic' ? 'Anthropic' : 'Ollama';
 
   const menuItems = [
     { name: 'Dashboard', path: '/', icon: LayoutDashboard },
@@ -35,11 +37,11 @@ export default function Sidebar() {
       <div className="p-4 border-b border-slate-700 flex flex-col gap-2">
         <div className="flex items-center gap-3">
           <div className={`w-8 h-8 rounded-full flex items-center justify-center border transition-all ${
-            ollamaConnected
+            providerConnected
               ? 'bg-emerald-500/10 border-emerald-500 text-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
               : 'bg-amber-500/10 border-amber-500 text-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.3)]'
           }`}>
-            {ollamaConnected ? (
+            {providerConnected ? (
               <CheckCircle className="w-4 h-4" />
             ) : (
               <Rocket className="w-4 h-4 animate-pulse" />
@@ -47,8 +49,8 @@ export default function Sidebar() {
           </div>
           <div>
             <div className="text-sm font-bold text-on-surface">Project Alpha</div>
-            <div className={`text-xs font-semibold ${ollamaConnected ? 'text-emerald-500' : 'text-amber-500'}`}>
-              {ollamaConnected ? 'Ollama Online' : 'Ollama Offline'}
+            <div className={`text-xs font-semibold ${providerConnected ? 'text-emerald-500' : 'text-amber-500'}`}>
+              {providerConnected ? `${providerLabel} Ready` : `${providerLabel} Offline`}
             </div>
           </div>
         </div>

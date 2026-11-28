@@ -14,7 +14,7 @@ import { useRouter } from 'next/navigation';
 
 export default function TopAppBar() {
   const router = useRouter();
-  const { activeId, ollamaConnected, ollamaModels, activeModel, setActiveModel, addLog, currentStage, pipelineStatus } = useApp();
+  const { activeId, providerConnected, availableModels, activeModel, setActiveModel, addLog, currentStage, pipelineStatus } = useApp();
   const [resuming, setResuming] = useState(false);
 
   const handleResumeOrRetry = async () => {
@@ -81,8 +81,8 @@ export default function TopAppBar() {
       </div>
 
       <div className="flex items-center gap-4">
-        {/* Scanned Ollama model selector */}
-        {ollamaConnected && ollamaModels.length > 0 && (
+        {/* Active provider model selector */}
+        {providerConnected && availableModels.length > 0 && (
           <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-750 px-2.5 py-1 rounded text-xs font-mono text-slate-300">
             <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wide">Model:</span>
             <select
@@ -90,7 +90,7 @@ export default function TopAppBar() {
               onChange={(e) => setActiveModel(e.target.value)}
               className="bg-transparent border-none text-xs font-bold text-on-surface focus:outline-none cursor-pointer"
             >
-              {ollamaModels.map((m) => (
+              {availableModels.map((m) => (
                 <option key={m} value={m} className="bg-slate-900 text-slate-300">
                   {m}
                 </option>
@@ -107,7 +107,7 @@ export default function TopAppBar() {
             title="System Health"
           >
             <Activity className="w-4 h-4" />
-            <span className={`absolute top-1 right-1 w-2 h-2 rounded-full ${ollamaConnected ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
+            <span className={`absolute top-1 right-1 w-2 h-2 rounded-full ${providerConnected ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
           </button>
           <button className="text-slate-400 hover:text-electric-indigo hover:bg-slate-900 p-2 rounded-full transition-colors relative" title="Notifications">
             <Bell className="w-4 h-4" />

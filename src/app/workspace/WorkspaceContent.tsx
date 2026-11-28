@@ -386,7 +386,9 @@ export default function WorkspaceContent() {
   const initialPrompt = searchParams.get('prompt') || '';
 
   const {
-    ollamaConnected,
+    provider,
+    providerConnected,
+    healthReason,
     activeId,
     setActiveId,
     activeTitle,
@@ -953,8 +955,8 @@ export default function WorkspaceContent() {
   // Start execution stream
   const handleStartPipeline = (isResume = false) => {
     if (!conversationId) return;
-    if (!isResume && !ollamaConnected) {
-      alert('Please start Ollama locally before initiating pipeline.');
+    if (!isResume && !providerConnected) {
+      alert(healthReason || `Please configure or start your active LLM provider (${provider}) before initiating pipeline.`);
       return;
     }
 

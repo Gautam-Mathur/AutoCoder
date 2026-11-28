@@ -14,14 +14,16 @@ import {
 } from 'lucide-react';
 
 export default function SettingsPage() {
-  const { checkOllama, ollamaConnected, ollamaModels } = useApp();
+  const { checkProviderHealth, provider: activeProvider, providerConnected, availableModels } = useApp();
 
   const [provider, setProvider] = useState('ollama');
-  const [ollamaHost, setOllamaHost] = useState('http://localhost:11434');
+  const [ollamaHost, setOllamaHost] = useState('http://127.0.0.1:11434');
   const [ollamaModel, setOllamaModel] = useState('llama3:8b-instruct');
   const [openaiApiKey, setOpenaiApiKey] = useState('');
+  const [openaiApiKeyConfigured, setOpenaiApiKeyConfigured] = useState(false);
   const [openaiModel, setOpenaiModel] = useState('gpt-4o-mini');
   const [anthropicApiKey, setAnthropicApiKey] = useState('');
+  const [anthropicApiKeyConfigured, setAnthropicApiKeyConfigured] = useState(false);
   const [anthropicModel, setAnthropicModel] = useState('claude-3-5-sonnet-20241022');
   const [temperature, setTemperature] = useState(0.2);
 
@@ -39,10 +41,10 @@ export default function SettingsPage() {
         if (data.provider) setProvider(data.provider);
         if (data.ollamaHost) setOllamaHost(data.ollamaHost);
         if (data.ollamaModel) setOllamaModel(data.ollamaModel);
-        if (data.openaiApiKey) setOpenaiApiKey(data.openaiApiKey);
         if (data.openaiModel) setOpenaiModel(data.openaiModel);
-        if (data.anthropicApiKey) setAnthropicApiKey(data.anthropicApiKey);
         if (data.anthropicModel) setAnthropicModel(data.anthropicModel);
+        setOpenaiApiKeyConfigured(Boolean(data.openaiApiKeyConfigured));
+        setAnthropicApiKeyConfigured(Boolean(data.anthropicApiKeyConfigured));
       })
       .catch(() => {});
   }, []);
@@ -67,21 +69,27 @@ export default function SettingsPage() {
       });
 
       if (res.ok) {
+        const resData = await res.json();
+        if (resData?.settings) {
+          setOpenaiApiKeyConfigured(Boolean(resData.settings.openaiApiKeyConfigured));
+          setAnthropicApiKeyConfigured(Boolean(resData.settings.anthropicApiKeyConfigured));
+        }
+        setOpenaiApiKey('');
+        setAnthropicApiKey('');
         setSaveStatus('success');
-        // Refresh connection
-        await checkOllama();
+        await checkProviderHealth(false);
         setTimeout(() => setSaveStatus('idle'), 3000);
       } else {
         setSaveStatus('failed');
       }
-    } catch (err) {
+    } catch {
       setSaveStatus('failed');
     }
   };
 
   const handleTestConnection = async () => {
     setTestStatus('testing');
-    const isConnected = await checkOllama();
+    const isConnected = await checkProviderHealth(true);
     setTestStatus(isConnected ? 'success' : 'failed');
     setTimeout(() => setTestStatus('idle'), 4000);
   };
@@ -154,13 +162,13 @@ export default function SettingsPage() {
                 </div>
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] font-bold text-slate-500 font-mono">Inference Model Tag</label>
-                  {ollamaConnected && ollamaModels.length > 0 ? (
+                  {providerConnected && activeProvider === 'ollama' && availableModels.length > 0 ? (
                     <select
                       value={ollamaModel}
                       onChange={(e) => setOllamaModel(e.target.value)}
                       className="bg-slate-950 border border-slate-700 rounded p-2 text-xs font-mono text-on-surface focus:border-electric-indigo outline-none cursor-pointer"
                     >
-                      {ollamaModels.map((m) => (
+                      {availableModels.map((m) => (
                         <option key={m} value={m} className="bg-slate-900 text-slate-300">
                           {m}
                         </option>
@@ -182,9 +190,29 @@ export default function SettingsPage() {
 
           {provider === 'openai' && (
             <div className="border border-slate-800 bg-slate-950/40 p-4 rounded flex flex-col gap-4">
-              <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5 border-b border-slate-800 pb-2">
-                <Cloud className="w-4 h-4 text-electric-indigo" /> OpenAI Configuration
-              </span>
+              <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                  <Cloud className="w-4 h-4 text-electric-indigo" /> OpenAI Configuration
+                </span>
+                <button
+                  type="button"
+                  onClick={handleTestConnection}
+                  disabled={testStatus === 'testing'}
+                  className="px-3 py-1 bg-slate-900 border border-slate-700 rounded text-[10px] font-bold text-slate-300 hover:text-on-surface hover:border-slate-500 transition-colors"
+                >
+                  {testStatus === 'testing' ? 'Testing...' : 'Verify Saved Key'}
+                </button>
+              </div>
+              {testStatus === 'success' && (
+                <div className="text-[11px] text-emerald-400 flex items-center gap-1 font-mono">
+                  <CheckCircle className="w-3.5 h-3.5" /> OpenAI API verified successfully.
+                </div>
+              )}
+              {testStatus === 'failed' && (
+                <div className="text-[11px] text-red-400 flex items-center gap-1 font-mono animate-pulse">
+                  <XCircle className="w-3.5 h-3.5" /> Save a valid OpenAI API key first, then retry verification.
+                </div>
+              )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] font-bold text-slate-500 font-mono">OpenAI API Key</label>
@@ -193,7 +221,7 @@ export default function SettingsPage() {
                     value={openaiApiKey}
                     onChange={(e) => setOpenaiApiKey(e.target.value)}
                     className="bg-slate-950 border border-slate-700 rounded p-2 text-xs font-mono text-on-surface focus:border-electric-indigo outline-none"
-                    placeholder="sk-..."
+                    placeholder={openaiApiKeyConfigured ? 'Configured (enter new key to replace)' : 'sk-...'}
                   />
                 </div>
                 <div className="flex flex-col gap-1">
@@ -211,9 +239,29 @@ export default function SettingsPage() {
 
           {provider === 'anthropic' && (
             <div className="border border-slate-800 bg-slate-950/40 p-4 rounded flex flex-col gap-4">
-              <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5 border-b border-slate-800 pb-2">
-                <Cloud className="w-4 h-4 text-electric-indigo" /> Anthropic Configuration
-              </span>
+              <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                  <Cloud className="w-4 h-4 text-electric-indigo" /> Anthropic Configuration
+                </span>
+                <button
+                  type="button"
+                  onClick={handleTestConnection}
+                  disabled={testStatus === 'testing'}
+                  className="px-3 py-1 bg-slate-900 border border-slate-700 rounded text-[10px] font-bold text-slate-300 hover:text-on-surface hover:border-slate-500 transition-colors"
+                >
+                  {testStatus === 'testing' ? 'Testing...' : 'Verify Saved Key'}
+                </button>
+              </div>
+              {testStatus === 'success' && (
+                <div className="text-[11px] text-emerald-400 flex items-center gap-1 font-mono">
+                  <CheckCircle className="w-3.5 h-3.5" /> Anthropic API verified successfully.
+                </div>
+              )}
+              {testStatus === 'failed' && (
+                <div className="text-[11px] text-red-400 flex items-center gap-1 font-mono animate-pulse">
+                  <XCircle className="w-3.5 h-3.5" /> Save a valid Anthropic API key first, then retry verification.
+                </div>
+              )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] font-bold text-slate-500 font-mono">Anthropic API Key</label>
@@ -222,7 +270,7 @@ export default function SettingsPage() {
                     value={anthropicApiKey}
                     onChange={(e) => setAnthropicApiKey(e.target.value)}
                     className="bg-slate-950 border border-slate-700 rounded p-2 text-xs font-mono text-on-surface focus:border-electric-indigo outline-none"
-                    placeholder="sk-ant-..."
+                    placeholder={anthropicApiKeyConfigured ? 'Configured (enter new key to replace)' : 'sk-ant-...'}
                   />
                 </div>
                 <div className="flex flex-col gap-1">
